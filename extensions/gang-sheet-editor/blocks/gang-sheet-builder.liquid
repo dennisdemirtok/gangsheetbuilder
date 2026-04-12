@@ -139,10 +139,14 @@
         </div>
       </div>
 
-      <!-- Loading state -->
-      <div id="gs-sheet-loading" style="display:none; text-align:center; padding:32px;">
-        <div style="width:36px; height:36px; border:3px solid #bb0018; border-top-color:transparent; border-radius:50%; animation:gs-lspin 0.8s linear infinite; margin:0 auto 14px;"></div>
-        <p style="color:#4f6071; font-size:14px;">Analyserar fil...</p>
+      <!-- Loading state with progress -->
+      <div id="gs-sheet-loading" style="display:none; padding:32px 16px; font-family:Inter,system-ui,sans-serif;">
+        <p id="gs-upload-status" style="color:rgba(0,0,0,0.81); font-size:14px; font-weight:500; text-align:center; margin:0 0 16px;">Laddar upp fil...</p>
+        <!-- Progress bar -->
+        <div style="width:100%; height:6px; background:rgba(0,0,0,0.06); border-radius:3px; overflow:hidden;">
+          <div id="gs-upload-progress-bar" style="width:0%; height:100%; background:linear-gradient(90deg, #e63946, #ff4757); border-radius:3px; transition:width 0.3s ease;"></div>
+        </div>
+        <p id="gs-upload-percent" style="color:rgba(0,0,0,0.4); font-size:12px; text-align:center; margin:8px 0 0;">0%</p>
       </div>
     </div>
   </div>
@@ -339,12 +343,44 @@
     loadingDiv.style.display = 'block';
     resultsDiv.style.display = 'none';
 
+    var statusEl = document.getElementById('gs-upload-status');
+    var progressBar = document.getElementById('gs-upload-progress-bar');
+    var percentEl = document.getElementById('gs-upload-percent');
+    var fileSizeMb = (file.size / 1024 / 1024).toFixed(1);
+
+    statusEl.textContent = 'Laddar upp ' + fileSizeMb + ' MB...';
+    progressBar.style.width = '0%';
+    percentEl.textContent = '0%';
+
     var formData = new FormData();
     formData.append('file', file);
 
-    fetch(appProxyUrl + '/api/upload-sheet', { method: 'POST', body: formData })
-      .then(function(res) { return res.json(); })
-      .then(function(data) {
+    // Use XMLHttpRequest for upload progress tracking
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', appProxyUrl + '/api/upload-sheet', true);
+
+    xhr.upload.onprogress = function(e) {
+      if (e.lengthComputable) {
+        var pct = Math.round((e.loaded / e.total) * 90); // 90% = upload, 10% = server processing
+        progressBar.style.width = pct + '%';
+        percentEl.textContent = pct + '%';
+        if (pct >= 90) statusEl.textContent = 'Analyserar fil...';
+      }
+    };
+
+    xhr.onload = function() {
+      progressBar.style.width = '100%';
+      percentEl.textContent = '100%';
+
+      var data;
+      try { data = JSON.parse(xhr.responseText); } catch(e) {
+        loadingDiv.style.display = 'none';
+        dropzone.style.display = 'block';
+        alert('Serverfel vid uppladdning');
+        return;
+      }
+
+      setTimeout(function() {
         loadingDiv.style.display = 'none';
 
         if (data.error) {
@@ -399,12 +435,16 @@
         updateSheetList();
         updatePriceDisplay();
         resultsDiv.style.display = 'block';
-      })
-      .catch(function(err) {
-        loadingDiv.style.display = 'none';
-        dropzone.style.display = 'block';
-        alert('Upload misslyckades: ' + err.message);
-      });
+      }, 300); // small delay for smooth transition
+    };
+
+    xhr.onerror = function() {
+      loadingDiv.style.display = 'none';
+      dropzone.style.display = 'block';
+      alert('Upload misslyckades. Kontrollera din internetanslutning.');
+    };
+
+    xhr.send(formData);
   }
 
   function updateSheetList() {
