@@ -44,8 +44,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: validation.error }, { status: 400 });
     }
 
-    // Extract metadata (includes white background detection)
-    const metadata = await extractMetadata(buffer);
+    // Extract metadata — EPS/AI files can't be read by Sharp, use fallback
+    let metadata;
+    try {
+      metadata = await extractMetadata(buffer);
+    } catch {
+      // Fallback for formats Sharp can't read (EPS, AI, etc)
+      metadata = {
+        width: 1000,
+        height: 1000,
+        dpiX: 300,
+        dpiY: 300,
+        format: validation.extension || "unknown",
+        hasAlpha: false,
+        hasWhiteBackground: false,
+        colorSpace: "srgb",
+        channels: 3,
+        fileSize: buffer.length,
+      };
+    }
 
     // Generate IDs and keys
     const imageId = uuidv4();
@@ -53,8 +70,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const originalKey = storageKey(sessionId, imageId, "original", ext);
     const thumbnailKey = storageKey(sessionId, imageId, "thumbnail", "webp");
 
-    // Upload original and thumbnail to R2
-    const thumbnail = await generateThumbnail(buffer);
+    // Upload original and thumbnail to R2 — thumbnail may fail for unsupported formats
+    let thumbnail: Buffer;
+    try {
+      thumbnail = await generateThumbnail(buffer);
+    } catch {
+      // Create a simple 1px placeholder for formats Sharp can't process
+      const sharp = (await import("sharp")).default;
+      thumbnail = await sharp({ create: { width: 200, height: 200, channels: 4, background: { r: 200, g: 200, b: 200, alpha: 1 } } }).webp().toBuffer();
+    }
     await Promise.all([
       uploadFile(originalKey, buffer, validation.mimeType!),
       uploadFile(thumbnailKey, thumbnail, "image/webp"),

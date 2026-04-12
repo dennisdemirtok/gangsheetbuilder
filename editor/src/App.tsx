@@ -3,7 +3,7 @@ import { GangSheetCanvas } from "./components/Canvas/GangSheetCanvas";
 import { LeftSidebar } from "./components/LeftSidebar/LeftSidebar";
 import { Toolbar } from "./components/Toolbar/Toolbar";
 import { AutoBuildButton } from "./components/Toolbar/AutoBuildButton";
-import { PriceDisplay } from "./components/PriceDisplay/PriceDisplay";
+import { PriceDisplay, PriceBar } from "./components/PriceDisplay/PriceDisplay";
 import { AddToCartButton } from "./components/PriceDisplay/AddToCartButton";
 import { DownloadButton } from "./components/PriceDisplay/DownloadButton";
 import { SheetManager } from "./components/SheetManager/SheetManager";
@@ -219,13 +219,14 @@ export function App() {
 
         <div
           style={{
-            padding: `${theme.space.md}px ${theme.space.lg}px ${theme.space.lg}px`,
+            padding: `${theme.space.sm}px ${theme.space.lg}px ${theme.space.lg}px`,
             borderTop: `1px solid ${theme.border}`,
             display: "flex",
             flexDirection: "column",
             gap: theme.space.sm,
           }}
         >
+          <PriceBar />
           <AutoBuildButton />
           <DownloadButton />
           <AddToCartButton />

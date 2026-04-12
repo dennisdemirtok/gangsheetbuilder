@@ -2,33 +2,29 @@ import { useEditorStore } from "../../store/editorStore";
 import { theme } from "../../styles/theme";
 
 const SHEET_SIZES = [
-  { key: "58x100", widthMm: 580, heightMm: 1000, label: "58 × 100 cm" },
-  { key: "58x200", widthMm: 580, heightMm: 2000, label: "58 × 200 cm" },
-  { key: "58x300", widthMm: 580, heightMm: 3000, label: "58 × 300 cm" },
-  { key: "58x400", widthMm: 580, heightMm: 4000, label: "58 × 400 cm" },
-  { key: "58x500", widthMm: 580, heightMm: 5000, label: "58 × 500 cm" },
-];
-
-const FILM_TYPES = [
-  { key: "standard", label: "Standard" },
-  { key: "glitter", label: "Glitter" },
-  { key: "glow", label: "Glow-in-the-Dark" },
-  { key: "gold_foil", label: "Gold Foil" },
-  { key: "silver_foil", label: "Silver Foil" },
+  { key: "58x100", widthMm: 580, heightMm: 1000, label: "1 meter (58×100 cm)", meters: 1 },
+  { key: "58x200", widthMm: 580, heightMm: 2000, label: "2 meter (58×200 cm)", meters: 2 },
+  { key: "58x300", widthMm: 580, heightMm: 3000, label: "3 meter (58×300 cm)", meters: 3 },
+  { key: "58x400", widthMm: 580, heightMm: 4000, label: "4 meter (58×400 cm)", meters: 4 },
+  { key: "58x500", widthMm: 580, heightMm: 5000, label: "5 meter (58×500 cm)", meters: 5 },
 ];
 
 const chevronSvg = (color: string) =>
   `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='${encodeURIComponent(color)}' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E")`;
 
 export function PriceDisplay() {
-  const { sheetSize, filmType, currentPrice, images, setSheetSize, setFilmType } =
+  const { sheetSize, currentPrice, images, sheets, setSheetSize } =
     useEditorStore();
 
   const totalQuantity = images.reduce((sum, img) => sum + img.quantity, 0);
+  const totalSheets = sheets?.length || 1;
+  const totalPrice = totalSheets > 1
+    ? sheets.reduce((sum, s) => sum + (currentPrice * s.quantity), 0)
+    : currentPrice;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: theme.space.lg }}>
-      {/* Sheet size */}
+      {/* Sheet size — dropdown */}
       <div>
         <SectionLabel>Arkstorlek</SectionLabel>
         <select
@@ -40,17 +36,17 @@ export function PriceDisplay() {
           style={{
             width: "100%",
             padding: `${theme.space.md}px ${theme.space.lg}px`,
-            border: `1.5px solid ${theme.accent}`,
+            border: `1px solid ${theme.borderStrong}`,
             borderRadius: theme.radiusSm,
-            fontSize: theme.fontSize.bodySm,
+            fontSize: theme.fontSize.bodyMd,
             fontFamily: theme.fontFamily,
-            fontWeight: theme.fontWeight.semibold,
-            background: theme.accentBg,
-            color: theme.accent,
+            fontWeight: theme.fontWeight.medium,
+            background: theme.bgCard,
+            color: theme.text,
             outline: "none",
             cursor: "pointer",
             appearance: "none",
-            backgroundImage: chevronSvg(theme.accent),
+            backgroundImage: chevronSvg(theme.textDim as string),
             backgroundRepeat: "no-repeat",
             backgroundPosition: "right 12px center",
           }}
@@ -63,65 +59,62 @@ export function PriceDisplay() {
         </select>
       </div>
 
-      {/* Film type */}
-      <div>
-        <SectionLabel>Filmtyp</SectionLabel>
-        <select
-          value={filmType}
-          onChange={(e) => setFilmType(e.target.value)}
-          style={{
-            width: "100%",
-            padding: `${theme.space.md}px ${theme.space.lg}px`,
-            border: `1px solid ${theme.border}`,
-            borderRadius: theme.radiusSm,
-            fontSize: theme.fontSize.bodySm,
-            fontFamily: theme.fontFamily,
-            fontWeight: theme.fontWeight.medium,
-            background: theme.bgInput,
-            color: theme.text,
-            outline: "none",
-            cursor: "pointer",
-            appearance: "none",
-            backgroundImage: chevronSvg(theme.textDim),
-            backgroundRepeat: "no-repeat",
-            backgroundPosition: "right 12px center",
-          }}
-        >
-          {FILM_TYPES.map((film) => (
-            <option key={film.key} value={film.key}>
-              {film.label}
-            </option>
-          ))}
-        </select>
+      {/* Summary info */}
+      <div style={{ fontSize: theme.fontSize.labelMd, color: theme.textMuted, display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Designs</span>
+          <span style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>{images.length} st</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Totalt motiv</span>
+          <span style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>{totalQuantity} st</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <span>Antal ark</span>
+          <span style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>{totalSheets} st</span>
+        </div>
       </div>
+    </div>
+  );
+}
 
-      {/* Price card */}
-      <div
+/**
+ * Price bar — rendered separately at the bottom of right sidebar
+ */
+export function PriceBar() {
+  const { currentPrice, sheetSize, sheets } = useEditorStore();
+  const totalSheets = sheets?.length || 1;
+  const totalPrice = totalSheets > 1
+    ? sheets.reduce((sum, s) => sum + (currentPrice * s.quantity), 0)
+    : currentPrice;
+
+  return (
+    <div
+      style={{
+        padding: `${theme.space.md}px ${theme.space.lg}px`,
+        background: theme.bgDark,
+        borderRadius: theme.radiusSm,
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+      }}
+    >
+      <div>
+        <span style={{ fontSize: theme.fontSize.labelMd, color: "rgba(255,255,255,0.6)" }}>Totalt</span>
+        <p style={{ margin: "2px 0 0", fontSize: theme.fontSize.labelSm, color: "rgba(255,255,255,0.4)" }}>
+          {sheetSize.label}
+        </p>
+      </div>
+      <span
         style={{
-          padding: `${theme.space.xl}px ${theme.space.lg}px`,
-          background: theme.accentBg,
-          borderRadius: theme.radius,
-          textAlign: "center",
+          fontSize: theme.fontSize.headlineMd,
+          fontWeight: theme.fontWeight.bold,
+          color: "#fff",
+          letterSpacing: theme.letterSpacing.tight,
         }}
       >
-        <p style={{ margin: 0, fontSize: theme.fontSize.labelMd, fontWeight: theme.fontWeight.medium, color: theme.textMuted }}>
-          Totalpris
-        </p>
-        <p
-          style={{
-            margin: `${theme.space.xs}px 0 0`,
-            fontSize: theme.fontSize.headlineMd,
-            fontWeight: theme.fontWeight.bold,
-            letterSpacing: theme.letterSpacing.tight,
-            color: theme.accent,
-          }}
-        >
-          {currentPrice} kr
-        </p>
-        <p style={{ margin: `${theme.space.xs}px 0 0`, fontSize: theme.fontSize.labelSm, color: theme.textMuted }}>
-          {images.length} design{images.length !== 1 ? "er" : ""} ({totalQuantity} st) | {sheetSize.label}
-        </p>
-      </div>
+        {totalPrice} kr
+      </span>
     </div>
   );
 }

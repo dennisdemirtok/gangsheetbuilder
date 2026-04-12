@@ -234,7 +234,7 @@ export function GangSheetCanvas() {
         className="gs-canvas-wrapper"
         style={{
           boxShadow: theme.shadowLg,
-          borderRadius: theme.radiusSm,
+          borderRadius: 0,
           lineHeight: 0,
           backgroundImage:
             "linear-gradient(45deg, #eee 25%, transparent 25%), " +

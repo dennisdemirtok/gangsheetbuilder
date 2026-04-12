@@ -7,11 +7,19 @@ import { theme } from "../../styles/theme";
 
 type TabKey = "designs" | "uploads" | "text" | "settings";
 
+// SVG icon components for clean look
+const Icons = {
+  designs: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>`,
+  uploads: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
+  text: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>`,
+  settings: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+};
+
 const TABS: { key: TabKey; label: string; icon: string }[] = [
-  { key: "designs", label: "Designs", icon: "🎨" },
-  { key: "uploads", label: "Uppladdning", icon: "📤" },
-  { key: "text", label: "Text", icon: "T" },
-  { key: "settings", label: "Inställningar", icon: "⚙" },
+  { key: "designs", label: "Designs", icon: Icons.designs },
+  { key: "uploads", label: "Galleri", icon: Icons.uploads },
+  { key: "text", label: "Text", icon: Icons.text },
+  { key: "settings", label: "Inställningar", icon: Icons.settings },
 ];
 
 export function LeftSidebar() {
@@ -26,16 +34,16 @@ export function LeftSidebar() {
         overflow: "hidden",
       }}
     >
-      {/* Icon tab bar */}
+      {/* Icon tab bar — dark strip */}
       <div
         style={{
-          width: 56,
-          background: theme.bgCard,
+          width: 64,
+          background: theme.bgDark,
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          paddingTop: theme.space.sm,
-          gap: 2,
+          paddingTop: theme.space.md,
+          gap: 4,
           flexShrink: 0,
         }}
       >
@@ -47,31 +55,28 @@ export function LeftSidebar() {
               onClick={() => setActiveTab(tab.key)}
               title={tab.label}
               style={{
-                width: 48,
-                height: 48,
+                width: 54,
+                padding: "10px 0 6px",
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
-                gap: 2,
+                gap: 4,
                 border: "none",
-                borderRadius: theme.radius,
-                background: active ? theme.accentBg : "transparent",
-                color: active ? theme.accent : theme.textMuted,
+                borderRadius: theme.radiusSm,
+                background: active ? "rgba(255,255,255,0.12)" : "transparent",
+                color: active ? "#fff" : "rgba(255,255,255,0.5)",
                 cursor: "pointer",
-                fontSize: tab.key === "text" ? 18 : 16,
-                fontWeight: tab.key === "text" ? theme.fontWeight.bold : theme.fontWeight.regular,
-                fontFamily: tab.key === "text" ? "serif" : "inherit",
                 transition: "all 0.15s",
               }}
             >
-              <span>{tab.icon}</span>
+              <span dangerouslySetInnerHTML={{ __html: tab.icon }} />
               <span
                 style={{
-                  fontSize: theme.fontSize.labelXs,
-                  fontWeight: active ? theme.fontWeight.semibold : theme.fontWeight.medium,
+                  fontSize: "10px",
+                  fontWeight: active ? theme.fontWeight.semibold : theme.fontWeight.regular,
                   fontFamily: theme.fontFamily,
-                  letterSpacing: theme.letterSpacing.normal,
+                  letterSpacing: "0.01em",
                 }}
               >
                 {tab.label}
@@ -108,10 +113,10 @@ function DesignsTab({ isUploading }: { isUploading: boolean }) {
         style={{
           flex: 1,
           overflow: "auto",
-          padding: `0 ${theme.space.md}px ${theme.space.lg}px`,
+          padding: `0 ${theme.space.lg}px ${theme.space.lg}px`,
           display: "flex",
           flexDirection: "column",
-          gap: theme.space.md,
+          gap: theme.space.sm,
         }}
       >
         <ImageUploader />
@@ -480,11 +485,12 @@ function TabHeader({ title }: { title: string }) {
   return (
     <div
       style={{
-        padding: `${theme.space.lg}px ${theme.space.md}px ${theme.space.md}px`,
-        fontSize: theme.fontSize.titleMd,
+        padding: `${theme.space.lg}px ${theme.space.lg}px ${theme.space.sm}px`,
+        fontSize: theme.fontSize.bodySm,
         fontWeight: theme.fontWeight.semibold,
-        letterSpacing: theme.letterSpacing.tight,
-        color: theme.text,
+        textTransform: "uppercase" as const,
+        letterSpacing: theme.letterSpacing.wide,
+        color: theme.textMuted,
       }}
     >
       {title}
