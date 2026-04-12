@@ -22,13 +22,37 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Download from R2 for analysis
-    const buffer = await downloadFile(r2Key);
+    let buffer: Buffer;
+    try {
+      buffer = await downloadFile(r2Key);
+    } catch (dlError) {
+      console.error("Failed to download from R2:", dlError);
+      return json({ error: "Kunde inte hämta filen från lagring. Försök igen." }, { status: 500 });
+    }
 
-    // Extract metadata
+    console.log("Analyze-sheet: downloaded", buffer.length, "bytes from R2 key:", r2Key);
+
+    // Extract metadata — use Sharp with pipeline to handle large files
     let metadata;
     try {
-      metadata = await extractMetadata(buffer);
-    } catch {
+      const sharp = (await import("sharp")).default;
+      const sharpMeta = await sharp(buffer, { limitInputPixels: false }).metadata();
+      const dpi = sharpMeta.density || 300;
+      metadata = {
+        width: sharpMeta.width || 0,
+        height: sharpMeta.height || 0,
+        dpiX: dpi,
+        dpiY: dpi,
+        format: sharpMeta.format || "unknown",
+        hasAlpha: sharpMeta.hasAlpha || false,
+        hasWhiteBackground: false,
+        colorSpace: sharpMeta.space || "srgb",
+        channels: sharpMeta.channels || 3,
+        fileSize: fileSize || buffer.length,
+      };
+      console.log("Analyze-sheet: metadata", metadata.width, "x", metadata.height, "dpi:", metadata.dpiX);
+    } catch (metaError) {
+      console.error("Sharp metadata error:", metaError);
       metadata = {
         width: 0, height: 0, dpiX: 300, dpiY: 300,
         format: "unknown", hasAlpha: false, hasWhiteBackground: false,
