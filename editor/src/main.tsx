@@ -43,7 +43,7 @@ function mount() {
       padding: 0 !important;
       max-width: none !important;
       overflow: hidden !important;
-      background: #f7f9fb !important;
+      background: #ffffff !important;
     }
     body.gangsheet-open > *:not(#gangsheet-portal):not(script):not(style):not(link):not(dialog):not([role="dialog"]) {
       visibility: hidden !important;

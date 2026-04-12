@@ -88,11 +88,9 @@ export function App() {
           gridColumn: "1 / -1",
           display: "flex",
           alignItems: "center",
-          gap: 12,
-          padding: "0 16px",
+          gap: 16,
+          padding: "0 20px",
           background: theme.headerBg,
-          borderBottom: `1px solid ${theme.border}`,
-          backdropFilter: "blur(12px)",
           zIndex: 10,
         }}
       >
@@ -102,26 +100,12 @@ export function App() {
             display: "flex",
             alignItems: "center",
             gap: 10,
-            minWidth: 180,
+            minWidth: 200,
           }}
         >
-          <div
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: 6,
-              background: theme.accentGradient,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 14,
-              fontWeight: 700,
-              color: "#fff",
-            }}
-          >
-            G
-          </div>
-          <span style={{ fontSize: theme.fontSize.titleLg, fontWeight: theme.fontWeight.semibold, letterSpacing: theme.letterSpacing.tight }}>Gang Sheet Builder</span>
+          <span style={{ fontSize: theme.fontSize.titleLg, fontWeight: theme.fontWeight.bold, color: theme.textWhite, letterSpacing: theme.letterSpacing.tight }}>
+            Transfer<span style={{ color: theme.accent }}>craft</span>
+          </span>
         </div>
 
         {/* Center: Toolbar */}
@@ -129,25 +113,24 @@ export function App() {
           <Toolbar />
         </div>
 
-        {/* Right: Price badge + Reset */}
+        {/* Right: Price badge + Actions */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 12,
-            minWidth: 160,
+            gap: 10,
+            minWidth: 200,
             justifyContent: "flex-end",
           }}
         >
           <div
             style={{
-              padding: "4px 14px",
+              padding: "6px 16px",
               borderRadius: 20,
-              background: theme.accentBg,
-              border: `1px solid ${theme.accent}`,
+              background: theme.accent,
               fontSize: theme.fontSize.bodyMd,
               fontWeight: theme.fontWeight.bold,
-              color: theme.accent,
+              color: "#fff",
             }}
           >
             {currentPrice} kr
@@ -156,12 +139,12 @@ export function App() {
             onClick={reset}
             title="Rensa allt"
             style={{
-              padding: "6px 10px",
+              padding: "6px 12px",
               fontSize: 12,
-              border: `1px solid ${theme.border}`,
+              border: `1px solid rgba(255,255,255,0.15)`,
               borderRadius: theme.radiusSm,
               background: "transparent",
-              color: theme.textMuted,
+              color: "rgba(255,255,255,0.7)",
               cursor: "pointer",
             }}
           >
@@ -175,13 +158,13 @@ export function App() {
             }}
             title="Stäng och gå tillbaka"
             style={{
-              padding: "6px 12px",
+              padding: "6px 14px",
               fontSize: 13,
               fontWeight: 600,
-              border: `1px solid ${theme.border}`,
+              border: `1px solid rgba(255,255,255,0.2)`,
               borderRadius: theme.radiusSm,
-              background: theme.bgCard,
-              color: theme.text,
+              background: "rgba(255,255,255,0.1)",
+              color: "#fff",
               cursor: "pointer",
               display: "flex",
               alignItems: "center",

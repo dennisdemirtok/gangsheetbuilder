@@ -1,39 +1,42 @@
 /**
- * "Precision Industrialism" Design System — 2026
- * Light-mode, clinical, premium. Coral-red accent.
- * Plus Jakarta Sans. No hard borders — tonal layering only.
+ * TransferCraft Design System — 2026
+ * Matches transfercraft.se: white base, dark header/accents, red CTA.
+ * Inter font family. Clean, premium, modern.
  */
 export const theme = {
-  // Backgrounds — tonal layering
-  bg: "#f7f9fb",
-  bgSidebar: "#e6e8ea",
-  bgCanvas: "#f2f4f6",
+  // Backgrounds
+  bg: "#ffffff",
+  bgSidebar: "#fafafa",
+  bgCanvas: "#f5f5f5",
   bgCard: "#ffffff",
-  bgInput: "#f2f4f6",
-  bgGlass: "rgba(255, 255, 255, 0.7)",
+  bgInput: "#f5f5f5",
+  bgGlass: "rgba(255, 255, 255, 0.85)",
+  bgDark: "#1a1a1a",
 
-  // Borders — ghost borders only (15% opacity)
-  border: "rgba(25, 28, 30, 0.08)",
-  borderHover: "rgba(25, 28, 30, 0.15)",
+  // Borders
+  border: "rgba(0, 0, 0, 0.08)",
+  borderHover: "rgba(0, 0, 0, 0.16)",
+  borderStrong: "rgba(0, 0, 0, 0.12)",
 
-  // Text — never pure black
-  text: "#191c1e",
-  textMuted: "#4f6071",
-  textDim: "#8a9199",
+  // Text
+  text: "rgba(0, 0, 0, 0.81)",
+  textMuted: "rgba(0, 0, 0, 0.55)",
+  textDim: "rgba(0, 0, 0, 0.35)",
+  textWhite: "#ffffff",
 
-  // Primary — TransferCraft Coral
-  accent: "#bb0018",
-  accentHover: "#d4001c",
-  accentBg: "rgba(187, 0, 24, 0.06)",
-  accentGradient: "linear-gradient(135deg, #bb0018, #e8002a)",
+  // Primary — TransferCraft Red
+  accent: "#e63946",
+  accentHover: "#d32f3f",
+  accentBg: "rgba(230, 57, 70, 0.06)",
+  accentGradient: "linear-gradient(135deg, #e63946, #ff4757)",
 
-  // Secondary — Industrial Slate
-  secondary: "#4f6071",
-  secondaryBg: "rgba(79, 96, 113, 0.08)",
+  // Secondary — Dark
+  secondary: "#1a1a1a",
+  secondaryBg: "rgba(0, 0, 0, 0.04)",
 
   // Semantic
-  danger: "#c62828",
-  dangerBg: "rgba(198, 40, 40, 0.06)",
+  danger: "#e63946",
+  dangerBg: "rgba(230, 57, 70, 0.06)",
   success: "#2e7d32",
   successBg: "rgba(46, 125, 50, 0.06)",
   warning: "#e65100",
@@ -42,37 +45,35 @@ export const theme = {
   // Canvas
   canvasWhite: "#ffffff",
 
-  // Header — glassmorphism
-  headerBg: "rgba(255, 255, 255, 0.7)",
+  // Header — dark like Transfercraft nav
+  headerBg: "#1a1a1a",
 
-  // Shadows — ambient occlusion, tinted not black
-  shadow: "0 2px 12px rgba(25, 28, 30, 0.04)",
-  shadowLg: "0 10px 40px rgba(25, 28, 30, 0.06)",
+  // Shadows
+  shadow: "0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04)",
+  shadowLg: "0 10px 40px rgba(0, 0, 0, 0.08)",
 
-  // Radius — industrial precision
-  radius: 6,
-  radiusSm: 2,
-  radiusLg: 12,
+  // Radius — matching site's 14px buttons
+  radius: 14,
+  radiusSm: 8,
+  radiusLg: 16,
 
   // ── Typography ──────────────────────────────────
-  fontFamily: "'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif",
+  fontFamily: "Inter, system-ui, -apple-system, sans-serif",
 
-  // Type scale (rem-based, root = 16px)
   fontSize: {
-    displayLg: "3.5rem",    // 56px — hero headlines
-    headlineLg: "2rem",     // 32px — section headers
-    headlineMd: "1.5rem",   // 24px — card titles
-    titleLg: "1.125rem",    // 18px — panel titles
-    titleMd: "1rem",        // 16px — buttons, large labels
-    bodyMd: "0.875rem",     // 14px — primary body text
-    bodySm: "0.8125rem",    // 13px — compact body text
-    labelLg: "0.8125rem",   // 13px — form labels
-    labelMd: "0.75rem",     // 12px — metadata, badges
-    labelSm: "0.6875rem",   // 11px — smallest readable
-    labelXs: "0.625rem",    // 10px — micro labels
+    displayLg: "3.5rem",    // 56px
+    headlineLg: "2rem",     // 32px
+    headlineMd: "1.5rem",   // 24px
+    titleLg: "1.125rem",    // 18px
+    titleMd: "1rem",        // 16px
+    bodyMd: "0.875rem",     // 14px
+    bodySm: "0.8125rem",    // 13px
+    labelLg: "0.8125rem",   // 13px
+    labelMd: "0.75rem",     // 12px
+    labelSm: "0.6875rem",   // 11px
+    labelXs: "0.625rem",    // 10px
   },
 
-  // Font weights
   fontWeight: {
     regular: 400,
     medium: 500,
@@ -80,18 +81,16 @@ export const theme = {
     bold: 700,
   },
 
-  // Letter spacing
   letterSpacing: {
-    tight: "-0.02em",       // headlines
-    normal: "0em",          // body
-    wide: "0.04em",         // section labels, uppercase
+    tight: "-0.02em",
+    normal: "0em",
+    wide: "0.04em",
   },
 
-  // Line heights
   lineHeight: {
-    tight: 1.2,             // headlines
-    normal: 1.5,            // body
-    relaxed: 1.6,           // long-form
+    tight: 1.2,
+    normal: 1.5,
+    relaxed: 1.6,
   },
 
   // ── Spacing scale (px) ────────────────────────
@@ -100,9 +99,9 @@ export const theme = {
     sm: 8,
     md: 12,
     lg: 16,
-    xl: 20,
-    "2xl": 24,
-    "3xl": 32,
-    "4xl": 40,
+    xl: 24,
+    "2xl": 32,
+    "3xl": 40,
+    "4xl": 48,
   },
 } as const;
