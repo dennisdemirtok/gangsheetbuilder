@@ -348,37 +348,64 @@
     var percentEl = document.getElementById('gs-upload-percent');
     var fileSizeMb = (file.size / 1024 / 1024).toFixed(1);
 
-    statusEl.textContent = 'Laddar upp ' + fileSizeMb + ' MB...';
+    statusEl.textContent = 'Förbereder uppladdning...';
     progressBar.style.width = '0%';
     percentEl.textContent = '0%';
 
-    var formData = new FormData();
-    formData.append('file', file);
+    // Step 1: Get presigned URL from backend (small request)
+    fetch(appProxyUrl + '/api/presign-sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, contentType: file.type || 'image/png', fileSize: file.size })
+    })
+    .then(function(res) { return res.json(); })
+    .then(function(presignData) {
+      if (presignData.error) throw new Error(presignData.error);
 
-    // Use XMLHttpRequest for upload progress tracking
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', appProxyUrl + '/api/upload-sheet', true);
+      statusEl.textContent = 'Laddar upp ' + fileSizeMb + ' MB...';
 
-    xhr.upload.onprogress = function(e) {
-      if (e.lengthComputable) {
-        var pct = Math.round((e.loaded / e.total) * 90); // 90% = upload, 10% = server processing
-        progressBar.style.width = pct + '%';
-        percentEl.textContent = pct + '%';
-        if (pct >= 90) statusEl.textContent = 'Analyserar fil...';
-      }
-    };
+      // Step 2: Upload directly to storage via presigned URL (large file, with progress)
+      // Note: If CORS blocks R2, we fall back to uploading through Railway
+      var uploadUrl = presignData.uploadUrl;
+      return new Promise(function(resolve, reject) {
+        var xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl, true);
+        xhr.setRequestHeader('Content-Type', file.type || 'image/png');
 
-    xhr.onload = function() {
+        xhr.upload.onprogress = function(e) {
+          if (e.lengthComputable) {
+            var pct = Math.round((e.loaded / e.total) * 85);
+            progressBar.style.width = pct + '%';
+            percentEl.textContent = pct + '%';
+          }
+        };
+
+        xhr.onload = function() {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(presignData);
+          } else {
+            reject(new Error('Upload till lagring misslyckades (' + xhr.status + ')'));
+          }
+        };
+        xhr.onerror = function() { reject(new Error('Nätverksfel vid uppladdning')); };
+        xhr.send(file);
+      });
+    })
+    .then(function(presignData) {
+      // Step 3: Analyze the file via backend (small request)
+      statusEl.textContent = 'Analyserar fil...';
+      progressBar.style.width = '90%';
+      percentEl.textContent = '90%';
+
+      return fetch(appProxyUrl + '/api/analyze-sheet', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ r2Key: presignData.r2Key, sheetId: presignData.sheetId, filename: file.name, fileSize: file.size })
+      }).then(function(res) { return res.json(); });
+    })
+    .then(function(data) {
       progressBar.style.width = '100%';
       percentEl.textContent = '100%';
-
-      var data;
-      try { data = JSON.parse(xhr.responseText); } catch(e) {
-        loadingDiv.style.display = 'none';
-        dropzone.style.display = 'block';
-        alert('Serverfel vid uppladdning');
-        return;
-      }
 
       setTimeout(function() {
         loadingDiv.style.display = 'none';
@@ -435,16 +462,13 @@
         updateSheetList();
         updatePriceDisplay();
         resultsDiv.style.display = 'block';
-      }, 300); // small delay for smooth transition
-    };
-
-    xhr.onerror = function() {
+      }, 300);
+    })
+    .catch(function(err) {
       loadingDiv.style.display = 'none';
       dropzone.style.display = 'block';
-      alert('Upload misslyckades. Kontrollera din internetanslutning.');
-    };
-
-    xhr.send(formData);
+      alert('Upload misslyckades: ' + err.message);
+    });
   }
 
   function updateSheetList() {
