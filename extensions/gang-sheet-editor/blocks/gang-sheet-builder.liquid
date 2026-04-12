@@ -46,6 +46,19 @@
   </div>
   {% endif %}
 
+  <!-- Variant data for JS -->
+  <script id="gangsheet-variant-data" type="application/json">
+    {
+      {% for variant in product.variants %}
+        "{{ variant.title | handle }}": {
+          "id": {{ variant.id }},
+          "price": "{{ variant.price | money_without_currency }}",
+          "title": "{{ variant.title }}"
+        }{% unless forloop.last %},{% endunless %}
+      {% endfor %}
+    }
+  </script>
+
   <!-- Info badges -->
   <div style="margin-top: 12px; display: flex; gap: 6px; flex-wrap: wrap;">
     <span style="padding: 4px 10px; background: rgba(46,125,50,0.06); color: #2e7d32; font-size: 11px; font-weight: 500; border-radius: 20px; display: flex; align-items: center; gap: 4px;">
@@ -229,9 +242,25 @@
   var uploadData = null;
   var sheetQty = 1;
   var allSheets = []; // Support multiple sheets
-  var prices = { 1: 349, 2: 599, 3: 849, 4: 1099, 5: 1299 };
+  var prices = { 1: 200, 2: 400, 3: 600, 4: 800, 5: 1000 };
 
-  function getPrice(meters) { return prices[meters] || (meters * 349); }
+  // Override with actual product variant prices if available
+  try {
+    var vdEl = document.getElementById('gangsheet-variant-data');
+    if (vdEl) {
+      var vd = JSON.parse(vdEl.textContent);
+      Object.keys(vd).forEach(function(key) {
+        var match = key.match(/(\d+)/);
+        if (match) {
+          var m = parseInt(match[1]);
+          var p = parseFloat(vd[key].price.replace(',', '.'));
+          if (!isNaN(p)) prices[m] = p;
+        }
+      });
+    }
+  } catch(e) {}
+
+  function getPrice(meters) { return prices[meters] || (meters * 200); }
 
   function updatePriceDisplay() {
     var totalPrice = 0;
@@ -408,18 +437,28 @@
       confirmBtn.textContent = 'Lägger i varukorg...';
       confirmBtn.disabled = true;
 
-      // Build cart items from all sheets
+      // Build cart items — match variant by meter count
       var shopifyRoot = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || '/';
 
-      // For now, add each sheet as a line item with properties
+      // Parse variant data from Liquid
+      var variantDataEl = document.getElementById('gangsheet-variant-data');
+      var variantMap = {};
+      var variantsByMeter = {};
+      try {
+        variantMap = JSON.parse(variantDataEl.textContent);
+        // Map meter count to variant ID: "1-meter" -> id
+        Object.keys(variantMap).forEach(function(key) {
+          var match = key.match(/(\d+)/);
+          if (match) variantsByMeter[parseInt(match[1])] = variantMap[key].id;
+        });
+      } catch(e) { console.warn('Could not parse variant data', e); }
+
       var items = allSheets.map(function(s) {
-        var sizeKey = s.data.sizeKey || ('58x' + (s.meters * 100));
-        // Find the matching variant from the product
-        var variantSelector = document.querySelector('[name="id"]') || document.querySelector('input[name="id"]');
-        var variantId = variantSelector ? variantSelector.value : null;
+        // Find correct variant based on meters
+        var variantId = variantsByMeter[s.meters] || {{ product.selected_or_first_available_variant.id | json }};
 
         return {
-          id: variantId || {{ product.selected_or_first_available_variant.id | json }},
+          id: variantId,
           quantity: s.qty,
           properties: {
             '_gang_sheet_type': 'pre-made',

@@ -1,0 +1,24 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "61e1e2a72120fee36b76af29afb3772b"
+name = "Gangsheet Builder"
+application_url = "https://gangsheetbuilder-production.up.railway.app"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+dev_store_url = "viwrsi-jk.myshopify.com"
+
+[webhooks]
+api_version = "2026-07"
+
+[access_scopes]
+scopes = "read_all_orders,read_orders,read_products,write_orders,write_products"
+
+[auth]
+redirect_urls = [ "https://gangsheetbuilder-production.up.railway.app/auth/callback" ]
+
+[app_proxy]
+url = "https://gangsheetbuilder-production.up.railway.app/app-proxy"
+subpath = "gangsheet"
+prefix = "apps"
