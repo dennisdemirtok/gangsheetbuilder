@@ -1,0 +1,495 @@
+<!-- Gang Sheet Builder — Product Page Section -->
+<div style="margin: 24px 0; font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;">
+
+  <!-- Main CTA — Build your own -->
+  <button
+    id="gangsheet-launch-btn"
+    type="button"
+    style="
+      width: 100%;
+      padding: 16px 24px;
+      font-family: inherit;
+      font-size: 0.875rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #fff;
+      background: linear-gradient(135deg, #bb0018, #e8002a);
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      box-shadow: 0 4px 16px rgba(187, 0, 24, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    "
+    onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 20px rgba(187,0,24,0.25)'"
+    onmouseout="this.style.transform='';this.style.boxShadow='0 4px 16px rgba(187,0,24,0.15)'"
+  >
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+    {{ block.settings.button_text }}
+  </button>
+
+  {% if block.settings.show_upload_link %}
+  <!-- Secondary CTA — Upload ready sheet -->
+  <div style="margin-top: 10px; padding: 14px 18px; background: #f2f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+    <div style="flex: 1;">
+      <p style="margin: 0; font-weight: 600; font-size: 13px; color: #191c1e;">{{ block.settings.upload_heading }}</p>
+      <p style="margin: 3px 0 0; font-size: 12px; color: #4f6071; line-height: 1.4;">{{ block.settings.upload_subtext }}</p>
+    </div>
+    <a href="#" id="gangsheet-upload-link" style="color: #bb0018; font-weight: 600; font-size: 13px; text-decoration: none; white-space: nowrap; display: flex; align-items: center; gap: 4px; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
+      Ladda upp
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+    </a>
+  </div>
+  {% endif %}
+
+  <!-- Info badges -->
+  <div style="margin-top: 12px; display: flex; gap: 6px; flex-wrap: wrap;">
+    <span style="padding: 4px 10px; background: rgba(46,125,50,0.06); color: #2e7d32; font-size: 11px; font-weight: 500; border-radius: 20px; display: flex; align-items: center; gap: 4px;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+      300 DPI utskriftskvalitet
+    </span>
+    <span style="padding: 4px 10px; background: rgba(79,96,113,0.06); color: #4f6071; font-size: 11px; font-weight: 500; border-radius: 20px; display: flex; align-items: center; gap: 4px;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+      58 cm bredd
+    </span>
+    <span style="padding: 4px 10px; background: rgba(79,96,113,0.06); color: #4f6071; font-size: 11px; font-weight: 500; border-radius: 20px; display: flex; align-items: center; gap: 4px;">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Premium DTF-film
+    </span>
+  </div>
+</div>
+
+<!-- Fullscreen overlay for EDITOR -->
+<div
+  id="gangsheet-overlay"
+  style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; width: 100vw; height: 100vh; z-index: 2147483647; background: #f7f9fb; overflow: hidden;"
+>
+  <div
+    id="gangsheet-editor-root"
+    data-shop="{{ shop.permanent_domain }}"
+    data-app-proxy-url="/apps/gangsheet"
+    data-currency="{{ shop.currency }}"
+    style="width: 100vw; height: 100vh; overflow: hidden;"
+  >
+    <div id="gangsheet-loading" style="display: flex; align-items: center; justify-content: center; height: 100vh; background: #f7f9fb;">
+      <div style="text-align: center;">
+        <div style="width: 44px; height: 44px; border: 3px solid #bb0018; border-top-color: transparent; border-radius: 50%; animation: gs-lspin 0.8s linear infinite; margin: 0 auto 16px;"></div>
+        <p style="color: #4f6071; font-size: 15px; font-family: system-ui;">{{ block.settings.loading_text }}</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Upload Sheet — Fullscreen dark theme matching editor -->
+<div id="gangsheet-upload-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; width:100vw; height:100vh; z-index:2147483647; background:#f7f9fb; font-family:'Plus Jakarta Sans','Inter',system-ui,-apple-system,sans-serif; overflow:hidden;">
+
+  <!-- Header bar — same as editor -->
+  <div style="height:52px; display:flex; align-items:center; gap:12px; padding:0 16px; background:rgba(255,255,255,0.7); border-bottom:1px solid rgba(25,28,30,0.08);">
+    <div style="width:28px; height:28px; border-radius:6px; background:linear-gradient(135deg,#bb0018,#e8002a); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; color:#fff;">↑</div>
+    <span style="font-size:15px; font-weight:600; color:#191c1e;">Ladda upp färdigt ark</span>
+    <div style="flex:1;"></div>
+    <button id="gs-sheet-close-btn" style="padding:6px 12px; font-size:13px; font-weight:600; border:1px solid rgba(25,28,30,0.08); border-radius:6px; background:#ffffff; color:#191c1e; cursor:pointer; display:flex; align-items:center; gap:4px;">← Tillbaka</button>
+  </div>
+
+  <!-- Centered content -->
+  <div style="display:flex; align-items:center; justify-content:center; height:calc(100vh - 52px);">
+    <div style="max-width:480px; width:90%; padding:0 20px;">
+
+      <p style="margin:0 0 20px; font-size:13px; color:#4f6071; text-align:center;">Filen måste vara 58 cm bred. Rekommenderat: 300 DPI, transparent PNG.</p>
+
+      <!-- Upload area -->
+      <div id="gs-sheet-dropzone" style="border:2px dashed rgba(25,28,30,0.08); border-radius:12px; padding:40px 16px; text-align:center; cursor:pointer; transition:all 0.2s; background:#e6e8ea;">
+        <input type="file" id="gs-sheet-file-input" accept="image/png,image/jpeg,image/tiff" style="display:none;">
+        <div style="width:52px; height:52px; border-radius:12px; background:rgba(187,0,24,0.06); display:flex; align-items:center; justify-content:center; margin:0 auto 12px; font-size:24px; color:#bb0018;">+</div>
+        <p style="margin:0; font-size:15px; font-weight:600; color:#191c1e;">Dra din fil hit eller klicka</p>
+        <p style="margin:8px 0 0; font-size:12px; color:#8a9199;">PNG, JPG, TIFF — Max 50 MB</p>
+      </div>
+
+      <!-- Results area -->
+      <div id="gs-sheet-results" style="display:none; margin-top:20px;">
+        <div id="gs-sheet-info" style="padding:16px; background:#e6e8ea; border:1px solid rgba(25,28,30,0.08); border-radius:10px; margin-bottom:14px;"></div>
+        <div id="gs-sheet-warnings" style="display:none; margin-bottom:14px;"></div>
+
+        <!-- Antal ark -->
+        <div style="display:flex; gap:12px; align-items:center; margin-bottom:14px; padding:12px 16px; background:#e6e8ea; border:1px solid rgba(25,28,30,0.08); border-radius:10px;">
+          <span style="font-size:13px; color:#191c1e; font-weight:600;">Antal ark:</span>
+          <button class="gs-qty-btn" data-delta="-1" style="width:32px; height:32px; border:1px solid rgba(25,28,30,0.08); border-radius:6px; background:#f2f4f6; color:#191c1e; cursor:pointer; font-size:16px; font-weight:700;">−</button>
+          <span id="gs-sheet-qty" style="font-size:18px; font-weight:700; color:#bb0018; min-width:24px; text-align:center;">1</span>
+          <button class="gs-qty-btn" data-delta="1" style="width:32px; height:32px; border:1px solid rgba(25,28,30,0.08); border-radius:6px; background:#f2f4f6; color:#191c1e; cursor:pointer; font-size:16px; font-weight:700;">+</button>
+          <div style="flex:1;"></div>
+          <span id="gs-sheet-total-price" style="font-size:18px; font-weight:700; color:#bb0018;"></span>
+        </div>
+
+        <!-- Uploaded sheets list -->
+        <div id="gs-sheet-list" style="display:none; margin-bottom:14px;"></div>
+
+        <!-- Add another sheet -->
+        <button id="gs-sheet-add-more" style="display:none; width:100%; padding:10px; font-size:12px; font-weight:600; border:1px dashed rgba(25,28,30,0.08); border-radius:10px; background:transparent; color:#4f6071; cursor:pointer; margin-bottom:14px; transition:all 0.2s;" onmouseover="this.style.borderColor='#bb0018';this.style.color='#bb0018'" onmouseout="this.style.borderColor='rgba(25,28,30,0.08)';this.style.color='#4f6071'">+ Lägg till fler ark</button>
+
+        <div id="gs-sheet-actions" style="display:flex; gap:10px;">
+          <button id="gs-sheet-cancel-btn" style="flex:1; padding:14px; font-size:13px; font-weight:600; border:1px solid rgba(25,28,30,0.08); border-radius:10px; background:#e6e8ea; cursor:pointer; color:#4f6071;">Avbryt</button>
+          <button id="gs-sheet-confirm-btn" style="flex:1; padding:14px; font-size:14px; font-weight:700; border:none; border-radius:10px; background:linear-gradient(135deg,#bb0018,#e8002a); color:#fff; cursor:pointer; box-shadow:0 4px 16px rgba(187,0,24,0.2);">Lägg i varukorg</button>
+        </div>
+      </div>
+
+      <!-- Loading state -->
+      <div id="gs-sheet-loading" style="display:none; text-align:center; padding:32px;">
+        <div style="width:36px; height:36px; border:3px solid #bb0018; border-top-color:transparent; border-radius:50%; animation:gs-lspin 0.8s linear infinite; margin:0 auto 14px;"></div>
+        <p style="color:#4f6071; font-size:14px;">Analyserar fil...</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+  @keyframes gs-lspin { to { transform: rotate(360deg); } }
+  #gangsheet-launch-btn, #gangsheet-upload-modal, #gangsheet-upload-modal * {
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif !important;
+  }
+  body.gangsheet-open { overflow: hidden !important; height: 100vh !important; }
+  #gangsheet-overlay, #gangsheet-overlay * { box-sizing: border-box !important; }
+  #gangsheet-overlay {
+    position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
+    width: 100vw !important; height: 100vh !important; max-width: none !important; max-height: none !important;
+    margin: 0 !important; padding: 0 !important; transform: none !important; z-index: 2147483647 !important; background: #f7f9fb !important;
+  }
+  #gangsheet-editor-root {
+    position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important;
+    max-width: none !important; margin: 0 !important; padding: 0 !important;
+  }
+  #gs-sheet-dropzone:hover, #gs-sheet-dropzone.dragover { border-color: #bb0018 !important; background: rgba(187,0,24,0.06) !important; }
+  #gangsheet-upload-modal {
+    position: fixed !important; top: 0 !important; left: 0 !important;
+    width: 100vw !important; height: 100vh !important;
+    max-width: none !important; margin: 0 !important; padding: 0 !important;
+    z-index: 2147483647 !important; background: #f7f9fb !important;
+  }
+</style>
+
+<script>
+(function() {
+  var overlay = document.getElementById('gangsheet-overlay');
+  var btn = document.getElementById('gangsheet-launch-btn');
+  var uploadLink = document.getElementById('gangsheet-upload-link');
+  var mounted = false;
+  var scriptLoaded = false;
+  var appProxyUrl = '/apps/gangsheet';
+
+  // === EDITOR FLOW ===
+  function openEditor() {
+    overlay.style.display = 'block';
+    document.body.classList.add('gangsheet-open');
+    if (!scriptLoaded) {
+      scriptLoaded = true;
+      var script = document.createElement('script');
+      script.src = "{{ 'editor.iife.js' | asset_url }}";
+      script.onload = function() {
+        if (window.__gangsheetMount) { window.__gangsheetMount(); }
+      };
+      document.head.appendChild(script);
+    } else if (window.__gangsheetMount) {
+      // Script already loaded — just re-mount
+      window.__gangsheetMount();
+    }
+  }
+
+  function closeEditor() {
+    // Let React clean up properly first
+    if (window.__gangsheetCloseEditor) {
+      window.__gangsheetCloseEditor();
+    }
+    overlay.style.display = 'none';
+    document.body.classList.remove('gangsheet-open');
+    document.body.style.overflow = '';
+  }
+
+  if (btn) btn.addEventListener('click', openEditor);
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && overlay.style.display === 'block') closeEditor();
+  });
+
+  // === UPLOAD SHEET FLOW ===
+  var modal = document.getElementById('gangsheet-upload-modal');
+  var dropzone = document.getElementById('gs-sheet-dropzone');
+  var fileInput = document.getElementById('gs-sheet-file-input');
+  var resultsDiv = document.getElementById('gs-sheet-results');
+  var infoDiv = document.getElementById('gs-sheet-info');
+  var warningsDiv = document.getElementById('gs-sheet-warnings');
+  var loadingDiv = document.getElementById('gs-sheet-loading');
+  var cancelBtn = document.getElementById('gs-sheet-cancel-btn');
+  var confirmBtn = document.getElementById('gs-sheet-confirm-btn');
+  var uploadData = null;
+  var sheetQty = 1;
+  var allSheets = []; // Support multiple sheets
+  var prices = { 1: 349, 2: 599, 3: 849, 4: 1099, 5: 1299 };
+
+  function getPrice(meters) { return prices[meters] || (meters * 349); }
+
+  function updatePriceDisplay() {
+    var totalPrice = 0;
+    if (allSheets.length > 0) {
+      allSheets.forEach(function(s) { totalPrice += getPrice(s.meters) * s.qty; });
+    } else if (uploadData && uploadData.approved) {
+      totalPrice = getPrice(uploadData.meters || Math.ceil(uploadData.heightMm / 1000)) * sheetQty;
+    }
+    var priceEl = document.getElementById('gs-sheet-total-price');
+    if (priceEl) priceEl.textContent = totalPrice + ' kr';
+    if (confirmBtn && uploadData && uploadData.approved) {
+      confirmBtn.textContent = 'Lägg i varukorg — ' + totalPrice + ' kr';
+    }
+  }
+
+  // Quantity buttons
+  document.querySelectorAll('.gs-qty-btn').forEach(function(b) {
+    b.addEventListener('click', function() {
+      var delta = parseInt(b.dataset.delta);
+      sheetQty = Math.max(1, Math.min(50, sheetQty + delta));
+      document.getElementById('gs-sheet-qty').textContent = sheetQty;
+      if (allSheets.length > 0 && allSheets[allSheets.length - 1]) {
+        allSheets[allSheets.length - 1].qty = sheetQty;
+      }
+      updatePriceDisplay();
+    });
+  });
+
+  // Add more sheets button
+  var addMoreBtn = document.getElementById('gs-sheet-add-more');
+  if (addMoreBtn) {
+    addMoreBtn.addEventListener('click', function() {
+      // Reset for new upload
+      sheetQty = 1;
+      document.getElementById('gs-sheet-qty').textContent = '1';
+      dropzone.style.display = 'block';
+      resultsDiv.style.display = 'none';
+      uploadData = null;
+    });
+  }
+
+  if (uploadLink) {
+    uploadLink.addEventListener('click', function(e) {
+      e.preventDefault();
+      // Move modal to body to escape theme CSS containers
+      if (modal.parentElement !== document.body) {
+        document.body.appendChild(modal);
+      }
+      modal.style.display = 'block';
+      document.body.style.overflow = 'hidden';
+      resultsDiv.style.display = 'none';
+      loadingDiv.style.display = 'none';
+      dropzone.style.display = 'block';
+    });
+  }
+
+  // Close modal
+  function closeUploadModal() {
+    modal.style.display = 'none';
+    document.body.style.overflow = '';
+  }
+  if (cancelBtn) cancelBtn.addEventListener('click', closeUploadModal);
+  var closeBtn = document.getElementById('gs-sheet-close-btn');
+  if (closeBtn) closeBtn.addEventListener('click', closeUploadModal);
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && modal.style.display === 'block') closeUploadModal();
+  });
+
+  // Drag & drop
+  if (dropzone) {
+    dropzone.addEventListener('click', function() { fileInput.click(); });
+    dropzone.addEventListener('dragover', function(e) { e.preventDefault(); dropzone.classList.add('dragover'); });
+    dropzone.addEventListener('dragleave', function() { dropzone.classList.remove('dragover'); });
+    dropzone.addEventListener('drop', function(e) {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      if (e.dataTransfer.files.length > 0) handleSheetFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', function() {
+      if (fileInput.files.length > 0) handleSheetFile(fileInput.files[0]);
+    });
+  }
+
+  function handleSheetFile(file) {
+    dropzone.style.display = 'none';
+    loadingDiv.style.display = 'block';
+    resultsDiv.style.display = 'none';
+
+    var formData = new FormData();
+    formData.append('file', file);
+
+    fetch(appProxyUrl + '/api/upload-sheet', { method: 'POST', body: formData })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        loadingDiv.style.display = 'none';
+
+        if (data.error) {
+          alert('Fel: ' + data.error);
+          dropzone.style.display = 'block';
+          return;
+        }
+
+        uploadData = data;
+
+        // Show info — dark theme
+        var sizeText = data.widthCm + ' × ' + data.heightCm + ' cm';
+        var dpiColor = data.dpi >= 300 ? '#2e7d32' : data.dpi >= 200 ? '#e65100' : '#c62828';
+        var dpiBg = data.dpi >= 300 ? 'rgba(52,211,153,0.12)' : data.dpi >= 200 ? 'rgba(251,191,36,0.12)' : 'rgba(255,107,107,0.12)';
+        infoDiv.innerHTML =
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+            '<span style="font-weight:600;font-size:13px;color:#191c1e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;">' + file.name + '</span>' +
+            '<span style="font-size:11px;color:#8a9199;flex-shrink:0;">' + (data.fileSizeBytes / 1024 / 1024).toFixed(1) + ' MB</span>' +
+          '</div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+            '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f2f4f6;color:#4f6071;">' + sizeText + '</span>' +
+            '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:' + dpiBg + ';color:' + dpiColor + ';font-weight:600;">' + data.dpi + ' DPI</span>' +
+            '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f2f4f6;color:#4f6071;">' + data.widthPx + '×' + data.heightPx + ' px</span>' +
+            (data.hasAlpha ? '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:rgba(52,211,153,0.12);color:#2e7d32;">✓ Transparent</span>' : '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:rgba(255,107,107,0.12);color:#c62828;">✗ Ej transparent</span>') +
+          '</div>';
+
+        // Show warnings
+        if (data.warnings && data.warnings.length > 0) {
+          warningsDiv.style.display = 'block';
+          warningsDiv.innerHTML = data.warnings.map(function(w) {
+            return '<div style="padding:8px 12px;background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.2);border-radius:8px;font-size:12px;color:#e65100;margin-bottom:6px;">⚠ ' + w + '</div>';
+          }).join('');
+        } else {
+          warningsDiv.style.display = 'none';
+        }
+
+        // Add to sheets list
+        if (data.approved) {
+          var meters = data.meters || Math.ceil(data.heightMm / 1000);
+          allSheets.push({ data: data, qty: sheetQty, meters: meters, filename: file.name });
+          confirmBtn.style.opacity = '1';
+          confirmBtn.disabled = false;
+          if (addMoreBtn) addMoreBtn.style.display = 'block';
+        } else {
+          confirmBtn.style.opacity = '0.5';
+          confirmBtn.textContent = 'Kan inte lägga till — fixa varningar';
+          confirmBtn.disabled = true;
+          if (addMoreBtn) addMoreBtn.style.display = 'none';
+        }
+
+        // Update sheet list display
+        updateSheetList();
+        updatePriceDisplay();
+        resultsDiv.style.display = 'block';
+      })
+      .catch(function(err) {
+        loadingDiv.style.display = 'none';
+        dropzone.style.display = 'block';
+        alert('Upload misslyckades: ' + err.message);
+      });
+  }
+
+  function updateSheetList() {
+    var listDiv = document.getElementById('gs-sheet-list');
+    if (!listDiv || allSheets.length <= 1) { if (listDiv) listDiv.style.display = 'none'; return; }
+    listDiv.style.display = 'block';
+    listDiv.innerHTML = '<p style="font-size:11px;color:#4f6071;margin:0 0 6px;font-weight:600;">Uppladdade ark:</p>' +
+      allSheets.map(function(s, i) {
+        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#e6e8ea;border:1px solid rgba(25,28,30,0.08);border-radius:6px;margin-bottom:4px;font-size:11px;">' +
+          '<span style="color:#191c1e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;">' + s.filename + '</span>' +
+          '<span style="color:#bb0018;font-weight:600;">' + s.qty + ' st × ' + getPrice(s.meters) + ' kr</span>' +
+        '</div>';
+      }).join('');
+  }
+
+  // Confirm — add to Shopify cart
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', function() {
+      if (allSheets.length === 0) return;
+      confirmBtn.textContent = 'Lägger i varukorg...';
+      confirmBtn.disabled = true;
+
+      // Build cart items from all sheets
+      var shopifyRoot = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || '/';
+
+      // For now, add each sheet as a line item with properties
+      var items = allSheets.map(function(s) {
+        var sizeKey = s.data.sizeKey || ('58x' + (s.meters * 100));
+        // Find the matching variant from the product
+        var variantSelector = document.querySelector('[name="id"]') || document.querySelector('input[name="id"]');
+        var variantId = variantSelector ? variantSelector.value : null;
+
+        return {
+          id: variantId || {{ product.selected_or_first_available_variant.id | json }},
+          quantity: s.qty,
+          properties: {
+            '_gang_sheet_type': 'pre-made',
+            '_sheet_id': s.data.sheetId || '',
+            '_r2_key': s.data.r2Key || '',
+            '_filename': s.filename,
+            '_dimensions': s.data.widthCm + 'x' + s.data.heightCm + ' cm',
+            '_dpi': String(s.data.dpi),
+            '_meters': String(s.meters)
+          }
+        };
+      });
+
+      fetch(shopifyRoot + 'cart/add.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: items })
+      })
+      .then(function(res) {
+        if (!res.ok) throw new Error('Kunde inte lägga till i varukorgen');
+        return res.json();
+      })
+      .then(function() {
+        window.location.href = shopifyRoot + 'cart';
+      })
+      .catch(function(err) {
+        alert('Fel: ' + err.message);
+        confirmBtn.textContent = 'Försök igen';
+        confirmBtn.disabled = false;
+      });
+    });
+  }
+})();
+</script>
+
+{% schema %}
+{
+  "name": "Gang Sheet Builder",
+  "target": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "button_text",
+      "label": "Knapptext",
+      "default": "BYGG DITT EGET GANG SHEET"
+    },
+    {
+      "type": "text",
+      "id": "loading_text",
+      "label": "Laddningstext",
+      "default": "Laddar Gang Sheet Builder..."
+    },
+    {
+      "type": "checkbox",
+      "id": "show_upload_link",
+      "label": "Visa uppladdningslänk",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "upload_heading",
+      "label": "Uppladdningsrubrik",
+      "default": "Har du redan ett färdigt gang sheet?"
+    },
+    {
+      "type": "text",
+      "id": "upload_subtext",
+      "label": "Uppladdningstext",
+      "default": "Ladda enkelt upp ditt färdiga ark med några klick!"
+    }
+  ]
+}
+{% endschema %}

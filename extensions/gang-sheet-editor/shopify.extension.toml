@@ -1,0 +1,11 @@
+api_version = "2025-04"
+
+[[extensions]]
+name = "Gang Sheet Editor"
+handle = "gang-sheet-editor"
+uid = "bb747354-19c0-1e17-aea6-f92d2f44c0af548f20c0"
+type = "theme"
+
+  [[extensions.targeting]]
+  module = "./blocks/gang-sheet-builder.liquid"
+  target = "section"

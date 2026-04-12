@@ -1,0 +1,128 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false) @map("is_online")
+  scope               String?
+  expires             DateTime?
+  accessToken         String    @map("access_token")
+  userId              BigInt?   @map("user_id")
+  firstName           String?   @map("first_name")
+  lastName            String?   @map("last_name")
+  email               String?
+  accountOwner        Boolean   @default(false) @map("account_owner")
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false) @map("email_verified")
+  refreshToken        String?   @map("refresh_token")
+  refreshTokenExpires DateTime? @map("refresh_token_expires")
+
+  @@map("gangsheet_session")
+}
+
+model GangSheet {
+  id                String   @id @default(cuid())
+  sessionId         String   @map("session_id")
+  shopDomain        String   @map("shop_domain")
+  shopifyOrderId    String?  @map("shopify_order_id")
+  shopifyLineItemId String?  @map("shopify_line_item_id")
+  widthMm           Int      @map("width_mm")
+  heightMm          Int      @map("height_mm")
+  filmType          String   @default("standard") @map("film_type")
+  canvasStateJson   Json?    @map("canvas_state_json")
+  previewUrl        String?  @map("preview_url")
+  exportUrl         String?  @map("export_url")
+  exportPdfUrl      String?  @map("export_pdf_url")
+  status            String   @default("draft")
+  totalAreaUsed     Float?   @map("total_area_used")
+  imagesCount       Int      @default(0) @map("images_count")
+  priceSEK          Int?     @map("price_sek")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  images  GangSheetImage[]
+  exports GangSheetExport[]
+
+  @@index([shopifyOrderId])
+  @@index([shopDomain])
+  @@index([status])
+  @@index([sessionId])
+  @@index([shopDomain, status])
+  @@index([shopDomain, createdAt])
+  @@map("gangsheet_gang_sheet")
+}
+
+model GangSheetImage {
+  id               String     @id @default(cuid())
+  gangSheetId      String?    @map("gang_sheet_id")
+  gangSheet        GangSheet? @relation(fields: [gangSheetId], references: [id], onDelete: Cascade)
+  originalUrl      String    @map("original_url")
+  thumbnailUrl     String?   @map("thumbnail_url")
+  originalFilename String    @map("original_filename")
+  mimeType         String    @map("mime_type")
+  fileSizeBytes    Int       @map("file_size_bytes")
+  widthPx          Int       @map("width_px")
+  heightPx         Int       @map("height_px")
+  dpiX             Int?      @map("dpi_x")
+  dpiY             Int?      @map("dpi_y")
+  positionX        Float?    @map("position_x")
+  positionY        Float?    @map("position_y")
+  displayWidth     Float?    @map("display_width")
+  displayHeight    Float?    @map("display_height")
+  rotation         Int       @default(0)
+  flipX            Boolean   @default(false) @map("flip_x")
+  flipY            Boolean   @default(false) @map("flip_y")
+  quantity         Int       @default(1)
+  bgRemoved        Boolean   @default(false) @map("bg_removed")
+  bgRemovedUrl     String?   @map("bg_removed_url")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@index([gangSheetId])
+  @@index([createdAt])
+  @@index([bgRemoved])
+  @@map("gangsheet_gang_sheet_image")
+}
+
+model GangSheetExport {
+  id            String    @id @default(cuid())
+  gangSheetId   String    @map("gang_sheet_id")
+  gangSheet     GangSheet @relation(fields: [gangSheetId], references: [id], onDelete: Cascade)
+  format        String
+  url           String
+  fileSizeBytes Int?      @map("file_size_bytes")
+  dpi           Int       @default(300)
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([gangSheetId])
+  @@index([createdAt])
+  @@map("gangsheet_gang_sheet_export")
+}
+
+model AppConfig {
+  id               String   @id @default(cuid())
+  shopDomain       String   @unique @map("shop_domain")
+  priceConfig      Json     @default("{\"58x100\":349,\"58x200\":599,\"58x300\":849,\"58x400\":1099,\"58x500\":1299}") @map("price_config")
+  filmModifiers    Json     @default("{\"standard\":1.0,\"glitter\":1.5,\"glow\":1.3,\"gold_foil\":1.8,\"silver_foil\":1.8}") @map("film_modifiers")
+  gapSizeMm        Int      @default(3) @map("gap_size_mm")
+  minDpi           Int      @default(150) @map("min_dpi")
+  maxFileSizeMb    Int      @default(50) @map("max_file_size_mb")
+  allowedFormats   Json     @default("[\"png\",\"jpg\",\"jpeg\",\"svg\",\"pdf\",\"tiff\",\"tif\"]") @map("allowed_formats")
+  autoDeleteDays   Int      @default(90) @map("auto_delete_days")
+  exportDeleteDays Int      @default(30) @map("export_delete_days")
+  variantMapping   Json?    @map("variant_mapping")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("gangsheet_app_config")
+}

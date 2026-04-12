@@ -1,0 +1,27 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "1ae578ccc6a3282cc27b0a6f6a8c7535"
+name = "TransferCraft Gang Sheet Build"
+application_url = "https://localhost:3000"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+dev_store_url = "transfercraft-dev.myshopify.com"
+
+[webhooks]
+api_version = "2026-01"
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_all_orders,read_orders,write_orders,read_products,write_products"
+optional_scopes = [ ]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [ "https://localhost:3000/auth/callback" ]
+
+[app_proxy]
+url = "https://gangsheet-builder.fly.dev/app-proxy"
+subpath = "gangsheet"
+prefix = "apps"
