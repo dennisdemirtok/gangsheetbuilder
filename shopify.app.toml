@@ -2,7 +2,7 @@
 
 client_id = "1ae578ccc6a3282cc27b0a6f6a8c7535"
 name = "TransferCraft Gang Sheet Build"
-application_url = "https://localhost:3000"
+application_url = "https://gangsheetbuilder-production.up.railway.app"
 embedded = true
 
 [build]
@@ -19,9 +19,9 @@ optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [ "https://localhost:3000/auth/callback" ]
+redirect_urls = [ "https://gangsheetbuilder-production.up.railway.app/auth/callback" ]
 
 [app_proxy]
-url = "https://gangsheet-builder.fly.dev/app-proxy"
+url = "https://gangsheetbuilder-production.up.railway.app/app-proxy"
 subpath = "gangsheet"
 prefix = "apps"
