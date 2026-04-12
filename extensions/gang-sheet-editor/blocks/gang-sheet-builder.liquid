@@ -128,13 +128,13 @@
         <div id="gs-sheet-warnings" style="display:none; margin-bottom:14px;"></div>
 
         <!-- Antal ark -->
-        <div style="display:flex; gap:12px; align-items:center; margin-bottom:14px; padding:12px 16px; background:#e6e8ea; border:1px solid rgba(25,28,30,0.08); border-radius:10px;">
-          <span style="font-size:13px; color:#191c1e; font-weight:600;">Antal ark:</span>
-          <button class="gs-qty-btn" data-delta="-1" style="width:32px; height:32px; border:1px solid rgba(25,28,30,0.08); border-radius:6px; background:#f2f4f6; color:#191c1e; cursor:pointer; font-size:16px; font-weight:700;">−</button>
-          <span id="gs-sheet-qty" style="font-size:18px; font-weight:700; color:#bb0018; min-width:24px; text-align:center;">1</span>
-          <button class="gs-qty-btn" data-delta="1" style="width:32px; height:32px; border:1px solid rgba(25,28,30,0.08); border-radius:6px; background:#f2f4f6; color:#191c1e; cursor:pointer; font-size:16px; font-weight:700;">+</button>
+        <div style="display:flex; gap:10px; align-items:center; margin-bottom:14px; padding:12px 16px; background:#f5f5f5; border-radius:8px; font-family:Inter,system-ui,sans-serif;">
+          <span style="font-size:13px; color:rgba(0,0,0,0.81); font-weight:600;">Antal:</span>
+          <button class="gs-qty-btn" data-delta="-1" style="width:30px; height:30px; border:1px solid rgba(0,0,0,0.1); border-radius:6px; background:#fff; color:rgba(0,0,0,0.6); cursor:pointer; font-size:16px; font-weight:600; display:flex; align-items:center; justify-content:center;">−</button>
+          <span id="gs-sheet-qty" style="font-size:16px; font-weight:700; color:rgba(0,0,0,0.81); min-width:24px; text-align:center;">1</span>
+          <button class="gs-qty-btn" data-delta="1" style="width:30px; height:30px; border:1px solid rgba(0,0,0,0.1); border-radius:6px; background:#fff; color:rgba(0,0,0,0.6); cursor:pointer; font-size:16px; font-weight:600; display:flex; align-items:center; justify-content:center;">+</button>
           <div style="flex:1;"></div>
-          <span id="gs-sheet-total-price" style="font-size:18px; font-weight:700; color:#bb0018;"></span>
+          <span id="gs-sheet-total-price" style="font-size:18px; font-weight:700; color:#e63946;"></span>
         </div>
 
         <!-- Uploaded sheets list -->
@@ -419,16 +419,58 @@
 
   function updateSheetList() {
     var listDiv = document.getElementById('gs-sheet-list');
-    if (!listDiv || allSheets.length <= 1) { if (listDiv) listDiv.style.display = 'none'; return; }
+    if (!listDiv) return;
+    if (allSheets.length === 0) { listDiv.style.display = 'none'; return; }
     listDiv.style.display = 'block';
-    listDiv.innerHTML = '<p style="font-size:11px;color:#4f6071;margin:0 0 6px;font-weight:600;">Uppladdade ark:</p>' +
+
+    var totalPrice = 0;
+    allSheets.forEach(function(s) { totalPrice += s.qty * getPrice(s.meters); });
+
+    listDiv.innerHTML =
+      '<p style="font-family:Inter,system-ui,sans-serif;font-size:12px;color:rgba(0,0,0,0.5);margin:0 0 8px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Dina ark</p>' +
       allSheets.map(function(s, i) {
-        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 10px;background:#e6e8ea;border:1px solid rgba(25,28,30,0.08);border-radius:6px;margin-bottom:4px;font-size:11px;">' +
-          '<span style="color:#191c1e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;">' + s.filename + '</span>' +
-          '<span style="color:#bb0018;font-weight:600;">' + s.qty + ' st × ' + getPrice(s.meters) + ' kr</span>' +
+        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#f5f5f5;border-radius:8px;margin-bottom:6px;font-family:Inter,system-ui,sans-serif;">' +
+          '<div style="flex:1;min-width:0;">' +
+            '<p style="margin:0;font-size:13px;font-weight:500;color:rgba(0,0,0,0.81);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + s.filename + '</p>' +
+            '<p style="margin:2px 0 0;font-size:11px;color:rgba(0,0,0,0.4);">' + s.data.widthCm + '×' + s.data.heightCm + ' cm · ' + s.data.dpi + ' DPI · ' + s.meters + 'm</p>' +
+          '</div>' +
+          '<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">' +
+            '<button onclick="window.__gsSheetQty(' + i + ',-1)" style="width:28px;height:28px;border:1px solid rgba(0,0,0,0.1);border-radius:6px;background:#fff;cursor:pointer;font-size:14px;color:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;">−</button>' +
+            '<span style="width:24px;text-align:center;font-size:14px;font-weight:600;color:rgba(0,0,0,0.81);">' + s.qty + '</span>' +
+            '<button onclick="window.__gsSheetQty(' + i + ',1)" style="width:28px;height:28px;border:1px solid rgba(0,0,0,0.1);border-radius:6px;background:#fff;cursor:pointer;font-size:14px;color:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;">+</button>' +
+          '</div>' +
+          '<span style="font-size:14px;font-weight:700;color:#e63946;white-space:nowrap;min-width:60px;text-align:right;">' + (s.qty * getPrice(s.meters)) + ' kr</span>' +
+          '<button onclick="window.__gsSheetRemove(' + i + ')" style="width:24px;height:24px;border:none;background:none;cursor:pointer;font-size:14px;color:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;" title="Ta bort">×</button>' +
         '</div>';
-      }).join('');
+      }).join('') +
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;margin-top:4px;background:#1a1a1a;border-radius:8px;">' +
+        '<span style="font-family:Inter,system-ui,sans-serif;font-size:12px;color:rgba(255,255,255,0.6);">Totalt (' + allSheets.reduce(function(s,a){return s+a.qty},0) + ' ark)</span>' +
+        '<span style="font-family:Inter,system-ui,sans-serif;font-size:18px;font-weight:700;color:#fff;">' + totalPrice + ' kr</span>' +
+      '</div>';
+
+    // Update confirm button price
+    if (confirmBtn) {
+      confirmBtn.textContent = 'Lägg i varukorg — ' + totalPrice + ' kr';
+    }
   }
+
+  // Global handlers for sheet quantity/remove buttons
+  window.__gsSheetQty = function(idx, delta) {
+    if (allSheets[idx]) {
+      allSheets[idx].qty = Math.max(1, allSheets[idx].qty + delta);
+      updateSheetList();
+      updatePriceDisplay();
+    }
+  };
+  window.__gsSheetRemove = function(idx) {
+    allSheets.splice(idx, 1);
+    updateSheetList();
+    updatePriceDisplay();
+    if (allSheets.length === 0) {
+      resultsDiv.style.display = 'none';
+      dropzone.style.display = 'block';
+    }
+  };
 
   // Confirm — add to Shopify cart
   if (confirmBtn) {
