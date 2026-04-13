@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { uploadFile, storageKey, getPresignedDownloadUrl } from "../lib/r2.server";
+import { uploadFile, storageKey } from "../lib/r2.server";
 import { validateFile } from "../lib/file-validation.server";
 import {
   extractMetadata,
@@ -84,17 +84,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       uploadFile(thumbnailKey, thumbnail, "image/webp"),
     ]);
 
-    // Return presigned R2 URLs (1 hour) — avoids app proxy for images
-    let thumbnailUrlFull: string;
-    let originalUrlFull: string;
-    try {
-      thumbnailUrlFull = await getPresignedDownloadUrl(thumbnailKey, 3600);
-      originalUrlFull = await getPresignedDownloadUrl(originalKey, 3600);
-    } catch {
-      // Fallback to app proxy paths
-      thumbnailUrlFull = `/api/image/${thumbnailKey}`;
-      originalUrlFull = `/api/image/${originalKey}`;
-    }
+    // Return thumbnail as base64 data URL — guaranteed to work, no CORS issues
+    const thumbnailBase64 = `data:image/webp;base64,${thumbnail.toString("base64")}`;
+    const originalUrlFull = `/api/image/${originalKey}`;
 
     // Save to database
     const image = await prisma.gangSheetImage.create({
@@ -132,7 +124,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       id: image.id,
       imageId,
       originalUrl: originalUrlFull,
-      thumbnailUrl: thumbnailUrlFull,
+      thumbnailUrl: thumbnailBase64,
       width: metadata.width,
       height: metadata.height,
       dpiX: metadata.dpiX,
