@@ -37,12 +37,12 @@ export function LeftSidebar() {
       {/* Icon tab bar — dark strip */}
       <div
         style={{
-          width: 64,
+          width: 72,
           background: theme.bgDark,
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          paddingTop: theme.space.md,
+          paddingTop: theme.space.lg,
           gap: 4,
           flexShrink: 0,
         }}
@@ -55,8 +55,8 @@ export function LeftSidebar() {
               onClick={() => setActiveTab(tab.key)}
               title={tab.label}
               style={{
-                width: 54,
-                padding: "10px 0 6px",
+                width: 60,
+                padding: "10px 0 7px",
                 display: "flex",
                 flexDirection: "column",
                 alignItems: "center",

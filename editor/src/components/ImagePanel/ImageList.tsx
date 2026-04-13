@@ -170,70 +170,48 @@ function ImageItem({
             </div>
           )}
         </div>
-        {/* Info */}
+        {/* Info + actions */}
         <div style={{ flex: 1, minWidth: 0 }}>
-          <p
-            style={{
-              margin: 0,
-              fontSize: 12,
-              fontWeight: 600,
-              fontFamily: theme.fontFamily,
-              color: theme.text,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {image.filename}
-          </p>
-          <div style={{ display: "flex", gap: 6, marginTop: 3, alignItems: "center" }}>
-            <span
+          {/* Name row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <p style={{
+              margin: 0, fontSize: 12, fontWeight: 600, fontFamily: theme.fontFamily,
+              color: theme.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1,
+            }}>
+              {image.filename}
+            </p>
+            <button
+              onClick={(e) => { e.stopPropagation(); duplicateImage(image.id); }}
+              title="Öka antal (+1)"
               style={{
-                fontSize: 10,
-                padding: "2px 5px",
-                borderRadius: 4,
-                background: dpiColor + "15",
-                color: dpiColor,
-                fontWeight: 600,
+                width: 24, height: 24, border: `1px solid ${theme.border}`, borderRadius: 6,
+                background: theme.bgCard, color: theme.accent, cursor: "pointer",
+                fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
               }}
-            >
-              {dpi} DPI
-            </span>
+            >+</button>
+            <button
+              onClick={(e) => { e.stopPropagation(); removeImage(image.id); }}
+              title="Ta bort"
+              style={{
+                width: 24, height: 24, border: "none", borderRadius: 6,
+                background: theme.dangerBg, color: theme.danger, cursor: "pointer",
+                fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+              }}
+            >×</button>
+          </div>
+          {/* Meta row */}
+          <div style={{ display: "flex", gap: 6, marginTop: 4, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{
+              fontSize: 10, padding: "2px 6px", borderRadius: 4,
+              background: dpiColor + "15", color: dpiColor, fontWeight: 600,
+            }}>{dpi} DPI</span>
             <span style={{ fontSize: 10, color: theme.textDim }}>
-              {(image.displayWidth / 10).toFixed(1)}×{(image.displayHeight / 10).toFixed(1)} cm
+              {(image.displayWidth / 10).toFixed(1)} × {(image.displayHeight / 10).toFixed(1)} cm
             </span>
             {image.quantity > 1 && (
-              <span style={{ fontSize: 10, fontWeight: 600, color: theme.accent }}>
-                ×{image.quantity}
-              </span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: theme.accent }}>×{image.quantity}</span>
             )}
           </div>
-        </div>
-
-        {/* Quick actions */}
-        <div style={{ display: "flex", gap: 4, flexShrink: 0, alignItems: "center" }}>
-          <button
-            onClick={(e) => { e.stopPropagation(); duplicateImage(image.id); }}
-            title="Öka antal (+1)"
-            style={{
-              width: 26, height: 26,
-              border: `1px solid ${theme.border}`, borderRadius: 6,
-              background: theme.bgCard, color: theme.accent,
-              cursor: "pointer", fontSize: 16, fontWeight: 600,
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >+</button>
-          <button
-            onClick={(e) => { e.stopPropagation(); removeImage(image.id); }}
-            title="Ta bort"
-            style={{
-              width: 26, height: 26,
-              border: "none", borderRadius: 6,
-              background: theme.dangerBg, color: theme.danger,
-              cursor: "pointer", fontSize: 14,
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}
-          >×</button>
         </div>
       </div>
 

@@ -75,7 +75,7 @@ export function App() {
         height: "100%",
         display: "grid",
         gridTemplateRows: "52px 1fr",
-        gridTemplateColumns: "260px 1fr 240px",
+        gridTemplateColumns: "320px 1fr 240px",
         background: theme.bg,
         color: theme.text,
         overflow: "hidden",
@@ -280,9 +280,9 @@ export function App() {
             min-height: 400px;
           }
         }
-        @media (min-width: 901px) and (max-width: 1100px) {
+        @media (min-width: 901px) and (max-width: 1200px) {
           .gs-editor {
-            grid-template-columns: 240px 1fr 220px !important;
+            grid-template-columns: 280px 1fr 220px !important;
           }
         }
       `}</style>
