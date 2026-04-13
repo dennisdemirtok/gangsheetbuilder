@@ -102,25 +102,30 @@ function ImageItem({
         setShowControls(true);
       }}
       style={{
-        padding: 8,
+        padding: 10,
         borderRadius: theme.radiusSm,
-        border: `1.5px solid ${isSelected ? theme.accent : theme.border}`,
-        background: isSelected ? theme.accentBg : theme.bgCard,
+        border: `1px solid ${isSelected ? theme.accent : theme.border}`,
+        background: isSelected ? "rgba(230,57,70,0.03)" : theme.bgCard,
         cursor: "pointer",
         transition: "all 0.15s",
+        boxShadow: isSelected ? `0 0 0 1px ${theme.accent}` : "none",
       }}
     >
-      {/* Top row: thumbnail + info */}
-      <div style={{ display: "flex", gap: 8 }}>
+      {/* Top row: thumbnail + info + actions */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        {/* Thumbnail */}
         <div
           style={{
-            width: 48,
-            height: 48,
-            borderRadius: 4,
+            width: 44,
+            height: 44,
+            borderRadius: 6,
             overflow: "hidden",
             flexShrink: 0,
             background: theme.bgInput,
             position: "relative",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
           }}
         >
           <img
@@ -165,12 +170,14 @@ function ImageItem({
             </div>
           )}
         </div>
+        {/* Info */}
         <div style={{ flex: 1, minWidth: 0 }}>
           <p
             style={{
               margin: 0,
-              fontSize: 11,
-              fontWeight: 500,
+              fontSize: 12,
+              fontWeight: 600,
+              fontFamily: theme.fontFamily,
               color: theme.text,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -179,73 +186,54 @@ function ImageItem({
           >
             {image.filename}
           </p>
-          <div style={{ display: "flex", gap: 4, marginTop: 2, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 6, marginTop: 3, alignItems: "center" }}>
             <span
               style={{
-                fontSize: 9,
-                padding: "1px 4px",
-                borderRadius: 3,
-                background: dpiColor + "20",
+                fontSize: 10,
+                padding: "2px 5px",
+                borderRadius: 4,
+                background: dpiColor + "15",
                 color: dpiColor,
                 fontWeight: 600,
               }}
             >
               {dpi} DPI
             </span>
-            <span style={{ fontSize: 9, color: theme.textDim }}>
+            <span style={{ fontSize: 10, color: theme.textDim }}>
               {(image.displayWidth / 10).toFixed(1)}×{(image.displayHeight / 10).toFixed(1)} cm
             </span>
+            {image.quantity > 1 && (
+              <span style={{ fontSize: 10, fontWeight: 600, color: theme.accent }}>
+                ×{image.quantity}
+              </span>
+            )}
           </div>
         </div>
-        {/* Quick duplicate + delete */}
-        <div style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+
+        {/* Quick actions */}
+        <div style={{ display: "flex", gap: 4, flexShrink: 0, alignItems: "center" }}>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              duplicateImage(image.id);
-            }}
-            title="Snabb-duplicera"
+            onClick={(e) => { e.stopPropagation(); duplicateImage(image.id); }}
+            title="Öka antal (+1)"
             style={{
-              width: 22,
-              height: 22,
-              border: `1px solid ${theme.border}`,
-              borderRadius: 4,
-              background: theme.bgInput,
-              color: theme.accent,
-              cursor: "pointer",
-              fontSize: 14,
-              fontWeight: 700,
-              lineHeight: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              width: 26, height: 26,
+              border: `1px solid ${theme.border}`, borderRadius: 6,
+              background: theme.bgCard, color: theme.accent,
+              cursor: "pointer", fontSize: 16, fontWeight: 600,
+              display: "flex", alignItems: "center", justifyContent: "center",
             }}
-          >
-            +
-          </button>
+          >+</button>
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              removeImage(image.id);
-            }}
+            onClick={(e) => { e.stopPropagation(); removeImage(image.id); }}
             title="Ta bort"
             style={{
-              width: 22,
-              height: 22,
-              border: "none",
-              borderRadius: 4,
-              background: theme.dangerBg,
-              color: theme.danger,
-              cursor: "pointer",
-              fontSize: 12,
-              lineHeight: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              width: 26, height: 26,
+              border: "none", borderRadius: 6,
+              background: theme.dangerBg, color: theme.danger,
+              cursor: "pointer", fontSize: 14,
+              display: "flex", alignItems: "center", justifyContent: "center",
             }}
-          >
-            ×
-          </button>
+          >×</button>
         </div>
       </div>
 
