@@ -254,7 +254,9 @@
     }
   } catch(e) {}
 
-  function getPrice(meters) { return prices[meters] || (meters * 200); }
+  // Price per decimeter = 20 kr
+  var pricePerDm = 20;
+  function getPrice(meters) { return Math.ceil(meters * 10) * pricePerDm; }
 
   function updatePriceDisplay() {
     var totalPrice = 0;
@@ -446,7 +448,8 @@
 
         // Add to sheets list
         if (data.approved) {
-          var meters = data.meters || Math.ceil(data.heightMm / 1000);
+          // Calculate exact meters (decimal, e.g. 6.41)
+          var meters = data.heightMm ? Math.round(data.heightMm / 100) / 10 : 1;
           allSheets.push({ data: data, qty: sheetQty, meters: meters, filename: file.name });
           confirmBtn.style.opacity = '1';
           confirmBtn.disabled = false;
@@ -486,7 +489,7 @@
         return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#f5f5f5;border-radius:8px;margin-bottom:6px;font-family:Inter,system-ui,sans-serif;">' +
           '<div style="flex:1;min-width:0;">' +
             '<p style="margin:0;font-size:13px;font-weight:500;color:rgba(0,0,0,0.81);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + s.filename + '</p>' +
-            '<p style="margin:2px 0 0;font-size:11px;color:rgba(0,0,0,0.4);">' + s.data.widthCm + '×' + s.data.heightCm + ' cm · ' + s.data.dpi + ' DPI · ' + s.meters + 'm</p>' +
+            '<p style="margin:2px 0 0;font-size:11px;color:rgba(0,0,0,0.4);">' + s.data.widthCm + '×' + s.data.heightCm + ' cm · ' + s.data.dpi + ' DPI · ' + s.meters.toFixed(1) + ' m</p>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">' +
             '<button onclick="window.__gsSheetQty(' + i + ',-1)" style="width:28px;height:28px;border:1px solid rgba(0,0,0,0.1);border-radius:6px;background:#fff;cursor:pointer;font-size:14px;color:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;">−</button>' +
@@ -549,13 +552,26 @@
         });
       } catch(e) { console.warn('Could not parse variant data', e); }
 
+      // Use per-decimeter variant: quantity = decimeters × sheet qty
+      // Find the "per-decimeter" variant ID
+      var dmVariantId = variantsByMeter['decimeter'] || null;
+      // Fallback: look for variant with lowest price (should be 20 kr / dm)
+      if (!dmVariantId) {
+        Object.keys(variantMap).forEach(function(key) {
+          if (key.includes('decimeter') || key.includes('dm')) {
+            dmVariantId = variantMap[key].id;
+          }
+        });
+      }
+
       var items = allSheets.map(function(s) {
-        // Find correct variant based on meters
-        var variantId = variantsByMeter[s.meters] || {{ product.selected_or_first_available_variant.id | json }};
+        var decimeters = Math.ceil(s.meters * 10); // 6.4m = 64 dm
+        var totalDm = decimeters * s.qty;
+        var variantId = dmVariantId || {{ product.selected_or_first_available_variant.id | json }};
 
         return {
           id: variantId,
-          quantity: s.qty,
+          quantity: totalDm,
           properties: {
             '_gang_sheet_type': 'pre-made',
             '_sheet_id': s.data.sheetId || '',
@@ -563,7 +579,9 @@
             '_filename': s.filename,
             '_dimensions': s.data.widthCm + 'x' + s.data.heightCm + ' cm',
             '_dpi': String(s.data.dpi),
-            '_meters': String(s.meters)
+            '_meters': s.meters.toFixed(1),
+            '_decimeters': String(decimeters),
+            '_quantity': String(s.qty)
           }
         };
       });
