@@ -128,7 +128,18 @@ function ImageItem({
             alt={image.filename}
             style={{ width: "100%", height: "100%", objectFit: "contain" }}
             onError={(e) => {
-              (e.target as HTMLImageElement).style.display = "none";
+              // Show file type icon instead of broken image
+              const el = e.target as HTMLImageElement;
+              el.style.display = "none";
+              const ext = image.filename.split(".").pop()?.toUpperCase() || "?";
+              const parent = el.parentElement;
+              if (parent && !parent.querySelector(".gs-file-icon")) {
+                const icon = document.createElement("div");
+                icon.className = "gs-file-icon";
+                icon.style.cssText = "width:100%;height:100%;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:2px;";
+                icon.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${theme.textDim}" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span style="font-size:8px;font-weight:600;color:${theme.textDim}">${ext}</span>`;
+                parent.appendChild(icon);
+              }
             }}
           />
           {image.hasWhiteBackground && !image.bgRemoved && (
@@ -241,84 +252,109 @@ function ImageItem({
       {/* Expanded controls when selected */}
       {isSelected && (
         <div
-          style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}
+          style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}
           onClick={(e) => e.stopPropagation()}
         >
-          {/* Size controls */}
-          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-            <SizeInput
-              label="B"
-              value={(image.displayWidth / 10).toFixed(2)}
-              suffix="cm"
-              onChange={handleWidthChange}
-            />
-            <SizeInput
-              label="H"
-              value={(image.displayHeight / 10).toFixed(2)}
-              suffix="cm"
-              onChange={handleHeightChange}
-            />
+          {/* Size row */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 6, alignItems: "end" }}>
+            <div>
+              <label style={{ fontSize: 10, color: theme.textDim, display: "block", marginBottom: 2 }}>Bredd (cm)</label>
+              <input
+                type="number"
+                step="0.1"
+                value={(image.displayWidth / 10).toFixed(1)}
+                onChange={(e) => handleWidthChange(e.target.value)}
+                style={{
+                  width: "100%", padding: "6px 8px", border: `1px solid ${theme.border}`,
+                  borderRadius: 6, fontSize: 13, fontFamily: theme.fontFamily,
+                  background: theme.bgInput, color: theme.text,
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, color: theme.textDim, display: "block", marginBottom: 2 }}>Höjd (cm)</label>
+              <input
+                type="number"
+                step="0.1"
+                value={(image.displayHeight / 10).toFixed(1)}
+                onChange={(e) => handleHeightChange(e.target.value)}
+                style={{
+                  width: "100%", padding: "6px 8px", border: `1px solid ${theme.border}`,
+                  borderRadius: 6, fontSize: 13, fontFamily: theme.fontFamily,
+                  background: theme.bgInput, color: theme.text,
+                }}
+              />
+            </div>
             <button
               onClick={() => setAspectLocked(!aspectLocked)}
               title={aspectLocked ? "Lås upp proportioner" : "Lås proportioner"}
               style={{
-                width: 24,
-                height: 24,
-                border: `1px solid ${theme.border}`,
-                borderRadius: 4,
-                background: aspectLocked ? theme.accentBg : "transparent",
+                width: 32, height: 32, border: `1px solid ${theme.border}`,
+                borderRadius: 6, background: aspectLocked ? theme.accentBg : "transparent",
                 color: aspectLocked ? theme.accent : theme.textDim,
-                cursor: "pointer",
-                fontSize: 12,
+                cursor: "pointer", fontSize: 14, display: "flex",
+                alignItems: "center", justifyContent: "center",
               }}
             >
-              {aspectLocked ? "🔒" : "🔓"}
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                {aspectLocked ? (
+                  <><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>
+                ) : (
+                  <><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></>
+                )}
+              </svg>
             </button>
           </div>
 
-          {/* Quantity + Margin */}
-          <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-            <SizeInput
-              label="Antal"
-              value={String(image.quantity)}
-              onChange={(v) => setImageQuantity(image.id, parseInt(v) || 1)}
-              type="number"
-            />
-            <SizeInput
-              label="Marginal"
-              value={String((image.marginMm || 5) / 10)}
-              suffix="cm"
-              onChange={(v) => {
-                const mm = parseFloat(v) * 10;
-                updateImage(image.id, { marginMm: Math.max(0, mm) });
-              }}
-            />
+          {/* Quantity + Margin row */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+            <div>
+              <label style={{ fontSize: 10, color: theme.textDim, display: "block", marginBottom: 2 }}>Antal</label>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                value={image.quantity}
+                onChange={(e) => setImageQuantity(image.id, parseInt(e.target.value) || 1)}
+                style={{
+                  width: "100%", padding: "6px 8px", border: `1px solid ${theme.border}`,
+                  borderRadius: 6, fontSize: 13, fontFamily: theme.fontFamily,
+                  background: theme.bgInput, color: theme.text,
+                }}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, color: theme.textDim, display: "block", marginBottom: 2 }}>Marginal (cm)</label>
+              <input
+                type="number"
+                step="0.1"
+                min="0"
+                value={((image.marginMm || 5) / 10).toFixed(1)}
+                onChange={(e) => {
+                  const mm = parseFloat(e.target.value) * 10;
+                  updateImage(image.id, { marginMm: Math.max(0, mm) });
+                }}
+                style={{
+                  width: "100%", padding: "6px 8px", border: `1px solid ${theme.border}`,
+                  borderRadius: 6, fontSize: 13, fontFamily: theme.fontFamily,
+                  background: theme.bgInput, color: theme.text,
+                }}
+              />
+            </div>
           </div>
 
-          {/* Action buttons */}
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {/* Actions — 2x3 grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4 }}>
+            <ActionButton label="Autofyll" onClick={() => autoFillSheet(image.id)} />
+            <ActionButton label="Duplicera" onClick={() => duplicateImage(image.id)} />
             <ActionButton
-              label="Autofyll ark"
-              onClick={() => autoFillSheet(image.id)}
+              label={image.rotation === 0 ? "Rotera" : `${image.rotation}°`}
+              onClick={() => updateImage(image.id, { rotation: (image.rotation + 90) % 360 })}
             />
             <ActionButton
-              label="Duplicera"
-              onClick={() => duplicateImage(image.id)}
-            />
-          </div>
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            <ActionButton
-              label={isRemovingBg ? "Tar bort..." : "Remove BG"}
+              label={isRemovingBg ? "..." : "Remove BG"}
               onClick={handleRemoveBg}
               disabled={isRemovingBg || image.bgRemoved}
-            />
-            <ActionButton
-              label={image.rotation === 0 ? "Rotera 90°" : `${image.rotation}°`}
-              onClick={() =>
-                updateImage(image.id, {
-                  rotation: (image.rotation + 90) % 360,
-                })
-              }
             />
             <ActionButton
               label="Crop"
@@ -421,17 +457,18 @@ function ActionButton({
       onClick={onClick}
       disabled={disabled}
       style={{
-        flex: 1,
-        padding: "5px 6px",
-        fontSize: 10,
-        fontWeight: 600,
+        padding: "6px 4px",
+        fontSize: 11,
+        fontWeight: 500,
+        fontFamily: theme.fontFamily,
         border: `1px solid ${theme.border}`,
-        borderRadius: 4,
-        background: theme.bgInput,
+        borderRadius: 6,
+        background: theme.bgCard,
         color: disabled ? theme.textDim : theme.text,
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.5 : 1,
         transition: "all 0.15s",
+        whiteSpace: "nowrap",
       }}
     >
       {label}
