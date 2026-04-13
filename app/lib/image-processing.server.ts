@@ -1,4 +1,8 @@
 import sharp from "sharp";
+import { execFile } from "child_process";
+import { writeFile, readFile, unlink, mkdtemp } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
 
 export interface ImageMetadata {
   width: number;
@@ -110,6 +114,64 @@ async function detectWhiteBackground(
   } catch {
     return false;
   }
+}
+
+/**
+ * Convert EPS/AI/PDF to PNG using Ghostscript.
+ * Returns a PNG buffer that Sharp can process.
+ */
+export async function convertToRaster(
+  buffer: Buffer,
+  filename: string,
+  dpi: number = 300,
+): Promise<Buffer> {
+  const dir = await mkdtemp(join(tmpdir(), "gs-convert-"));
+  const ext = filename.split(".").pop()?.toLowerCase() || "eps";
+  const inputPath = join(dir, `input.${ext}`);
+  const outputPath = join(dir, "output.png");
+
+  await writeFile(inputPath, buffer);
+
+  return new Promise((resolve, reject) => {
+    execFile(
+      "gs",
+      [
+        "-dSAFER",
+        "-dBATCH",
+        "-dNOPAUSE",
+        "-dEPSCrop",
+        "-sDEVICE=pngalpha",
+        `-r${dpi}`,
+        `-sOutputFile=${outputPath}`,
+        inputPath,
+      ],
+      { timeout: 30000 },
+      async (error) => {
+        try {
+          if (error) {
+            console.error("Ghostscript conversion error:", error.message);
+            reject(new Error("Kunde inte konvertera filen: " + error.message));
+            return;
+          }
+          const pngBuffer = await readFile(outputPath);
+          resolve(pngBuffer);
+        } finally {
+          // Cleanup
+          await unlink(inputPath).catch(() => {});
+          await unlink(outputPath).catch(() => {});
+          await unlink(dir).catch(() => {});
+        }
+      },
+    );
+  });
+}
+
+/**
+ * Check if a file needs Ghostscript conversion.
+ */
+export function needsGhostscript(filename: string): boolean {
+  const ext = filename.split(".").pop()?.toLowerCase() || "";
+  return ["eps", "ai", "ps"].includes(ext);
 }
 
 /**

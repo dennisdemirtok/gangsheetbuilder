@@ -6,6 +6,8 @@ import { validateFile } from "../lib/file-validation.server";
 import {
   extractMetadata,
   generateThumbnail,
+  convertToRaster,
+  needsGhostscript,
 } from "../lib/image-processing.server";
 import prisma from "../db.server";
 import { v4 as uuidv4 } from "uuid";
@@ -44,23 +46,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: validation.error }, { status: 400 });
     }
 
-    // Extract metadata — EPS/AI files can't be read by Sharp, use fallback
+    // Convert EPS/AI to PNG via Ghostscript if needed
+    let processBuffer = buffer;
+    let convertedFromVector = false;
+    if (needsGhostscript(filename)) {
+      try {
+        console.log("Converting EPS/AI to PNG via Ghostscript:", filename);
+        processBuffer = await convertToRaster(buffer, filename, 300);
+        convertedFromVector = true;
+        console.log("Conversion successful:", processBuffer.length, "bytes");
+      } catch (convErr) {
+        console.error("Ghostscript conversion failed:", convErr);
+        // Continue with original buffer — metadata will be limited
+      }
+    }
+
+    // Extract metadata from the (possibly converted) buffer
     let metadata;
     try {
-      metadata = await extractMetadata(buffer);
+      metadata = await extractMetadata(processBuffer);
     } catch {
-      // Fallback for formats Sharp can't read (EPS, AI, etc)
       metadata = {
-        width: 1000,
-        height: 1000,
-        dpiX: 300,
-        dpiY: 300,
+        width: 1000, height: 1000, dpiX: 300, dpiY: 300,
         format: validation.extension || "unknown",
-        hasAlpha: false,
-        hasWhiteBackground: false,
-        colorSpace: "srgb",
-        channels: 3,
-        fileSize: buffer.length,
+        hasAlpha: false, hasWhiteBackground: false,
+        colorSpace: "srgb", channels: 3, fileSize: buffer.length,
       };
     }
 
@@ -69,20 +79,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const ext = validation.extension || "png";
     const originalKey = storageKey(sessionId, imageId, "original", ext);
     const thumbnailKey = storageKey(sessionId, imageId, "thumbnail", "webp");
+    // Also store the converted PNG if it was vector
+    const convertedKey = convertedFromVector
+      ? storageKey(sessionId, imageId, "converted", "png")
+      : null;
 
-    // Upload original and thumbnail to R2 — thumbnail may fail for unsupported formats
+    // Generate thumbnail from the processable buffer
     let thumbnail: Buffer;
     try {
-      thumbnail = await generateThumbnail(buffer);
+      thumbnail = await generateThumbnail(processBuffer);
     } catch {
-      // Create a simple 1px placeholder for formats Sharp can't process
-      const sharp = (await import("sharp")).default;
-      thumbnail = await sharp({ create: { width: 200, height: 200, channels: 4, background: { r: 200, g: 200, b: 200, alpha: 1 } } }).webp().toBuffer();
+      const sharpMod = (await import("sharp")).default;
+      thumbnail = await sharpMod({ create: { width: 200, height: 200, channels: 4, background: { r: 200, g: 200, b: 200, alpha: 1 } } }).webp().toBuffer();
     }
-    await Promise.all([
+    const uploads = [
       uploadFile(originalKey, buffer, validation.mimeType!),
       uploadFile(thumbnailKey, thumbnail, "image/webp"),
-    ]);
+    ];
+    if (convertedKey && convertedFromVector) {
+      uploads.push(uploadFile(convertedKey, processBuffer, "image/png"));
+    }
+    await Promise.all(uploads);
 
     // Return thumbnail as base64 data URL — guaranteed to work, no CORS issues
     const thumbnailBase64 = `data:image/webp;base64,${thumbnail.toString("base64")}`;

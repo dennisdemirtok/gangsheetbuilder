@@ -4,6 +4,7 @@ FROM node:22-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
     libvips-dev \
+    ghostscript \
     && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 3000
