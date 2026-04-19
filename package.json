@@ -25,7 +25,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1014.0",
     "@aws-sdk/s3-request-presigner": "^3.1014.0",
-    "@prisma/client": "^6.2.1",
+    "@prisma/client": "^7.5.0",
     "@remix-run/dev": "^2.16.1",
     "@remix-run/fs-routes": "^2.16.1",
     "@remix-run/node": "^2.16.1",
@@ -41,7 +41,7 @@
     "ioredis": "^5.10.1",
     "isbot": "^5.1.0",
     "maxrects-packer": "^2.7.3",
-    "prisma": "^6.2.1",
+    "prisma": "^7.5.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "sharp": "^0.34.5",
