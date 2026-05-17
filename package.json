@@ -39,13 +39,13 @@
     "bullmq": "^5.71.0",
     "file-type": "^21.3.3",
     "ioredis": "^5.10.1",
-    "isbot": "^5.1.0",
+    "isbot": "^5.1.39",
     "maxrects-packer": "^2.7.3",
     "prisma": "^6.2.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "sharp": "^0.34.5",
-    "uuid": "^13.0.0",
+    "uuid": "^13.0.1",
     "vite-tsconfig-paths": "^6.1.1"
   },
   "devDependencies": {
@@ -60,7 +60,7 @@
     "@types/uuid": "^10.0.0",
     "eslint": "^8.42.0",
     "eslint-config-prettier": "^10.0.1",
-    "prettier": "^3.2.4",
+    "prettier": "^3.8.3",
     "typescript": "^5.2.2",
     "vite": "^6.2.2"
   },
