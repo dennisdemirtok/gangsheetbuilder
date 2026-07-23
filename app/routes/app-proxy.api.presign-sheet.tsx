@@ -20,9 +20,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: "Missing filename or contentType" }, { status: 400 });
     }
 
-    // Max 200 MB
-    if (fileSize && fileSize > 200 * 1024 * 1024) {
-      return json({ error: "Filen är för stor. Max 200 MB." }, { status: 400 });
+    // Max 500 MB
+    if (fileSize && fileSize > 500 * 1024 * 1024) {
+      return json({ error: "Filen är för stor. Max 500 MB." }, { status: 400 });
     }
 
     const sheetId = uuidv4();

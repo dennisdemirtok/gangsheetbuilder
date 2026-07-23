@@ -157,7 +157,7 @@ export function ImageUploader() {
           Dra bilder hit eller klicka
         </p>
         <p style={{ margin: "4px 0 0", fontSize: 11, color: theme.textDim }}>
-          PNG, JPG, SVG, TIFF, PDF, EPS, WebP — Max 50 MB
+          PNG, JPG, SVG, TIFF, PDF, EPS, WebP — Max 500 MB
         </p>
       </div>
 

@@ -50,8 +50,8 @@ export const DEFAULT_GAP_MM = 5;
 // Default margin per image in mm
 export const DEFAULT_MARGIN_MM = 5;
 
-// Max file upload size in bytes (50 MB)
-export const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024; // 200 MB
+// Max file upload size in bytes
+export const MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024; // 500 MB
 
 // Allowed file extensions
 export const ALLOWED_EXTENSIONS = [
