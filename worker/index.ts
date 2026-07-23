@@ -6,7 +6,12 @@ import { cleanupExpiredJob } from "./jobs/cleanup-expired";
 
 const redisUrl = process.env.REDIS_URL;
 if (!redisUrl) {
-  throw new Error("REDIS_URL is required");
+  console.error(
+    "[worker] REDIS_URL is not set — worker cannot start. " +
+      "Set REDIS_URL to enable background export/bg-removal/cleanup jobs. " +
+      "Exiting worker only; the web server is unaffected.",
+  );
+  process.exit(0);
 }
 
 const connection = new IORedis(redisUrl, {
@@ -25,7 +30,9 @@ const exportWorker = new Worker(
   },
   {
     connection,
-    concurrency: 2,
+    // Keep at 1 — a 58×500cm sheet at 300 DPI is ~404 megapixels; parallel
+    // exports would exhaust container memory.
+    concurrency: 1,
   },
 );
 

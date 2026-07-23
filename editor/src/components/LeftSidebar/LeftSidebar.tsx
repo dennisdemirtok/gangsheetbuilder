@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { ImageUploader } from "../ImagePanel/ImageUploader";
-import type { EditorImage } from "../../store/editorStore";
+import { ImageUploader, showToast } from "../ImagePanel/ImageUploader";
 import { ImageList } from "../ImagePanel/ImageList";
 import { useEditorStore } from "../../store/editorStore";
+import { uploadImage, ensureGangSheet, getAppProxyUrl } from "../../services/api";
 import { theme } from "../../styles/theme";
 
 type TabKey = "designs" | "uploads" | "text" | "settings";
@@ -236,7 +236,16 @@ function TextTab() {
   const [fontSize, setFontSize] = useState(48);
   const [fontFamily, setFontFamily] = useState("Arial Black");
   const [textColor, setTextColor] = useState("#000000");
-  const { addImage } = useEditorStore();
+  const {
+    addImage,
+    sessionId,
+    gangSheetId,
+    sheetSize,
+    filmType,
+    isUploading,
+    setUploading,
+    setGangSheetId,
+  } = useEditorStore();
 
   const fonts = [
     "Arial Black", "Impact", "Bebas Neue", "Oswald",
@@ -244,8 +253,8 @@ function TextTab() {
     "Bangers", "Permanent Marker", "Lobster", "Pacifico",
   ];
 
-  const handleAddText = () => {
-    if (!text.trim()) return;
+  const handleAddText = async () => {
+    if (!text.trim() || isUploading) return;
 
     // Create text as an image via canvas
     const canvas = document.createElement("canvas");
@@ -253,7 +262,7 @@ function TextTab() {
     ctx.font = `bold ${fontSize}px "${fontFamily}", sans-serif`;
     const metrics = ctx.measureText(text);
     const w = Math.ceil(metrics.width) + 20;
-    const h = fontSize * 1.4 + 20;
+    const h = Math.ceil(fontSize * 1.4 + 20);
     canvas.width = w;
     canvas.height = h;
     ctx.font = `bold ${fontSize}px "${fontFamily}", sans-serif`;
@@ -261,29 +270,67 @@ function TextTab() {
     ctx.textBaseline = "top";
     ctx.fillText(text, 10, 10);
 
-    const dataUrl = canvas.toDataURL("image/png");
+    // Upload the rendered text as a real PNG so it gets a dbId and
+    // reaches the backend (data-URL-only text is lost on order/export)
+    setUploading(true);
+    try {
+      const blob: Blob | null = await new Promise((resolve) =>
+        canvas.toBlob(resolve, "image/png"),
+      );
+      if (!blob) throw new Error("Kunde inte skapa textbild");
+      const file = new File([blob], `text-${Date.now()}.png`, {
+        type: "image/png",
+      });
 
-    addImage({
-      id: "txt_" + Math.random().toString(36).substring(2, 10),
-      filename: `Text: ${text.substring(0, 20)}`,
-      thumbnailUrl: dataUrl,
-      originalUrl: dataUrl,
-      widthPx: w,
-      heightPx: h,
-      dpiX: 300,
-      dpiY: 300,
-      positionX: 20,
-      positionY: 20,
-      displayWidth: (w / 300) * 25.4,
-      displayHeight: (h / 300) * 25.4,
-      rotation: 0,
-      flipX: false,
-      flipY: false,
-      quantity: 1,
-      marginMm: 5,
-      bgRemoved: true,
-      placed: true,
-    });
+      const gsId = await ensureGangSheet(
+        sessionId,
+        sheetSize.widthMm,
+        sheetSize.heightMm,
+        filmType,
+        gangSheetId,
+      );
+      if (gsId !== gangSheetId) setGangSheetId(gsId);
+
+      const result = await uploadImage(file, sessionId, gsId || "");
+
+      const base = getAppProxyUrl();
+      const thumbUrl = result.thumbnailUrl?.startsWith("/")
+        ? base + result.thumbnailUrl
+        : result.thumbnailUrl;
+      const origUrl = result.originalUrl?.startsWith("/")
+        ? base + result.originalUrl
+        : result.originalUrl;
+
+      addImage({
+        id: result.imageId || result.id,
+        dbId: result.id,
+        filename: `Text: ${text.substring(0, 20)}`,
+        thumbnailUrl: thumbUrl,
+        originalUrl: origUrl,
+        widthPx: result.width || w,
+        heightPx: result.height || h,
+        dpiX: 300,
+        dpiY: 300,
+        positionX: 20,
+        positionY: 20,
+        displayWidth: (w / 300) * 25.4,
+        displayHeight: (h / 300) * 25.4,
+        rotation: 0,
+        flipX: false,
+        flipY: false,
+        quantity: 1,
+        marginMm: 5,
+        bgRemoved: true,
+        placed: true,
+      });
+    } catch (err) {
+      showToast(
+        `Kunde inte lägga till text: ${(err as Error).message}`,
+        "error",
+      );
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -415,7 +462,7 @@ function TextTab() {
 
         <button
           onClick={handleAddText}
-          disabled={!text.trim()}
+          disabled={!text.trim() || isUploading}
           style={{
             width: "100%",
             padding: `${theme.space.md}px`,
@@ -424,12 +471,12 @@ function TextTab() {
             fontFamily: theme.fontFamily,
             border: "none",
             borderRadius: theme.radius,
-            background: text.trim() ? theme.accentGradient : theme.bgInput,
-            color: text.trim() ? "#fff" : theme.textDim,
-            cursor: text.trim() ? "pointer" : "not-allowed",
+            background: text.trim() && !isUploading ? theme.accentGradient : theme.bgInput,
+            color: text.trim() && !isUploading ? "#fff" : theme.textDim,
+            cursor: text.trim() && !isUploading ? "pointer" : "not-allowed",
           }}
         >
-          Lägg till på arket
+          {isUploading ? "Laddar upp..." : "Lägg till på arket"}
         </button>
       </div>
     </>
@@ -469,10 +516,8 @@ function SettingsTab() {
             Tangentbordsgenvägar
           </label>
           <div style={{ marginTop: theme.space.sm, fontSize: theme.fontSize.labelMd, color: theme.textDim, display: "flex", flexDirection: "column", gap: 4 }}>
-            <Shortcut keys="Ctrl+Z" label="Ångra" />
             <Shortcut keys="Delete" label="Ta bort markerad" />
             <Shortcut keys="Ctrl+D" label="Duplicera" />
-            <Shortcut keys="Ctrl+A" label="Markera alla" />
             <Shortcut keys="Esc" label="Stäng editor" />
           </div>
         </div>

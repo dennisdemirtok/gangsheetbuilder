@@ -133,7 +133,7 @@ export function App() {
               color: "#fff",
             }}
           >
-            {currentPrice} kr
+            {currentPrice !== null ? `${currentPrice} kr` : "—"}
           </div>
           <button
             onClick={reset}

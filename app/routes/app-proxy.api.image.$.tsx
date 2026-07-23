@@ -18,6 +18,14 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       return new Response("Missing key", { status: 400 });
     }
 
+    // Only serve user uploads and ready sheets — no traversal, no other prefixes.
+    if (
+      key.includes("..") ||
+      (!key.startsWith("uploads/") && !key.startsWith("ready-sheets/"))
+    ) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
     // Download from R2
     const buffer = await downloadFile(key);
 

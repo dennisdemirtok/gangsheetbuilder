@@ -101,16 +101,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     await Promise.all(uploads);
 
+    // For vector files (EPS/AI/PS), point originalUrl at the rasterized PNG —
+    // sharp cannot read the raw vector, and exports/proxy must serve a raster.
+    // The raw vector is still stored under originalKey for archival.
+    const renderableKey =
+      convertedKey && convertedFromVector ? convertedKey : originalKey;
+
     // Return thumbnail as base64 data URL — guaranteed to work, no CORS issues
     const thumbnailBase64 = `data:image/webp;base64,${thumbnail.toString("base64")}`;
-    const originalUrlFull = `/api/image/${originalKey}`;
+    const originalUrlFull = `/api/image/${renderableKey}`;
 
     // Save to database
     const image = await prisma.gangSheetImage.create({
       data: {
         gangSheetId:
           gangSheetId && gangSheetId.length > 0 ? gangSheetId : null,
-        originalUrl: originalKey,
+        originalUrl: renderableKey,
         thumbnailUrl: thumbnailKey,
         originalFilename: filename,
         mimeType: validation.mimeType!,

@@ -19,7 +19,6 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getPresignedDownloadUrl } from "../lib/r2.server";
-import { DPI_GOOD, DPI_WARNING } from "../lib/constants";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);

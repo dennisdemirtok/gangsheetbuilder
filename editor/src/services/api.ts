@@ -119,6 +119,48 @@ export async function createGangSheet(data: {
   });
 }
 
+/**
+ * Serialize the current placements to the save payload.
+ * Shared by AddToCartButton and AutoBuildButton so cart and
+ * auto-build send byte-identical state to the backend.
+ */
+export function buildPlacementsPayload(
+  images: Array<{
+    id: string;
+    dbId?: string;
+    positionX: number;
+    positionY: number;
+    displayWidth: number;
+    displayHeight: number;
+    rotation: number;
+    flipX: boolean;
+    flipY: boolean;
+    quantity: number;
+    marginMm?: number;
+  }>,
+  sheetSize: { widthMm: number; heightMm: number },
+  filmType: string,
+): any {
+  return {
+    filmType,
+    widthMm: sheetSize.widthMm,
+    heightMm: sheetSize.heightMm,
+    linkImages: true, // Signal to backend to link unlinked images
+    images: images.map((img) => ({
+      id: img.dbId || img.id,
+      positionX: img.positionX,
+      positionY: img.positionY,
+      displayWidth: img.displayWidth,
+      displayHeight: img.displayHeight,
+      rotation: img.rotation,
+      flipX: img.flipX,
+      flipY: img.flipY,
+      quantity: img.quantity,
+      marginMm: img.marginMm ?? 5,
+    })),
+  };
+}
+
 // Update gang sheet (save canvas state)
 export async function saveGangSheet(
   id: string,

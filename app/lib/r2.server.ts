@@ -121,7 +121,7 @@ export async function deletePrefix(prefix: string): Promise<void> {
 export function storageKey(
   sessionId: string,
   imageId: string,
-  variant: "original" | "thumbnail" | "bg-removed",
+  variant: "original" | "thumbnail" | "bg-removed" | "converted",
   ext: string,
 ): string {
   return `uploads/${sessionId}/${imageId}/${variant}.${ext}`;

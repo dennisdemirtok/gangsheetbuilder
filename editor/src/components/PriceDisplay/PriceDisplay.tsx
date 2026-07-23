@@ -1,4 +1,4 @@
-import { useEditorStore } from "../../store/editorStore";
+import { useEditorStore, getSheetsTotalPrice } from "../../store/editorStore";
 import { theme } from "../../styles/theme";
 
 const SHEET_SIZES = [
@@ -13,14 +13,10 @@ const chevronSvg = (color: string) =>
   `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='${encodeURIComponent(color)}' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E")`;
 
 export function PriceDisplay() {
-  const { sheetSize, currentPrice, images, sheets, setSheetSize } =
-    useEditorStore();
+  const { sheetSize, images, sheets, setSheetSize } = useEditorStore();
 
   const totalQuantity = images.reduce((sum, img) => sum + img.quantity, 0);
   const totalSheets = sheets?.length || 1;
-  const totalPrice = totalSheets > 1
-    ? sheets.reduce((sum, s) => sum + (currentPrice * s.quantity), 0)
-    : currentPrice;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: theme.space.lg }}>
@@ -82,11 +78,9 @@ export function PriceDisplay() {
  * Price bar — rendered separately at the bottom of right sidebar
  */
 export function PriceBar() {
-  const { currentPrice, sheetSize, sheets } = useEditorStore();
-  const totalSheets = sheets?.length || 1;
-  const totalPrice = totalSheets > 1
-    ? sheets.reduce((sum, s) => sum + (currentPrice * s.quantity), 0)
-    : currentPrice;
+  const { sheetSize, filmType, sheets, prices, images, activeSheetIndex } = useEditorStore();
+  // Each sheet is priced with its OWN size/film — × its quantity; empty sheets excluded
+  const totalPrice = getSheetsTotalPrice(sheets, prices, sheetSize, filmType, activeSheetIndex, images.length);
 
   return (
     <div
@@ -113,7 +107,7 @@ export function PriceBar() {
           letterSpacing: theme.letterSpacing.tight,
         }}
       >
-        {totalPrice} kr
+        {totalPrice !== null ? `${totalPrice} kr` : "—"}
       </span>
     </div>
   );

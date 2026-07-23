@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { useEditorStore } from "../../store/editorStore";
+import { useEditorStore, getSheetsTotalPrice } from "../../store/editorStore";
 import {
   prepareForCart,
   saveGangSheet,
-  createGangSheet,
   ensureGangSheet,
+  buildPlacementsPayload,
 } from "../../services/api";
 import { theme } from "../../styles/theme";
 
@@ -16,12 +16,31 @@ export function AddToCartButton() {
     sheetSize,
     filmType,
     images,
-    currentPrice,
-    setGangSheetId,
+    sheets,
+    activeSheetIndex,
+    prices,
+    setSheetGangSheetId,
   } = useEditorStore();
 
   const handleAddToCart = async () => {
-    if (images.length === 0) {
+    // Collect every sheet that has images. The active sheet's images live
+    // in `images`; inactive sheets keep theirs in savedImages.
+    const jobs = sheets
+      .map((sheet, index) => {
+        const isActive = index === activeSheetIndex;
+        return {
+          sheet,
+          index,
+          name: sheet.name || `Ark ${index + 1}`,
+          sheetImages: isActive ? images : sheet.savedImages || [],
+          size: isActive ? sheetSize : sheet.sheetSize ?? sheetSize,
+          filmType: isActive ? filmType : sheet.filmType ?? filmType,
+          gangSheetId: isActive ? gangSheetId : sheet.gangSheetId,
+        };
+      })
+      .filter((job) => job.sheetImages.length > 0);
+
+    if (jobs.length === 0) {
       alert("Lägg till minst en design innan du lägger i varukorgen.");
       return;
     }
@@ -29,66 +48,58 @@ export function AddToCartButton() {
     setIsAdding(true);
 
     try {
-      // Step 1: Ensure gangSheet exists
-      const gsId = await ensureGangSheet(
-        sessionId,
-        sheetSize.widthMm,
-        sheetSize.heightMm,
-        filmType,
-        gangSheetId,
-      );
-      if (gsId !== gangSheetId) setGangSheetId(gsId);
+      // Prepare every sheet BEFORE touching the cart so a failure
+      // never leaves a partial cart.
+      const items: Array<{ id: string; quantity: number; properties: any }> = [];
 
-      // Step 2: Save ALL image placements to the gang sheet
-      // This ensures images are linked even if they weren't at upload time
-      await saveGangSheet(gsId, {
-        filmType,
-        widthMm: sheetSize.widthMm,
-        heightMm: sheetSize.heightMm,
-        linkImages: true, // Signal to backend to link unlinked images
-        images: images.map((img) => ({
-          id: img.dbId || img.id,
-          positionX: img.positionX,
-          positionY: img.positionY,
-          displayWidth: img.displayWidth,
-          displayHeight: img.displayHeight,
-          rotation: img.rotation,
-          flipX: img.flipX,
-          flipY: img.flipY,
-          quantity: img.quantity,
-        })),
+      for (const job of jobs) {
+        try {
+          // Step 1: Ensure gangSheet exists for this sheet
+          const gsId = await ensureGangSheet(
+            sessionId,
+            job.size.widthMm,
+            job.size.heightMm,
+            job.filmType,
+            job.gangSheetId,
+          );
+          if (gsId !== job.gangSheetId) setSheetGangSheetId(job.index, gsId);
+
+          // Step 2: Save this sheet's placements
+          await saveGangSheet(
+            gsId,
+            buildPlacementsPayload(job.sheetImages, job.size, job.filmType),
+          );
+
+          // Step 3: Prepare for cart
+          const cartData = await prepareForCart(gsId);
+          if (!cartData.variantId) {
+            throw new Error(
+              "Variant-koppling saknas i inställningarna — kontakta admin.",
+            );
+          }
+          items.push({
+            id: cartData.variantId,
+            quantity: Math.max(1, job.sheet.quantity || 1),
+            properties: cartData.properties,
+          });
+        } catch (err) {
+          throw new Error(`${job.name}: ${(err as Error).message}`);
+        }
+      }
+
+      // Step 4: Add ALL sheets to the Shopify cart in one batched call
+      const shopifyRoot = (window as any).Shopify?.routes?.root || "/";
+      const response = await fetch(`${shopifyRoot}cart/add.js`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
       });
 
-      // Step 3: Prepare for cart
-      const cartData = await prepareForCart(gsId);
-      const shopifyRoot = (window as any).Shopify?.routes?.root || "/";
-
-      if (cartData.variantId) {
-        const response = await fetch(`${shopifyRoot}cart/add.js`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            items: [
-              {
-                id: cartData.variantId,
-                quantity: 1,
-                properties: cartData.properties,
-              },
-            ],
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error("Kunde inte lägga till i varukorgen");
-        }
-
-        window.location.href = `${shopifyRoot}cart`;
-      } else {
-        // No variant mapped — show price info and let user know
-        alert(
-          `Arket är sparat (${cartData.price} kr). Variant-koppling saknas i inställningarna — kontakta admin.`,
-        );
+      if (!response.ok) {
+        throw new Error("Kunde inte lägga till i varukorgen");
       }
+
+      window.location.href = `${shopifyRoot}cart`;
     } catch (err) {
       console.error("Add to cart failed:", err);
       alert(`Fel: ${(err as Error).message}`);
@@ -97,7 +108,12 @@ export function AddToCartButton() {
     }
   };
 
-  const disabled = isAdding || images.length === 0;
+  const hasAnyImages =
+    images.length > 0 ||
+    sheets.some((s, i) => i !== activeSheetIndex && (s.savedImages?.length || 0) > 0);
+  const disabled = isAdding || !hasAnyImages;
+
+  const totalPrice = getSheetsTotalPrice(sheets, prices, sheetSize, filmType, activeSheetIndex, images.length);
 
   return (
     <button
@@ -121,7 +137,7 @@ export function AddToCartButton() {
     >
       {isAdding
         ? "Lägger i varukorg..."
-        : `Lägg i varukorg — ${currentPrice} kr`}
+        : `Lägg i varukorg — ${totalPrice !== null ? `${totalPrice} kr` : "—"}`}
     </button>
   );
 }

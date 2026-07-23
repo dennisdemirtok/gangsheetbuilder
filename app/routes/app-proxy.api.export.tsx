@@ -7,6 +7,7 @@ import {
   type CompositeImage,
 } from "../lib/image-processing.server";
 import { mmToPx, EXPORT_DPI } from "../lib/constants";
+import { computeCopyPlacements, resolveRasterKey } from "../lib/placement";
 
 /**
  * Export a gang sheet as 300 DPI PNG.
@@ -25,6 +26,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    // Same dimension bounds as app-proxy.api.gang-sheet.tsx
+    if (
+      typeof sheetWidthMm !== "number" ||
+      typeof sheetHeightMm !== "number" ||
+      sheetWidthMm <= 0 ||
+      sheetHeightMm <= 0 ||
+      sheetWidthMm > 10000 ||
+      sheetHeightMm > 100000
+    ) {
+      return json({ error: "Invalid dimensions" }, { status: 400 });
+    }
+
     const canvasWidthPx = mmToPx(sheetWidthMm, EXPORT_DPI);
     const canvasHeightPx = mmToPx(sheetHeightMm, EXPORT_DPI);
 
@@ -32,9 +45,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     for (const img of images) {
       const imageKey = img.bgRemovedUrl || img.originalUrl;
-      const r2Key = imageKey
-        .replace(/^\/api\/image\//, "")
-        .replace(/^\/apps\/gangsheet\/api\/image\//, "");
+      const r2Key = resolveRasterKey(
+        imageKey
+          .replace(/^\/api\/image\//, "")
+          .replace(/^\/apps\/gangsheet\/api\/image\//, ""),
+      );
+
+      // Only allow reads from the uploads/ prefix — no arbitrary R2 keys.
+      if (!r2Key.startsWith("uploads/") || r2Key.includes("..")) {
+        console.warn("Rejected image key outside uploads/: " + r2Key);
+        continue;
+      }
 
       let buffer: Buffer;
       try {
@@ -44,30 +65,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         continue;
       }
 
-      const qty = img.quantity || 1;
-      const gap = 5;
-      const cellW = img.displayWidth + gap;
-      const cellH = img.displayHeight + gap;
-      const cols = Math.floor((sheetWidthMm - gap) / cellW) || 1;
+      const { placements, skipped } = computeCopyPlacements(
+        {
+          positionX: img.positionX,
+          positionY: img.positionY,
+          displayWidth: img.displayWidth,
+          displayHeight: img.displayHeight,
+          rotation: img.rotation || 0,
+          quantity: img.quantity || 1,
+          marginMm: img.marginMm,
+        },
+        sheetWidthMm,
+        sheetHeightMm,
+      );
 
-      for (let q = 0; q < qty; q++) {
-        let posX: number;
-        let posY: number;
+      if (skipped > 0) {
+        console.warn(
+          `[export] Skipped ${skipped} copies of "${r2Key}" that exceed the sheet bottom`,
+        );
+      }
 
-        if (qty === 1) {
-          posX = img.positionX;
-          posY = img.positionY;
-        } else {
-          const col = q % cols;
-          const row = Math.floor(q / cols);
-          posX = gap + col * cellW;
-          posY = gap + row * cellH;
-        }
-
+      for (const placement of placements) {
         compositeImages.push({
           buffer,
-          x: mmToPx(posX, EXPORT_DPI),
-          y: mmToPx(posY, EXPORT_DPI),
+          x: mmToPx(placement.xMm, EXPORT_DPI),
+          y: mmToPx(placement.yMm, EXPORT_DPI),
           width: mmToPx(img.displayWidth, EXPORT_DPI),
           height: mmToPx(img.displayHeight, EXPORT_DPI),
           rotation: img.rotation || 0,

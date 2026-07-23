@@ -40,6 +40,7 @@ export function DownloadButton() {
               flipX: img.flipX,
               flipY: img.flipY,
               quantity: img.quantity,
+              marginMm: img.marginMm ?? 5,
             })),
           }),
         });
@@ -65,6 +66,7 @@ export function DownloadButton() {
             flipX: img.flipX,
             flipY: img.flipY,
             quantity: img.quantity,
+            marginMm: img.marginMm ?? 5,
           })),
           sheetWidthMm: sheetSize.widthMm,
           sheetHeightMm: sheetSize.heightMm,

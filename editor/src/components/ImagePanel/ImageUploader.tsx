@@ -42,7 +42,14 @@ export function ImageUploader() {
           const naturalWidthMm = pxToMm(result.width, dpi);
           const naturalHeightMm = pxToMm(result.height, dpi);
           const maxDisplayMm = 100;
-          const scale = Math.min(1, maxDisplayMm / naturalWidthMm);
+          // Cap both width and height (keep aspect ratio) so an image
+          // can never be created taller than the sheet
+          const maxHeightMm = Math.max(1, sheetSize.heightMm - 20);
+          const scale = Math.min(
+            1,
+            maxDisplayMm / naturalWidthMm,
+            maxHeightMm / naturalHeightMm,
+          );
 
           // Prepend appProxyUrl to relative image paths
           const base = getAppProxyUrl();
@@ -95,7 +102,7 @@ export function ImageUploader() {
       setUploadProgress(null);
       setUploading(false);
     },
-    [sessionId, gangSheetId, addImage, setUploading],
+    [sessionId, gangSheetId, sheetSize, filmType, addImage, setUploading, setGangSheetId],
   );
 
   const handleDrop = useCallback(
@@ -201,7 +208,7 @@ function Spinner() {
 /**
  * Simple toast notification — appends to body and auto-removes.
  */
-function showToast(message: string, type: "warning" | "error" | "info") {
+export function showToast(message: string, type: "warning" | "error" | "info") {
   const colors = {
     warning: { bg: "#fef3c7", border: "#fbbf24", text: "#92400e" },
     error: { bg: "#fef2f2", border: "#f87171", text: "#991b1b" },

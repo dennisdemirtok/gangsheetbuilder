@@ -6,6 +6,7 @@ import {
   type CompositeImage,
 } from "./image-processing.server";
 import { mmToPx, EXPORT_DPI } from "./constants";
+import { computeCopyPlacements, resolveRasterKey } from "./placement";
 
 /**
  * Generate the final 300 DPI export file for a gang sheet.
@@ -38,25 +39,46 @@ export async function exportGangSheet(gangSheetId: string): Promise<{
       continue; // Skip images not placed on canvas
     }
 
-    // Use bg-removed version if available, otherwise original
+    // Use bg-removed version if available, otherwise original.
+    // Vector originals (EPS/AI/PS) are resolved to their rasterized PNG.
     const imageUrl = image.bgRemovedUrl || image.originalUrl;
 
     // Extract the R2 key from the URL
-    const key = extractR2Key(imageUrl);
+    const key = resolveRasterKey(extractR2Key(imageUrl));
     const buffer = await downloadFile(key);
 
-    // For each copy (quantity), the positions should already be in the canvas state
-    // The canvas state stores individual placements including duplicates
-    compositeImages.push({
-      buffer,
-      x: mmToPx(image.positionX, EXPORT_DPI),
-      y: mmToPx(image.positionY, EXPORT_DPI),
-      width: mmToPx(image.displayWidth, EXPORT_DPI),
-      height: mmToPx(image.displayHeight, EXPORT_DPI),
-      rotation: image.rotation,
-      flipX: image.flipX,
-      flipY: image.flipY,
-    });
+    // Compute one placement per copy using the shared quantity grid
+    const { placements, skipped } = computeCopyPlacements(
+      {
+        positionX: image.positionX,
+        positionY: image.positionY,
+        displayWidth: image.displayWidth,
+        displayHeight: image.displayHeight,
+        rotation: image.rotation,
+        quantity: image.quantity,
+      },
+      gangSheet.widthMm,
+      gangSheet.heightMm,
+    );
+
+    if (skipped > 0) {
+      console.warn(
+        `[export] Gang sheet ${gangSheetId}: skipped ${skipped} copies of "${image.originalFilename}" that exceed the sheet bottom`,
+      );
+    }
+
+    for (const placement of placements) {
+      compositeImages.push({
+        buffer,
+        x: mmToPx(placement.xMm, EXPORT_DPI),
+        y: mmToPx(placement.yMm, EXPORT_DPI),
+        width: mmToPx(image.displayWidth, EXPORT_DPI),
+        height: mmToPx(image.displayHeight, EXPORT_DPI),
+        rotation: image.rotation,
+        flipX: image.flipX,
+        flipY: image.flipY,
+      });
+    }
   }
 
   // Composite all images onto the canvas
@@ -85,16 +107,30 @@ export async function exportGangSheet(gangSheetId: string): Promise<{
     },
   });
 
-  // Create export record
-  await prisma.gangSheetExport.create({
-    data: {
-      gangSheetId,
-      format: "png",
-      url: pngKey,
-      fileSizeBytes: pngBuffer.length,
-      dpi: EXPORT_DPI,
-    },
+  // Upsert export record (idempotent across webhook redeliveries)
+  const existingExport = await prisma.gangSheetExport.findFirst({
+    where: { gangSheetId, format: "png" },
   });
+  if (existingExport) {
+    await prisma.gangSheetExport.update({
+      where: { id: existingExport.id },
+      data: {
+        url: pngKey,
+        fileSizeBytes: pngBuffer.length,
+        dpi: EXPORT_DPI,
+      },
+    });
+  } else {
+    await prisma.gangSheetExport.create({
+      data: {
+        gangSheetId,
+        format: "png",
+        url: pngKey,
+        fileSizeBytes: pngBuffer.length,
+        dpi: EXPORT_DPI,
+      },
+    });
+  }
 
   return { pngUrl: pngKey, pngKey };
 }

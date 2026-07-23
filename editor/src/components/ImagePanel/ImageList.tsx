@@ -84,13 +84,15 @@ function ImageItem({
   };
 
   const handleWidthChange = (val: string) => {
-    const w = parseFloat(val);
+    // Input is in cm — store keeps mm
+    const w = parseFloat(val) * 10;
     if (isNaN(w) || w <= 0) return;
     resizeImage(image.id, w, aspectLocked ? w / ratio : image.displayHeight, aspectLocked);
   };
 
   const handleHeightChange = (val: string) => {
-    const h = parseFloat(val);
+    // Input is in cm — store keeps mm
+    const h = parseFloat(val) * 10;
     if (isNaN(h) || h <= 0) return;
     resizeImage(image.id, aspectLocked ? h * ratio : image.displayWidth, h, aspectLocked);
   };
@@ -281,7 +283,11 @@ function ImageItem({
                 min="1"
                 max="100"
                 value={image.quantity}
-                onChange={(e) => setImageQuantity(image.id, parseInt(e.target.value) || 1)}
+                onChange={(e) => {
+                  const qty = parseInt(e.target.value);
+                  if (isNaN(qty)) return;
+                  setImageQuantity(image.id, qty);
+                }}
                 style={{
                   width: "100%", padding: "6px 8px", border: `1px solid ${theme.border}`,
                   borderRadius: 6, fontSize: 13, fontFamily: theme.fontFamily,
@@ -295,9 +301,10 @@ function ImageItem({
                 type="number"
                 step="0.1"
                 min="0"
-                value={((image.marginMm || 5) / 10).toFixed(1)}
+                value={((image.marginMm ?? 5) / 10).toFixed(1)}
                 onChange={(e) => {
                   const mm = parseFloat(e.target.value) * 10;
+                  if (isNaN(mm)) return;
                   updateImage(image.id, { marginMm: Math.max(0, mm) });
                 }}
                 style={{

@@ -262,13 +262,51 @@ export function calculateDisplayDpi(
 
 export interface CompositeImage {
   buffer: Buffer;
-  x: number;
-  y: number;
+  x: number; // px, top-left of the rotated bounding box
+  y: number; // px
+  width: number; // px, UNROTATED display width
+  height: number; // px, UNROTATED display height
+  rotation: number; // degrees clockwise
+  flipX: boolean;
+  flipY: boolean;
+}
+
+/**
+ * Render a single placed image per the shared placement contract:
+ * resize to unrotated display size → flip/flop (object space) →
+ * rotate with transparent background. The resulting buffer IS the
+ * axis-aligned bounding box of the placed image.
+ */
+export async function renderPlacedImage(img: {
+  buffer: Buffer;
   width: number;
   height: number;
   rotation: number;
   flipX: boolean;
   flipY: boolean;
+}): Promise<Buffer> {
+  // Pass 1: resize to the unrotated display size.
+  const resized = await sharp(img.buffer, { limitInputPixels: false })
+    .resize(img.width, img.height, { fit: "fill" })
+    .ensureAlpha()
+    .png()
+    .toBuffer();
+
+  if (!img.flipX && !img.flipY && img.rotation % 360 === 0) {
+    return resized;
+  }
+
+  // Pass 2: flip/flop then rotate. sharp always applies flip/flop before
+  // rotation within a pipeline, matching Fabric.js flip-then-rotate order.
+  let processed = sharp(resized, { limitInputPixels: false });
+  if (img.flipX) processed = processed.flop();
+  if (img.flipY) processed = processed.flip();
+  if (img.rotation % 360 !== 0) {
+    processed = processed.rotate(img.rotation, {
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    });
+  }
+  return processed.png().toBuffer();
 }
 
 /**
@@ -287,32 +325,44 @@ export async function compositeGangSheet(
       channels: 4,
       background: { r: 0, g: 0, b: 0, alpha: 0 },
     },
-  }).png();
+    limitInputPixels: false,
+  });
 
   const compositeInputs: sharp.OverlayOptions[] = [];
 
   for (const img of images) {
-    let processed = sharp(img.buffer).resize(img.width, img.height, {
-      fit: "fill",
-    });
+    const processedBuffer = await renderPlacedImage(img);
 
-    if (img.rotation !== 0) {
-      processed = processed.rotate(img.rotation);
+    const left = Math.round(img.x);
+    const top = Math.round(img.y);
+
+    const meta = await sharp(processedBuffer, {
+      limitInputPixels: false,
+    }).metadata();
+    const bboxW = meta.width || 0;
+    const bboxH = meta.height || 0;
+
+    // sharp cannot composite overlays outside the canvas — skip and warn.
+    if (
+      left < 0 ||
+      top < 0 ||
+      left + bboxW > canvasWidthPx ||
+      top + bboxH > canvasHeightPx
+    ) {
+      console.warn(
+        `[export] Skipping copy outside canvas: left=${left}, top=${top}, bbox=${bboxW}x${bboxH}, canvas=${canvasWidthPx}x${canvasHeightPx}`,
+      );
+      continue;
     }
-
-    if (img.flipX) processed = processed.flop();
-    if (img.flipY) processed = processed.flip();
-
-    const processedBuffer = await processed.png().toBuffer();
 
     compositeInputs.push({
       input: processedBuffer,
-      left: Math.round(img.x),
-      top: Math.round(img.y),
+      left,
+      top,
     });
   }
 
-  // Set DPI metadata in the output
+  // Set 300 DPI metadata in the output
   return canvas
     .composite(compositeInputs)
     .png()
@@ -327,7 +377,7 @@ export async function generatePreview(
   compositeBuffer: Buffer,
   maxWidth: number = 1200,
 ): Promise<Buffer> {
-  return sharp(compositeBuffer)
+  return sharp(compositeBuffer, { limitInputPixels: false })
     .resize({ width: maxWidth, withoutEnlargement: true })
     .webp({ quality: 85 })
     .toBuffer();
@@ -340,5 +390,8 @@ export async function setDpiMetadata(
   buffer: Buffer,
   dpi: number = 300,
 ): Promise<Buffer> {
-  return sharp(buffer).withMetadata({ density: dpi }).png().toBuffer();
+  return sharp(buffer, { limitInputPixels: false })
+    .withMetadata({ density: dpi })
+    .png()
+    .toBuffer();
 }

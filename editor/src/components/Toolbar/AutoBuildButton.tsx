@@ -1,17 +1,24 @@
 import { useState } from "react";
 import { useEditorStore } from "../../store/editorStore";
-import { autoBuild } from "../../services/api";
+import {
+  autoBuild,
+  buildPlacementsPayload,
+  ensureGangSheet,
+  saveGangSheet,
+} from "../../services/api";
 import { theme } from "../../styles/theme";
 
 export function AutoBuildButton() {
   const {
     gangSheetId,
+    sessionId,
     sheetSize,
+    filmType,
     images,
     isAutoBuilding,
     setAutoBuilding,
+    setGangSheetId,
     applyAutoBuild,
-    setSheetSize,
   } = useEditorStore();
 
   const [lastResult, setLastResult] = useState<{
@@ -28,8 +35,21 @@ export function AutoBuildButton() {
     setLastResult(null);
 
     try {
+      // Ensure a gang sheet exists and save the CURRENT client state first,
+      // so the server packs live dimensions instead of stale upload-time ones.
+      const gsId = await ensureGangSheet(
+        sessionId,
+        sheetSize.widthMm,
+        sheetSize.heightMm,
+        filmType,
+        gangSheetId,
+      );
+      if (gsId !== gangSheetId) setGangSheetId(gsId);
+
+      await saveGangSheet(gsId, buildPlacementsPayload(images, sheetSize, filmType));
+
       const result = await autoBuild({
-        gangSheetId: gangSheetId || "",
+        gangSheetId: gsId,
         sheetWidthMm: sheetSize.widthMm,
         sheetHeightMm: sheetSize.heightMm,
         gapMm: 3,
