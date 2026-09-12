@@ -113,52 +113,57 @@
   >
     <div id="gangsheet-loading" style="display: flex; align-items: center; justify-content: center; height: 100vh; background: #f7f9fb;">
       <div style="text-align: center;">
-        <div style="width: 44px; height: 44px; border: 3px solid #bb0018; border-top-color: transparent; border-radius: 50%; animation: gs-lspin 0.8s linear infinite; margin: 0 auto 16px;"></div>
+        <div style="width: 44px; height: 44px; border: 3px solid #e63946; border-top-color: transparent; border-radius: 50%; animation: gs-lspin 0.8s linear infinite; margin: 0 auto 16px;"></div>
         <p style="color: #4f6071; font-size: 15px; font-family: system-ui;">{{ block.settings.loading_text }}</p>
       </div>
     </div>
   </div>
 </div>
 
-<!-- Upload Sheet — Fullscreen dark theme matching editor -->
-<div id="gangsheet-upload-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; width:100vw; height:100vh; z-index:2147483647; background:#f7f9fb; font-family:'Plus Jakarta Sans','Inter',system-ui,-apple-system,sans-serif; overflow:hidden;">
+<!-- Upload Sheet — same visual language as the builder -->
+<div id="gangsheet-upload-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; width:100vw; height:100vh; z-index:2147483647; background:#f5f5f5; font-family:Inter,system-ui,-apple-system,sans-serif; overflow:auto;">
 
-  <!-- Header bar — same as editor -->
-  <div style="height:52px; display:flex; align-items:center; gap:12px; padding:0 16px; background:rgba(255,255,255,0.7); border-bottom:1px solid rgba(25,28,30,0.08);">
-    <div style="width:28px; height:28px; border-radius:6px; background:linear-gradient(135deg,#bb0018,#e8002a); display:flex; align-items:center; justify-content:center; font-size:14px; font-weight:700; color:#fff;">↑</div>
-    <span style="font-size:15px; font-weight:600; color:#191c1e;">Ladda upp färdigt ark</span>
+  <!-- Header — dark bar, matching the builder -->
+  <div style="height:52px; display:flex; align-items:center; gap:12px; padding:0 20px; background:#1a1a1a;">
+    <span style="font-size:1.125rem; font-weight:700; color:#fff; letter-spacing:-0.02em;">Transfer<span style="color:#e63946;">craft</span></span>
+    <span style="font-size:13px; color:rgba(255,255,255,0.55);">Färdigt ark</span>
     <div style="flex:1;"></div>
-    <button id="gs-sheet-close-btn" style="padding:6px 12px; font-size:13px; font-weight:600; border:1px solid rgba(25,28,30,0.08); border-radius:6px; background:#ffffff; color:#191c1e; cursor:pointer; display:flex; align-items:center; gap:4px;">← Tillbaka</button>
+    <button id="gs-sheet-close-btn" style="padding:6px 14px; font-size:13px; font-weight:600; font-family:inherit; border:1px solid rgba(255,255,255,0.2); border-radius:8px; background:rgba(255,255,255,0.1); color:#fff; cursor:pointer;">← Tillbaka</button>
   </div>
 
-  <!-- Centered content -->
-  <div style="display:flex; align-items:center; justify-content:center; height:calc(100vh - 52px);">
-    <div style="max-width:480px; width:90%; padding:0 20px;">
+  <div style="display:flex; justify-content:center; padding:32px 20px 48px;">
+    <div style="max-width:520px; width:100%;">
 
-      <p style="margin:0 0 20px; font-size:13px; color:#4f6071; text-align:center;">Filen måste vara 58 cm bred. Rekommenderat: 300 DPI, transparent PNG.</p>
+      <h2 style="margin:0 0 6px; font-size:1.125rem; font-weight:700; color:rgba(0,0,0,0.81); letter-spacing:-0.02em;">Ladda upp ditt färdiga ark</h2>
+      <p style="margin:0 0 20px; font-size:0.8125rem; color:rgba(0,0,0,0.55); line-height:1.5;">
+        Arket skrivs ut i 58 cm bredd och så långt som din fil är. För att det
+        ska bli skarpt behöver filen vara <strong>minst 6850 px bred</strong> —
+        det är 58 cm i 300 DPI. Transparent PNG ger bäst resultat.
+      </p>
 
       <!-- Upload area -->
-      <div id="gs-sheet-dropzone" style="border:2px dashed rgba(25,28,30,0.08); border-radius:12px; padding:40px 16px; text-align:center; cursor:pointer; transition:all 0.2s; background:#e6e8ea;">
+      <div id="gs-sheet-dropzone" style="border:2px dashed rgba(0,0,0,0.08); border-radius:14px; padding:36px 16px; text-align:center; cursor:pointer; transition:all 0.2s; background:#ffffff;">
         <input type="file" id="gs-sheet-file-input" accept="image/png,image/jpeg,image/tiff" multiple style="display:none;">
-        <div style="width:52px; height:52px; border-radius:12px; background:rgba(187,0,24,0.06); display:flex; align-items:center; justify-content:center; margin:0 auto 12px; font-size:24px; color:#bb0018;">+</div>
-        <p style="margin:0; font-size:15px; font-weight:600; color:#191c1e;">Dra dina filer hit eller klicka</p>
-        <p style="margin:8px 0 0; font-size:12px; color:#8a9199;">PNG, JPG, TIFF — flera filer går bra, max 500 MB per fil</p>
+        <div style="width:44px; height:44px; border-radius:10px; background:#f5f5f5; display:flex; align-items:center; justify-content:center; margin:0 auto 10px; font-size:22px; color:#e63946;">+</div>
+        <p style="margin:0; font-size:14px; font-weight:500; color:rgba(0,0,0,0.81);">Dra dina filer hit eller klicka</p>
+        <p style="margin:6px 0 0; font-size:12px; color:rgba(0,0,0,0.35);">PNG, JPG, TIFF — flera filer går bra, max 500 MB per fil</p>
       </div>
 
       <!-- Results area -->
       <div id="gs-sheet-results" style="display:none; margin-top:20px;">
-        <div id="gs-sheet-info" style="padding:16px; background:#e6e8ea; border:1px solid rgba(25,28,30,0.08); border-radius:10px; margin-bottom:14px;"></div>
-        <div id="gs-sheet-warnings" style="display:none; margin-bottom:14px;"></div>
+        <div id="gs-sheet-info" style="padding:14px; background:#ffffff; border:1px solid rgba(0,0,0,0.08); border-radius:14px; margin-bottom:12px;"></div>
+        <div id="gs-sheet-warnings" style="display:none; margin-bottom:12px;"></div>
+        <div id="gs-sheet-retry" style="display:none; margin-bottom:12px;"></div>
 
         <!-- Uploaded sheets list -->
-        <div id="gs-sheet-list" style="display:none; margin-bottom:14px;"></div>
+        <div id="gs-sheet-list" style="display:none; margin-bottom:12px;"></div>
 
         <!-- Add another sheet -->
-        <button id="gs-sheet-add-more" style="display:none; width:100%; padding:10px; font-size:12px; font-weight:600; border:1px dashed rgba(25,28,30,0.08); border-radius:10px; background:transparent; color:#4f6071; cursor:pointer; margin-bottom:14px; transition:all 0.2s;" onmouseover="this.style.borderColor='#bb0018';this.style.color='#bb0018'" onmouseout="this.style.borderColor='rgba(25,28,30,0.08)';this.style.color='#4f6071'">+ Lägg till fler ark</button>
+        <button id="gs-sheet-add-more" style="display:none; width:100%; padding:10px; font-size:12px; font-weight:600; font-family:inherit; border:1px dashed rgba(0,0,0,0.12); border-radius:8px; background:transparent; color:rgba(0,0,0,0.55); cursor:pointer; margin-bottom:12px; transition:all 0.2s;" onmouseover="this.style.borderColor='#e63946';this.style.color='#e63946'" onmouseout="this.style.borderColor='rgba(0,0,0,0.12)';this.style.color='rgba(0,0,0,0.55)'">+ Lägg till fler ark</button>
 
-        <div id="gs-sheet-actions" style="display:flex; gap:10px;">
-          <button id="gs-sheet-cancel-btn" style="flex:1; padding:14px; font-size:13px; font-weight:600; border:1px solid rgba(25,28,30,0.08); border-radius:10px; background:#e6e8ea; cursor:pointer; color:#4f6071;">Avbryt</button>
-          <button id="gs-sheet-confirm-btn" style="flex:1; padding:14px; font-size:14px; font-weight:700; border:none; border-radius:10px; background:linear-gradient(135deg,#bb0018,#e8002a); color:#fff; cursor:pointer; box-shadow:0 4px 16px rgba(187,0,24,0.2);">Lägg i varukorg</button>
+        <div id="gs-sheet-actions" style="display:flex; gap:8px;">
+          <button id="gs-sheet-cancel-btn" style="flex:1; padding:12px; font-size:13px; font-weight:600; font-family:inherit; border:1px solid rgba(0,0,0,0.08); border-radius:14px; background:transparent; cursor:pointer; color:rgba(0,0,0,0.81);">Avbryt</button>
+          <button id="gs-sheet-confirm-btn" style="flex:1; padding:12px 16px; font-size:14px; font-weight:700; font-family:inherit; border:none; border-radius:14px; background:linear-gradient(135deg,#e63946,#ff4757); color:#fff; cursor:pointer; box-shadow:0 2px 12px rgba(230,57,70,0.31);">Lägg i varukorg</button>
         </div>
       </div>
 
@@ -208,7 +213,7 @@
   /* The theme's own styles must not leak sizing into the editor tree. */
   #gangsheet-editor-root img, #gangsheet-editor-root svg { max-width: none; }
   #gangsheet-editor-root button { font: inherit; }
-  #gs-sheet-dropzone:hover, #gs-sheet-dropzone.dragover { border-color: #bb0018 !important; background: rgba(187,0,24,0.06) !important; }
+  #gs-sheet-dropzone:hover, #gs-sheet-dropzone.dragover { border-color: #e63946 !important; background: rgba(230,57,70,0.06) !important; }
   #gangsheet-upload-modal {
     position: fixed !important; top: 0 !important; left: 0 !important;
     width: 100vw !important; height: 100vh !important;
@@ -407,6 +412,35 @@
     });
   }
 
+  /*
+   * Scale the chosen file down to a thumbnail in the browser.
+   *
+   * A ready sheet can be a five-metre print costing hundreds of kronor and
+   * the panel showed nothing but metadata chips — no way to tell you picked
+   * the right file. Drawn to a small canvas rather than shown at full size
+   * so a 500 MB original is not kept decoded in memory.
+   */
+  function makeThumbnail(file, cb) {
+    var url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var maxW = 460;
+        var scale = Math.min(1, maxW / img.naturalWidth);
+        var c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        c.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        cb(c.toDataURL('image/png'));
+      } catch (e) {
+        cb(null);
+      }
+      URL.revokeObjectURL(url);
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); cb(null); };
+    img.src = url;
+  }
+
   function handleSheetFile(file, done) {
     var finish = function () { if (typeof done === 'function') done(); };
     dropzone.style.display = 'none';
@@ -489,19 +523,32 @@
 
         uploadData = data;
 
-        // Show info — dark theme
+        makeThumbnail(file, function (thumb) {
+          var holder = document.getElementById('gs-sheet-preview');
+          if (holder && thumb) {
+            holder.innerHTML =
+              '<img src="' + thumb + '" alt="" style="display:block;width:100%;border-radius:8px;' +
+              'background:repeating-conic-gradient(#eee 0% 25%, #fff 0% 50%) 50%/16px 16px;">';
+            holder.style.display = 'block';
+          } else if (holder) {
+            holder.style.display = 'none';
+          }
+        });
+
+        // Show info
         var sizeText = data.widthCm + ' × ' + data.heightCm + ' cm';
-        var dpiColor = data.dpi >= 300 ? '#2e7d32' : data.dpi >= 200 ? '#e65100' : '#c62828';
-        var dpiBg = data.dpi >= 300 ? 'rgba(52,211,153,0.12)' : data.dpi >= 200 ? 'rgba(251,191,36,0.12)' : 'rgba(255,107,107,0.12)';
+        var dpiColor = data.dpi >= 300 ? '#16a34a' : data.dpi >= 200 ? '#65a30d' : '#ef4444';
+        var dpiBg = data.dpi >= 300 ? 'rgba(22,163,74,0.10)' : data.dpi >= 200 ? 'rgba(101,163,13,0.10)' : 'rgba(239,68,68,0.10)';
         infoDiv.innerHTML =
+          '<div id="gs-sheet-preview" style="display:none;margin-bottom:12px;"></div>' +
           '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
-            '<span style="font-weight:600;font-size:13px;color:#191c1e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;">' + file.name + '</span>' +
-            '<span style="font-size:11px;color:#8a9199;flex-shrink:0;">' + (data.fileSizeBytes / 1024 / 1024).toFixed(1) + ' MB</span>' +
+            '<span style="font-weight:600;font-size:13px;color:rgba(0,0,0,0.81);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px;">' + file.name + '</span>' +
+            '<span style="font-size:11px;color:rgba(0,0,0,0.35);flex-shrink:0;">' + (data.fileSizeBytes / 1024 / 1024).toFixed(1) + ' MB</span>' +
           '</div>' +
           '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-            '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f2f4f6;color:#4f6071;">' + sizeText + '</span>' +
+            '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f5f5f5;color:rgba(0,0,0,0.55);">' + sizeText + '</span>' +
             '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:' + dpiBg + ';color:' + dpiColor + ';font-weight:600;">' + data.dpi + ' DPI</span>' +
-            '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f2f4f6;color:#4f6071;">' + data.widthPx + '×' + data.heightPx + ' px</span>' +
+            '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:#f5f5f5;color:rgba(0,0,0,0.55);">' + data.widthPx + '×' + data.heightPx + ' px</span>' +
             (data.hasAlpha ? '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:rgba(52,211,153,0.12);color:#2e7d32;">✓ Transparent</span>' : '<span style="font-size:11px;padding:3px 8px;border-radius:4px;background:rgba(255,107,107,0.12);color:#c62828;">✗ Ej transparent</span>') +
           '</div>';
 
@@ -509,11 +556,14 @@
         if (data.warnings && data.warnings.length > 0) {
           warningsDiv.style.display = 'block';
           warningsDiv.innerHTML = data.warnings.map(function(w) {
-            return '<div style="padding:8px 12px;background:rgba(251,191,36,0.1);border:1px solid rgba(251,191,36,0.2);border-radius:8px;font-size:12px;color:#e65100;margin-bottom:6px;">⚠ ' + w + '</div>';
+            return '<div style="padding:8px 12px;background:rgba(230,81,0,0.06);border:1px solid rgba(230,81,0,0.16);border-radius:8px;font-size:12px;color:#e65100;margin-bottom:6px;line-height:1.5;">⚠ ' + w + '</div>';
           }).join('');
         } else {
           warningsDiv.style.display = 'none';
         }
+
+        var retryHolder = document.getElementById('gs-sheet-retry');
+        if (retryHolder) retryHolder.style.display = 'none';
 
         // Add to sheets list
         if (data.approved) {
@@ -524,10 +574,36 @@
           confirmBtn.disabled = false;
           if (addMoreBtn) addMoreBtn.style.display = 'block';
         } else {
-          confirmBtn.style.opacity = '0.5';
-          confirmBtn.textContent = 'Kan inte lägga till — fixa varningar';
-          confirmBtn.disabled = true;
-          if (addMoreBtn) addMoreBtn.style.display = 'none';
+          /*
+           * A rejected file used to leave a greyed-out button reading "fixa
+           * varningar" and no way forward but Cancel — which also threw away
+           * any sheets already added. Offer the actual next step instead.
+           */
+          var retry = document.getElementById('gs-sheet-retry');
+          if (retry) {
+            retry.style.display = 'block';
+            retry.innerHTML =
+              '<button id="gs-sheet-retry-btn" style="width:100%;padding:11px;font-size:13px;' +
+              'font-weight:600;font-family:inherit;border:1px solid rgba(0,0,0,0.08);border-radius:14px;' +
+              'background:#fff;color:rgba(0,0,0,0.81);cursor:pointer;">Välj en annan fil</button>';
+            document.getElementById('gs-sheet-retry-btn').onclick = function () {
+              uploadData = null;
+              retry.style.display = 'none';
+              infoDiv.innerHTML = '';
+              warningsDiv.style.display = 'none';
+              dropzone.style.display = 'block';
+              resultsDiv.style.display = allSheets.length > 0 ? 'block' : 'none';
+              updateSheetList();
+              updatePriceDisplay();
+            };
+          }
+          // Sheets already in the list stay orderable.
+          confirmBtn.style.opacity = allSheets.length > 0 ? '1' : '0.5';
+          confirmBtn.disabled = allSheets.length === 0;
+          if (allSheets.length === 0) {
+            confirmBtn.textContent = 'Lägg i varukorg';
+          }
+          if (addMoreBtn) addMoreBtn.style.display = allSheets.length > 0 ? 'block' : 'none';
         }
 
         // Update sheet list display
@@ -563,7 +639,7 @@
     listDiv.innerHTML =
       '<p style="font-family:Inter,system-ui,sans-serif;font-size:12px;color:rgba(0,0,0,0.5);margin:0 0 8px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;">Dina ark</p>' +
       allSheets.map(function(s, i) {
-        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#f5f5f5;border-radius:8px;margin-bottom:6px;font-family:Inter,system-ui,sans-serif;">' +
+        return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid rgba(0,0,0,0.08);border-radius:14px;margin-bottom:6px;font-family:Inter,system-ui,sans-serif;">' +
           '<div style="flex:1;min-width:0;">' +
             '<p style="margin:0;font-size:13px;font-weight:500;color:rgba(0,0,0,0.81);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + s.filename + '</p>' +
             '<p style="margin:2px 0 0;font-size:11px;color:rgba(0,0,0,0.4);">' + s.data.widthCm + '×' + s.data.heightCm + ' cm · ' + s.data.dpi + ' DPI · ' + s.meters.toFixed(1) + ' m</p>' +
@@ -577,7 +653,7 @@
           '<button onclick="window.__gsSheetRemove(' + i + ')" style="width:24px;height:24px;border:none;background:none;cursor:pointer;font-size:14px;color:rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;" title="Ta bort">×</button>' +
         '</div>';
       }).join('') +
-      '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;margin-top:4px;background:#1a1a1a;border-radius:8px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 14px;margin-top:8px;background:#1a1a1a;border-radius:14px;">' +
         '<span style="font-family:Inter,system-ui,sans-serif;font-size:12px;color:rgba(255,255,255,0.6);">Totalt (' + allSheets.reduce(function(s,a){return s+a.qty},0) + ' ark)</span>' +
         '<span style="font-family:Inter,system-ui,sans-serif;font-size:18px;font-weight:700;color:#fff;">' + totalPrice + ' kr</span>' +
       '</div>';
