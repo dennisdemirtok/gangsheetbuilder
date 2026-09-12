@@ -13,7 +13,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (!session) return json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await request.json();
-    const { gangSheetId } = body;
+    const { gangSheetId, quotedPrice } = body;
 
     if (!gangSheetId) {
       return json({ error: "Missing gangSheetId" }, { status: 400 });
@@ -51,11 +51,30 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       gangSheet.filmType,
     );
 
+    /*
+     * What the customer was actually quoted.
+     *
+     * The editor shows the Shopify variant's price — contextual, so a B2B
+     * contact sees their catalog rate — while calculatePrice() reads the
+     * app's own table. Those disagree (349 vs 200 on this shop), and the
+     * admin was showing the app's number for an order charged at Shopify's.
+     * This field is a record of the quote for admin display only; the paid
+     * order remains the authority on money, so a bad value here can mislead
+     * but cannot overcharge.
+     */
+    const quoted =
+      typeof quotedPrice === "number" &&
+      Number.isFinite(quotedPrice) &&
+      quotedPrice >= 0 &&
+      quotedPrice < 1_000_000
+        ? Math.round(quotedPrice)
+        : price.totalPrice;
+
     await prisma.gangSheet.update({
       where: { id: gangSheetId },
       data: {
         status: "pending",
-        priceSEK: price.totalPrice,
+        priceSEK: quoted,
         imagesCount: gangSheet.images.length,
       },
     });

@@ -223,9 +223,12 @@ export async function removeBg(imageId: string): Promise<any> {
 }
 
 // Prepare for cart
-export async function prepareForCart(gangSheetId: string): Promise<any> {
+export async function prepareForCart(
+  gangSheetId: string,
+  quotedPrice?: number | null,
+): Promise<any> {
   return fetchApi("/api/cart", {
     method: "POST",
-    body: JSON.stringify({ gangSheetId }),
+    body: JSON.stringify({ gangSheetId, quotedPrice }),
   });
 }

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useEditorStore, getSheetsTotalPrice } from "../../store/editorStore";
 import { computeSheetStats, type SheetIssue } from "../../utils/sheetStats";
-import { getSheetVariantId } from "../../services/storefrontPrices";
+import { getSheetPrice, getSheetVariantId } from "../../services/storefrontPrices";
 import {
   prepareForCart,
   saveGangSheet,
@@ -89,7 +89,10 @@ export function AddToCartButton() {
           );
 
           // Step 3: Prepare for cart (persists the sheet, returns properties)
-          const cartData = await prepareForCart(gsId);
+          const cartData = await prepareForCart(
+            gsId,
+            getSheetPrice(job.size.key),
+          );
 
           // Prefer the variant the theme rendered. The app's variantMapping
           // is optional config that nobody had filled in, which made every
