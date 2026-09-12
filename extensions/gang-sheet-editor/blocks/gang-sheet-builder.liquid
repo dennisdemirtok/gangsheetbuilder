@@ -139,10 +139,10 @@
 
       <!-- Upload area -->
       <div id="gs-sheet-dropzone" style="border:2px dashed rgba(25,28,30,0.08); border-radius:12px; padding:40px 16px; text-align:center; cursor:pointer; transition:all 0.2s; background:#e6e8ea;">
-        <input type="file" id="gs-sheet-file-input" accept="image/png,image/jpeg,image/tiff" style="display:none;">
+        <input type="file" id="gs-sheet-file-input" accept="image/png,image/jpeg,image/tiff" multiple style="display:none;">
         <div style="width:52px; height:52px; border-radius:12px; background:rgba(187,0,24,0.06); display:flex; align-items:center; justify-content:center; margin:0 auto 12px; font-size:24px; color:#bb0018;">+</div>
-        <p style="margin:0; font-size:15px; font-weight:600; color:#191c1e;">Dra din fil hit eller klicka</p>
-        <p style="margin:8px 0 0; font-size:12px; color:#8a9199;">PNG, JPG, TIFF — Max 500 MB</p>
+        <p style="margin:0; font-size:15px; font-weight:600; color:#191c1e;">Dra dina filer hit eller klicka</p>
+        <p style="margin:8px 0 0; font-size:12px; color:#8a9199;">PNG, JPG, TIFF — flera filer går bra, max 500 MB per fil</p>
       </div>
 
       <!-- Results area -->
@@ -272,26 +272,25 @@
   var uploadData = null;
   var sheetQty = 1;
   var allSheets = []; // Support multiple sheets
-  var prices = { 1: 200, 2: 400, 3: 600, 4: 800, 5: 1000 };
 
-  // Override with actual product variant prices if available
+  /*
+   * Price per decimetre, read from the variant Shopify will actually
+   * charge. It used to be a hardcoded 20 — the variant prices above were
+   * parsed and then never used — so this flow ignored any price change and
+   * every B2B catalog rate.
+   */
+  var dmVariant = null;
   try {
-    var vdEl = document.getElementById('gangsheet-variant-data');
-    if (vdEl) {
-      var vd = JSON.parse(vdEl.textContent);
-      Object.keys(vd).forEach(function(key) {
-        var match = key.match(/(\d+)/);
-        if (match) {
-          var m = parseInt(match[1]);
-          var p = parseFloat(vd[key].price.replace(',', '.'));
-          if (!isNaN(p)) prices[m] = p;
-        }
-      });
-    }
-  } catch(e) {}
+    var vdAll = JSON.parse(document.getElementById('gangsheet-variant-data').textContent);
+    Object.keys(vdAll).forEach(function(key) {
+      if (key.indexOf('decimeter') !== -1 || key.indexOf('-dm') !== -1) dmVariant = vdAll[key];
+    });
+  } catch (e) {}
 
-  // Price per decimeter = 20 kr
-  var pricePerDm = 20;
+  var pricePerDm = dmVariant && typeof dmVariant.price_cents === 'number'
+    ? dmVariant.price_cents / 100
+    : 20;
+
   function getPrice(meters) { return Math.ceil(meters * 10) * pricePerDm; }
 
   function updatePriceDisplay() {
@@ -334,20 +333,31 @@
     });
   }
 
+  function openUploadModal() {
+    // Move modal to body to escape theme CSS containers
+    if (modal.parentElement !== document.body) {
+      document.body.appendChild(modal);
+    }
+    modal.style.display = 'block';
+    document.body.style.overflow = 'hidden';
+    resultsDiv.style.display = allSheets.length > 0 ? 'block' : 'none';
+    loadingDiv.style.display = 'none';
+    dropzone.style.display = 'block';
+  }
+
   if (uploadLink) {
     uploadLink.addEventListener('click', function(e) {
       e.preventDefault();
-      // Move modal to body to escape theme CSS containers
-      if (modal.parentElement !== document.body) {
-        document.body.appendChild(modal);
-      }
-      modal.style.display = 'block';
-      document.body.style.overflow = 'hidden';
-      resultsDiv.style.display = 'none';
-      loadingDiv.style.display = 'none';
-      dropzone.style.display = 'block';
+      openUploadModal();
     });
   }
+
+  // Lets the builder hand a customer over when they already have a finished
+  // sheet — building one from scratch is the wrong tool for that.
+  window.__gangsheetOpenUpload = function() {
+    closeEditor();
+    openUploadModal();
+  };
 
   // Close modal
   function closeUploadModal() {
@@ -369,14 +379,44 @@
     dropzone.addEventListener('drop', function(e) {
       e.preventDefault();
       dropzone.classList.remove('dragover');
-      if (e.dataTransfer.files.length > 0) handleSheetFile(e.dataTransfer.files[0]);
+      queueSheetFiles(e.dataTransfer.files);
     });
     fileInput.addEventListener('change', function() {
-      if (fileInput.files.length > 0) handleSheetFile(fileInput.files[0]);
+      queueSheetFiles(fileInput.files);
+      // Let the same file be picked again after it is removed from the list.
+      fileInput.value = '';
     });
   }
 
-  function handleSheetFile(file) {
+  /*
+   * Upload files one after another.
+   *
+   * Dropping three files used to upload only files[0] and silently discard
+   * the rest. They run in sequence rather than in parallel because each one
+   * takes over the same progress bar and result panel.
+   */
+  var sheetQueue = [];
+  var queueBusy = false;
+
+  function queueSheetFiles(fileList) {
+    if (!fileList || fileList.length === 0) return;
+    for (var i = 0; i < fileList.length; i++) sheetQueue.push(fileList[i]);
+    runSheetQueue();
+  }
+
+  function runSheetQueue() {
+    if (queueBusy) return;
+    var next = sheetQueue.shift();
+    if (!next) return;
+    queueBusy = true;
+    handleSheetFile(next, function () {
+      queueBusy = false;
+      runSheetQueue();
+    });
+  }
+
+  function handleSheetFile(file, done) {
+    var finish = function () { if (typeof done === 'function') done(); };
     dropzone.style.display = 'none';
     loadingDiv.style.display = 'block';
     resultsDiv.style.display = 'none';
@@ -449,8 +489,9 @@
         loadingDiv.style.display = 'none';
 
         if (data.error) {
-          alert('Fel: ' + data.error);
+          alert(file.name + ': ' + data.error);
           dropzone.style.display = 'block';
+          finish();
           return;
         }
 
@@ -501,12 +542,20 @@
         updateSheetList();
         updatePriceDisplay();
         resultsDiv.style.display = 'block';
+
+        // A rejected file must not block the ones queued behind it.
+        if (sheetQueue.length > 0) {
+          dropzone.style.display = 'block';
+          resultsDiv.style.display = 'block';
+        }
+        finish();
       }, 300);
     })
     .catch(function(err) {
       loadingDiv.style.display = 'none';
       dropzone.style.display = 'block';
-      alert('Upload misslyckades: ' + err.message);
+      alert(file.name + ' kunde inte laddas upp: ' + err.message);
+      finish();
     });
   }
 
@@ -575,35 +624,29 @@
       // Build cart items — match variant by meter count
       var shopifyRoot = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || '/';
 
-      // Parse variant data from Liquid
-      var variantDataEl = document.getElementById('gangsheet-variant-data');
-      var variantMap = {};
-      var variantsByMeter = {};
-      try {
-        variantMap = JSON.parse(variantDataEl.textContent);
-        // Map meter count to variant ID: "1-meter" -> id
-        Object.keys(variantMap).forEach(function(key) {
-          var match = key.match(/(\d+)/);
-          if (match) variantsByMeter[parseInt(match[1])] = variantMap[key].id;
-        });
-      } catch(e) { console.warn('Could not parse variant data', e); }
+      /*
+       * A ready sheet is billed by the decimetre it actually uses, so the
+       * cart line is the per-decimetre variant with quantity = decimetres.
+       *
+       * There used to be a lookup on variantsByMeter['decimeter'], a map
+       * keyed by numbers, so it never matched; and the fallback was the
+       * current product's own variant. On this shop that is the A3 transfer
+       * at 149 kr, which would have billed a 6.4 m sheet as 64 x 149 kr.
+       * Refusing is the only safe answer when the variant is missing.
+       */
+      var dmVariantId = dmVariant ? dmVariant.id : null;
 
-      // Use per-decimeter variant: quantity = decimeters × sheet qty
-      // Find the "per-decimeter" variant ID
-      var dmVariantId = variantsByMeter['decimeter'] || null;
-      // Fallback: look for variant with lowest price (should be 20 kr / dm)
       if (!dmVariantId) {
-        Object.keys(variantMap).forEach(function(key) {
-          if (key.includes('decimeter') || key.includes('dm')) {
-            dmVariantId = variantMap[key].id;
-          }
-        });
+        alert('Priset per decimeter kunde inte hämtas från butiken. Kontakta oss så hjälper vi dig lägga ordern.');
+        confirmBtn.textContent = 'Försök igen';
+        confirmBtn.disabled = false;
+        return;
       }
 
       var items = allSheets.map(function(s) {
         var decimeters = Math.ceil(s.meters * 10); // 6.4m = 64 dm
         var totalDm = decimeters * s.qty;
-        var variantId = dmVariantId || {{ product.selected_or_first_available_variant.id | json }};
+        var variantId = dmVariantId;
 
         return {
           id: variantId,

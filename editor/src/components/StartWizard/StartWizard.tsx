@@ -53,6 +53,16 @@ interface Draft {
   };
 }
 
+/** The theme block exposes this when the upload modal is on the page. */
+function openUploadFlow() {
+  const open = (window as any).__gangsheetOpenUpload;
+  if (typeof open === "function") open();
+}
+
+const hasUploadFlow =
+  typeof window !== "undefined" &&
+  typeof (window as any).__gangsheetOpenUpload === "function";
+
 export function StartWizard({ onClose }: { onClose: () => void }) {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -255,6 +265,17 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
             <p style={S.dropTitle}>Dra filer hit eller klicka</p>
             <p style={S.dropHint}>PNG, JPG, SVG, TIFF, PDF, EPS — max 500 MB</p>
           </div>
+
+          {/* A finished 58 cm sheet does not need building — hand them to
+              the upload flow instead of making them lay it out again. */}
+          {hasUploadFlow && (
+            <p style={S.readyHint}>
+              Har du redan ett färdigt ark på 58 cm bredd?{" "}
+              <button onClick={openUploadFlow} style={S.readyLink}>
+                Ladda upp det i stället →
+              </button>
+            </p>
+          )}
 
           {/* Step 2 + 3 — size and count per design */}
           {drafts.length > 0 && (
@@ -614,6 +635,23 @@ const S: Record<string, React.CSSProperties> = {
     fontWeight: theme.fontWeight.medium,
   },
   hint: { margin: "8px 0 0", fontSize: theme.fontSize.labelMd, color: theme.textMuted },
+  readyHint: {
+    margin: 0,
+    textAlign: "center",
+    fontSize: theme.fontSize.labelMd,
+    color: theme.textMuted,
+  },
+  readyLink: {
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    color: theme.accent,
+    fontSize: theme.fontSize.labelMd,
+    fontFamily: theme.fontFamily,
+    fontWeight: theme.fontWeight.semibold,
+    cursor: "pointer",
+    textDecoration: "underline",
+  },
   warn: { margin: "4px 0 0", fontSize: theme.fontSize.labelMd, color: theme.warning },
   foot: {
     padding: 16,
