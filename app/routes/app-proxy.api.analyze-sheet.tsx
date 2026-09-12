@@ -4,6 +4,10 @@ import { authenticate } from "../shopify.server";
 import { downloadFile } from "../lib/r2.server";
 import { extractMetadata } from "../lib/image-processing.server";
 import { SHEET_WIDTH_MM } from "../lib/constants";
+import prisma from "../db.server";
+
+/** Resolution a ready sheet must reach across the 58 cm film width. */
+const REQUIRED_DPI = 300;
 
 /**
  * Analyze a pre-uploaded sheet file in R2.
@@ -60,31 +64,55 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       };
     }
 
-    const fileDpi = metadata.dpiX || 72;
-    const widthMm = (metadata.width / fileDpi) * 25.4;
-    const heightMm = (metadata.height / fileDpi) * 25.4;
+    /*
+     * Judge the file by its pixels, not by its DPI tag.
+     *
+     * A ready sheet is printed at the full 58 cm film width, so the width is
+     * a given and the resolution follows from the pixel count. The DPI tag
+     * says nothing about quality: a 6850 px file IS 300 DPI at 58 cm whether
+     * or not it carries a pHYs chunk, and most export pipelines omit one —
+     * sharp then reports 72 and a perfectly good sheet was rejected as
+     * "241.7 cm wide". Requiring the pixels instead enforces the real
+     * quality bar and stops punishing files for missing metadata.
+     */
+    const inchesWide = SHEET_WIDTH_MM / 25.4;
+    const effectiveDpi = Math.round(metadata.width / inchesWide);
+    const requiredWidthPx = Math.round(REQUIRED_DPI * inchesWide);
+
+    // Printed size follows from the resolution we just derived.
+    const widthMm = SHEET_WIDTH_MM;
+    const heightMm =
+      effectiveDpi > 0 ? (metadata.height / effectiveDpi) * 25.4 : 0;
 
     const warnings: string[] = [];
     let approved = true;
 
-    // Width check — must be ~58cm
-    const expectedWidthMm = SHEET_WIDTH_MM;
-    const widthDiff = Math.abs(widthMm - expectedWidthMm) / expectedWidthMm;
-    if (widthDiff > 0.05) {
+    if (!metadata.width || !metadata.height) {
+      warnings.push("Kunde inte läsa bildens mått. Spara om filen som PNG och försök igen.");
+      approved = false;
+    } else if (effectiveDpi < REQUIRED_DPI) {
       warnings.push(
-        `Arkets bredd är ${(widthMm / 10).toFixed(1)} cm men måste vara ${expectedWidthMm / 10} cm. ` +
-        `Bildens bredd: ${metadata.width}px vid ${fileDpi} DPI = ${(widthMm / 10).toFixed(1)} cm.`
+        `Filen är ${metadata.width} px bred, vilket ger ${effectiveDpi} DPI utskriven i 58 cm bredd. ` +
+          `Det blir pixligt. Spara om arket minst ${requiredWidthPx} px brett (58 cm i ${REQUIRED_DPI} DPI).`,
       );
       approved = false;
     }
 
-    if (fileDpi < 300) {
-      warnings.push(`Upplösningen är ${fileDpi} DPI. Rekommenderat: 300 DPI.`);
+    // A declared DPI that disagrees is worth saying out loud — it usually
+    // means the file was set up for a different width than 58 cm.
+    const declaredDpi = metadata.dpiX || 0;
+    if (
+      approved &&
+      declaredDpi > 0 &&
+      Math.abs(declaredDpi - effectiveDpi) / effectiveDpi > 0.1
+    ) {
+      const declaredWidthCm = (metadata.width / declaredDpi) * 2.54;
+      warnings.push(
+        `Filen är märkt ${declaredDpi} DPI, vilket motsvarar ${declaredWidthCm.toFixed(1)} cm bredd. ` +
+          `Vi skriver ut den i 58 cm, alltså ${effectiveDpi} DPI. Stämmer det?`,
+      );
     }
-    if (fileDpi < 150) {
-      warnings.push(`Upplösningen ${fileDpi} DPI är för låg. Minst 150 DPI krävs.`);
-      approved = false;
-    }
+
     if (metadata.hasWhiteBackground) {
       warnings.push("Bilden verkar ha en vit bakgrund. DTF-tryck kräver transparent bakgrund.");
     }
@@ -92,12 +120,66 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       warnings.push("Bilden saknar transparent bakgrund (alpha-kanal).");
     }
 
+    const fileDpi = effectiveDpi;
+
     const heightCm = Math.ceil(heightMm / 10);
     const heightMeters = Math.ceil(heightMm / 1000);
     const sizeKey = `58x${heightMeters * 100}`;
 
+    /*
+     * Record an approved sheet as a normal gang sheet holding one
+     * full-bleed image.
+     *
+     * This flow used to write nothing to the database, and orders/paid only
+     * recognises `_gang_sheet_id`, so a ready-sheet order never reached the
+     * app's admin and queued no export — the artwork was only findable by
+     * digging the R2 key out of the Shopify line item. Reusing the existing
+     * shape means orders, the designs list and the export pipeline all work
+     * unchanged rather than needing a parallel path.
+     */
+    let gangSheetId: string | null = null;
+    if (approved) {
+      try {
+        const created = await prisma.gangSheet.create({
+          data: {
+            sessionId: sheetId,
+            shopDomain: session.shop,
+            widthMm: Math.round(widthMm),
+            heightMm: Math.round(heightMm),
+            filmType: "standard",
+            status: "draft",
+            imagesCount: 1,
+            images: {
+              create: {
+                originalUrl: r2Key,
+                originalFilename: filename || "fardigt-ark.png",
+                mimeType: `image/${metadata.format || "png"}`,
+                fileSizeBytes: Math.round(fileSize || buffer.length),
+                widthPx: metadata.width,
+                heightPx: metadata.height,
+                dpiX: effectiveDpi,
+                dpiY: effectiveDpi,
+                // Fills the sheet exactly — it is already laid out.
+                positionX: 0,
+                positionY: 0,
+                displayWidth: Math.round(widthMm),
+                displayHeight: Math.round(heightMm),
+                rotation: 0,
+                quantity: 1,
+              },
+            },
+          },
+        });
+        gangSheetId = created.id;
+      } catch (dbError) {
+        // A missing record costs admin visibility, not the customer's order.
+        console.error("Could not record ready sheet:", dbError);
+      }
+    }
+
     return json({
       sheetId,
+      gangSheetId,
       r2Key,
       filename: filename || "unknown",
       widthPx: metadata.width,

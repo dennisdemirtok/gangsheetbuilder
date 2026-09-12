@@ -651,12 +651,21 @@
         return {
           id: variantId,
           quantity: totalDm,
+          /*
+           * Properties beginning with "_" are hidden by Shopify, and every
+           * one of these was hidden — so the cart line read "Per decimeter
+           * x 3" with nothing to explain it. The quantity is decimetres
+           * because that is how the film is priced, so the line has to say
+           * what the customer is actually getting.
+           */
           properties: {
+            'Fil': s.filename,
+            'Format': s.data.widthCm + ' × ' + s.data.heightCm + ' cm (' + s.meters.toFixed(1) + ' m)',
+            'Antal ark': String(s.qty),
             '_gang_sheet_type': 'pre-made',
+            '_gang_sheet_id': s.data.gangSheetId || '',
             '_sheet_id': s.data.sheetId || '',
             '_r2_key': s.data.r2Key || '',
-            '_filename': s.filename,
-            '_dimensions': s.data.widthCm + 'x' + s.data.heightCm + ' cm',
             '_dpi': String(s.data.dpi),
             '_meters': s.meters.toFixed(1),
             '_decimeters': String(decimeters),
