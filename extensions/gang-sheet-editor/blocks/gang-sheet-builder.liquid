@@ -296,7 +296,19 @@
     ? dmVariant.price_cents / 100
     : 20;
 
-  function getPrice(meters) { return Math.ceil(meters * 10) * pricePerDm; }
+  /*
+   * One metre is the smallest order — film is cut from a roll and a shorter
+   * piece costs the same to set up and ship. Above that the customer pays
+   * for the length they actually use, so 1.5 m is 300 kr and is not rounded
+   * up to 2 m. A 0.3 m sheet used to sell for 60 kr, well under the floor.
+   */
+  var MIN_DECIMETERS = 10;
+
+  function billedDecimeters(meters) {
+    return Math.max(MIN_DECIMETERS, Math.ceil(meters * 10));
+  }
+
+  function getPrice(meters) { return billedDecimeters(meters) * pricePerDm; }
 
   function updatePriceDisplay() {
     var totalPrice = 0;
@@ -642,7 +654,8 @@
         return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:#fff;border:1px solid rgba(0,0,0,0.08);border-radius:14px;margin-bottom:6px;font-family:Inter,system-ui,sans-serif;">' +
           '<div style="flex:1;min-width:0;">' +
             '<p style="margin:0;font-size:13px;font-weight:500;color:rgba(0,0,0,0.81);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + s.filename + '</p>' +
-            '<p style="margin:2px 0 0;font-size:11px;color:rgba(0,0,0,0.4);">' + s.data.widthCm + '×' + s.data.heightCm + ' cm · ' + s.data.dpi + ' DPI · ' + s.meters.toFixed(1) + ' m</p>' +
+            '<p style="margin:2px 0 0;font-size:11px;color:rgba(0,0,0,0.4);">' + s.data.widthCm + '×' + s.data.heightCm + ' cm · ' + s.data.dpi + ' DPI · ' + s.meters.toFixed(1) + ' m' +
+              (s.meters < 1 ? ' <span style="color:#e65100;">· debiteras som 1 m (minsta order)</span>' : '') + '</p>' +
           '</div>' +
           '<div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">' +
             '<button onclick="window.__gsSheetQty(' + i + ',-1)" style="width:28px;height:28px;border:1px solid rgba(0,0,0,0.1);border-radius:6px;background:#fff;cursor:pointer;font-size:14px;color:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;">−</button>' +
@@ -712,7 +725,7 @@
       }
 
       var items = allSheets.map(function(s) {
-        var decimeters = Math.ceil(s.meters * 10); // 6.4m = 64 dm
+        var decimeters = billedDecimeters(s.meters); // 6.4m = 64 dm, floor 10
         var totalDm = decimeters * s.qty;
         var variantId = dmVariantId;
 
