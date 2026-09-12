@@ -307,29 +307,21 @@
     }
   }
 
-  // Quantity buttons
-  document.querySelectorAll('.gs-qty-btn').forEach(function(b) {
-    b.addEventListener('click', function() {
-      var delta = parseInt(b.dataset.delta);
-      sheetQty = Math.max(1, Math.min(50, sheetQty + delta));
-      document.getElementById('gs-sheet-qty').textContent = sheetQty;
-      if (allSheets.length > 0 && allSheets[allSheets.length - 1]) {
-        allSheets[allSheets.length - 1].qty = sheetQty;
-      }
-      updatePriceDisplay();
-    });
-  });
-
-  // Add more sheets button
+  /*
+   * Quantity lives on each row of the sheet list now (__gsSheetQty), so the
+   * old shared +/- control and its #gs-sheet-qty readout are gone from the
+   * markup. "Lägg till fler ark" still wrote to that missing element and
+   * threw before it could reset the dropzone, which is why adding a second
+   * sheet appeared to do nothing.
+   */
   var addMoreBtn = document.getElementById('gs-sheet-add-more');
   if (addMoreBtn) {
     addMoreBtn.addEventListener('click', function() {
-      // Reset for new upload
       sheetQty = 1;
-      document.getElementById('gs-sheet-qty').textContent = '1';
       dropzone.style.display = 'block';
-      resultsDiv.style.display = 'none';
       uploadData = null;
+      // Keep the list visible so the customer can see what is already added.
+      resultsDiv.style.display = allSheets.length > 0 ? 'block' : 'none';
     });
   }
 
