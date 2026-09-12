@@ -12,7 +12,7 @@ import {
 import { uploadImage, ensureGangSheet, getAppProxyUrl } from "../../services/api";
 import { theme } from "../../styles/theme";
 
-export type TabKey = "designs" | "uploads" | "text" | "settings";
+export type TabKey = "designs" | "text" | "settings";
 
 // SVG icon components for clean look
 const Icons = {
@@ -24,7 +24,6 @@ const Icons = {
 
 export const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: "designs", label: "Designs", icon: Icons.designs },
-  { key: "uploads", label: "Galleri", icon: Icons.uploads },
   { key: "text", label: "Text", icon: Icons.text },
   { key: "settings", label: "Inställningar", icon: Icons.settings },
 ];
@@ -118,7 +117,6 @@ export function TabContent({ tab }: { tab: TabKey }) {
   return (
     <>
       {tab === "designs" && <DesignsTab isUploading={isUploading} />}
-      {tab === "uploads" && <UploadsTab />}
       {tab === "text" && <TextTab />}
       {tab === "settings" && <SettingsTab />}
     </>
@@ -155,99 +153,6 @@ function DesignsTab({ isUploading }: { isUploading: boolean }) {
           </div>
         )}
         <ImageList />
-      </div>
-    </>
-  );
-}
-
-function UploadsTab() {
-  const { images, addImage } = useEditorStore();
-  // One tile per uploaded design. Filling a sheet creates dozens of copies
-  // of the same artwork and the gallery used to list every one of them.
-  const allUploads = groupImages(images)
-    .map((g) => g.master)
-    .filter((img) => img.originalUrl);
-
-  return (
-    <>
-      <TabHeader title="Galleri" />
-      <div
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: theme.space.md,
-          display: "flex",
-          flexDirection: "column",
-          gap: theme.space.md,
-        }}
-      >
-        {allUploads.length === 0 ? (
-          <div style={{ textAlign: "center", padding: theme.space.xl }}>
-            <p style={{ color: theme.textDim, fontSize: theme.fontSize.bodySm }}>
-              Uppladdade designs visas här.
-            </p>
-            <p style={{ color: theme.textDim, fontSize: theme.fontSize.labelMd, marginTop: theme.space.sm }}>
-              Ladda upp via Designs-tabben.
-            </p>
-          </div>
-        ) : (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: theme.space.sm,
-            }}
-          >
-            {allUploads.map((img) => (
-              <div
-                key={img.id}
-                style={{
-                  aspectRatio: "1",
-                  borderRadius: theme.radius,
-                  overflow: "hidden",
-                  background: theme.bgCard,
-                  cursor: "pointer",
-                  position: "relative",
-                  boxShadow: theme.shadow,
-                }}
-                onClick={() => {
-                  // Add it as a separate design — addImage finds a free spot
-                  addImage({
-                    ...img,
-                    id: "img_" + Math.random().toString(36).substring(2, 10),
-                    groupId: "grp_" + Math.random().toString(36).substring(2, 10),
-                    placed: true,
-                  });
-                }}
-                title="Klicka för att lägga till på arket"
-              >
-                <img
-                  src={img.thumbnailUrl}
-                  alt={img.filename}
-                  style={{ width: "100%", height: "100%", objectFit: "contain" }}
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                />
-                <div
-                  style={{
-                    position: "absolute",
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    padding: "4px 6px",
-                    background: "rgba(25,28,30,0.7)",
-                    fontSize: theme.fontSize.labelXs,
-                    color: "#fff",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {img.filename}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </>
   );

@@ -51,21 +51,6 @@ export function PriceDisplay() {
         </select>
       </div>
 
-      {/* Summary info */}
-      <div style={{ fontSize: theme.fontSize.labelMd, color: theme.textMuted, display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span>Designs</span>
-          <span style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>{groups.length} st</span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span>Motiv att trycka</span>
-          <span style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>{totalCopies} st</span>
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span>Antal ark</span>
-          <span style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>{totalSheets} st</span>
-        </div>
-      </div>
     </div>
   );
 }

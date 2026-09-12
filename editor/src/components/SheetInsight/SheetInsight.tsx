@@ -42,6 +42,7 @@ export function SheetInsight() {
 
   if (images.length === 0) return null;
 
+  const groupCount = groupImages(images).length;
   const pct = Math.round(stats.used * 100);
   const freeCm = Math.round(stats.freeTailMm / 10);
 
@@ -60,6 +61,14 @@ export function SheetInsight() {
             background: pct >= 60 ? theme.success : theme.accent,
           }}
         />
+      </div>
+
+      <div style={S.counts}>
+        <span>
+          {groupCount} {groupCount === 1 ? "design" : "designs"}
+        </span>
+        <span>·</span>
+        <span>{images.length} motiv att trycka</span>
       </div>
 
       <p style={S.pitch}>
@@ -135,6 +144,12 @@ const S: Record<string, React.CSSProperties> = {
     overflow: "hidden",
   },
   fill: { height: "100%", borderRadius: 3, transition: "width 0.25s ease" },
+  counts: {
+    display: "flex",
+    gap: 6,
+    fontSize: theme.fontSize.labelMd,
+    color: theme.textMuted,
+  },
   pitch: {
     margin: 0,
     fontSize: theme.fontSize.labelMd,

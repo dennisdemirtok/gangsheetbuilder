@@ -13,6 +13,7 @@ import {
 } from "../../utils/units";
 import { printableArea } from "../../utils/layout";
 import { useSheetStats } from "../../utils/sheetStats";
+import { useIsMobile } from "../../utils/useIsMobile";
 import { theme } from "../../styles/theme";
 
 /** Custom data attached to Fabric objects (not part of Fabric's typings). */
@@ -59,11 +60,13 @@ export function GangSheetCanvas() {
     selectImage,
     updateImage,
     setShowDpiOverlay,
+    setZoom,
     arrangeSheet,
   } = useEditorStore();
 
   // Collision + out-of-bounds state, recomputed whenever anything moves.
   const stats = useSheetStats();
+  const isMobile = useIsMobile();
 
   // Initialize canvas
   useEffect(() => {
@@ -394,6 +397,63 @@ export function GangSheetCanvas() {
     setOverflowCount(overflow);
   }, [images, sheetSize, showDpiOverlay, stats]);
 
+  /**
+   * Pinch to zoom.
+   *
+   * Zoom lived only in the desktop toolbar, which the phone shell does not
+   * render — so on a phone a 58 cm sheet was ~300 px wide and an 8 cm chest
+   * motif came out about 4 mm. Customers could not actually look at what
+   * they were buying. Listens on the container so Fabric keeps handling
+   * single-finger drags of the artwork itself.
+   */
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const points = new Map<number, { x: number; y: number }>();
+    let startSpread = 0;
+    let startZoom = 1;
+
+    const spread = () => {
+      const [a, b] = [...points.values()];
+      if (!a || !b) return 0;
+      return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType !== "touch") return;
+      points.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (points.size === 2) {
+        startSpread = spread();
+        startZoom = useEditorStore.getState().zoom;
+      }
+    };
+
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerType !== "touch" || !points.has(e.pointerId)) return;
+      points.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (points.size !== 2 || startSpread <= 0) return;
+      e.preventDefault();
+      setZoom(startZoom * (spread() / startSpread));
+    };
+
+    const onUp = (e: PointerEvent) => {
+      points.delete(e.pointerId);
+      if (points.size < 2) startSpread = 0;
+    };
+
+    container.addEventListener("pointerdown", onDown);
+    container.addEventListener("pointermove", onMove, { passive: false });
+    container.addEventListener("pointerup", onUp);
+    container.addEventListener("pointercancel", onUp);
+    return () => {
+      container.removeEventListener("pointerdown", onDown);
+      container.removeEventListener("pointermove", onMove);
+      container.removeEventListener("pointerup", onUp);
+      container.removeEventListener("pointercancel", onUp);
+    };
+  }, [setZoom]);
+
   // Apply zoom via CSS transform (not Fabric zoom — simpler, works with all objects)
   useEffect(() => {
     const wrapper = containerRef.current?.querySelector(".gs-canvas-wrapper") as HTMLElement;
@@ -449,6 +509,11 @@ export function GangSheetCanvas() {
         visible={showDpiOverlay}
         onToggle={() => setShowDpiOverlay(!showDpiOverlay)}
       />
+
+      {/* Pinch works, but nothing on screen said so. */}
+      {isMobile && (
+        <ZoomControls zoom={zoom} onChange={setZoom} />
+      )}
     </div>
   );
 }
@@ -488,12 +553,11 @@ function DpiLegend({
         background: "rgba(25, 28, 30, 0.88)",
         backdropFilter: "blur(12px)",
         borderRadius: theme.radius,
-        padding: "10px 14px",
+        padding: visible ? "10px 14px" : "6px 12px",
         fontSize: theme.fontSize.labelSm,
         fontFamily: theme.fontFamily,
         color: "#ffffff",
         zIndex: 5,
-        minWidth: 170,
       }}
     >
       <label
@@ -506,6 +570,7 @@ function DpiLegend({
           fontWeight: theme.fontWeight.semibold,
           fontSize: theme.fontSize.labelMd,
           color: "#ffffff",
+          whiteSpace: "nowrap",
         }}
       >
         <input
@@ -514,7 +579,7 @@ function DpiLegend({
           onChange={onToggle}
           style={{ accentColor: theme.accent }}
         />
-        Visa DPI-kvalitet
+        DPI-kvalitet
       </label>
       {visible && (
         <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
@@ -637,6 +702,65 @@ function Alert({
           {action.label}
         </button>
       )}
+    </div>
+  );
+}
+
+
+/** Zoom for the phone shell, which has no toolbar to put it in. */
+function ZoomControls({
+  zoom,
+  onChange,
+}: {
+  zoom: number;
+  onChange: (z: number) => void;
+}) {
+  const btn: React.CSSProperties = {
+    width: 40,
+    height: 40,
+    border: "none",
+    background: "transparent",
+    color: "#fff",
+    fontSize: 20,
+    lineHeight: 1,
+    cursor: "pointer",
+    fontFamily: theme.fontFamily,
+  };
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 12,
+        right: 12,
+        display: "flex",
+        alignItems: "center",
+        background: "rgba(25, 28, 30, 0.88)",
+        backdropFilter: "blur(12px)",
+        borderRadius: theme.radius,
+        zIndex: 5,
+        overflow: "hidden",
+      }}
+    >
+      <button onClick={() => onChange(zoom - 0.25)} style={btn} aria-label="Zooma ut">
+        −
+      </button>
+      <button
+        onClick={() => onChange(1)}
+        style={{
+          ...btn,
+          width: "auto",
+          padding: "0 4px",
+          fontSize: theme.fontSize.labelMd,
+          color: "rgba(255,255,255,0.75)",
+        }}
+        aria-label="Återställ zoom"
+      >
+        {Math.round(zoom * 100)}%
+      </button>
+      <button onClick={() => onChange(zoom + 0.25)} style={btn} aria-label="Zooma in">
+        +
+      </button>
     </div>
   );
 }

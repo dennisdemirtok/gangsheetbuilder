@@ -157,7 +157,7 @@ function GroupItem({
             <p
               style={{
                 margin: 0,
-                fontSize: 12,
+                fontSize: 12.5,
                 fontWeight: 600,
                 fontFamily: theme.fontFamily,
                 color: theme.text,
@@ -202,7 +202,7 @@ function GroupItem({
           >
             <span
               style={{
-                fontSize: 10,
+                fontSize: 11,
                 padding: "2px 6px",
                 borderRadius: 4,
                 background: dpiColor + "15",
@@ -213,17 +213,17 @@ function GroupItem({
             >
               {dpi} DPI
             </span>
-            <span style={{ fontSize: 10, color: theme.textDim }}>
+            <span style={{ fontSize: 11, color: theme.textDim }}>
               {(image.displayWidth / 10).toFixed(1)} ×{" "}
               {(image.displayHeight / 10).toFixed(1)} cm
             </span>
             {(dpiLevel === "bad" || dpiLevel === "low") && (
-              <span style={{ fontSize: 10, color: dpiColor, fontWeight: 600 }}>
+              <span style={{ fontSize: 11, color: dpiColor, fontWeight: 600 }}>
                 {DPI_LEVEL_LABELS[dpiLevel]}
               </span>
             )}
             {group.count > 1 && (
-              <span style={{ fontSize: 10, fontWeight: 700, color: theme.accent }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: theme.accent }}>
                 ×{group.count}
               </span>
             )}
@@ -402,7 +402,7 @@ function GroupItem({
                 padding: "5px 8px",
                 borderRadius: 4,
                 background: theme.warningBg,
-                fontSize: 10,
+                fontSize: 11,
                 color: theme.warning,
               }}
             >
@@ -516,7 +516,7 @@ function ActionButton({
         borderRadius: 6,
         background: theme.bgCard,
         color: disabled ? theme.textDim : theme.text,
-        fontSize: 11,
+        fontSize: 11.5,
         fontFamily: theme.fontFamily,
         fontWeight: 500,
         cursor: disabled ? "not-allowed" : "pointer",
@@ -532,7 +532,7 @@ function ActionButton({
 
 const S: Record<string, React.CSSProperties> = {
   label: {
-    fontSize: 10,
+    fontSize: 11,
     color: theme.textDim,
     display: "block",
     marginBottom: 2,
@@ -593,7 +593,7 @@ const S: Record<string, React.CSSProperties> = {
   },
   roomHint: {
     margin: "4px 0 0",
-    fontSize: 10,
+    fontSize: 11,
     color: theme.success,
   },
   rowAlert: {
@@ -602,6 +602,6 @@ const S: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     background: theme.dangerBg,
     color: theme.danger,
-    fontSize: 10,
+    fontSize: 11,
   },
 };
