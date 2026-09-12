@@ -1,11 +1,18 @@
 import { useState } from "react";
 import { ImageUploader, showToast } from "../ImagePanel/ImageUploader";
 import { ImageList } from "../ImagePanel/ImageList";
-import { useEditorStore } from "../../store/editorStore";
+import { useEditorStore, groupImages } from "../../store/editorStore";
+import {
+  EDGE_MARGIN_MM,
+  GAP_PRESETS,
+  GAP_PRESET_LABELS,
+  gapPresetFromMm,
+  type GapPreset,
+} from "../../utils/layout";
 import { uploadImage, ensureGangSheet, getAppProxyUrl } from "../../services/api";
 import { theme } from "../../styles/theme";
 
-type TabKey = "designs" | "uploads" | "text" | "settings";
+export type TabKey = "designs" | "uploads" | "text" | "settings";
 
 // SVG icon components for clean look
 const Icons = {
@@ -15,7 +22,7 @@ const Icons = {
   settings: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
 };
 
-const TABS: { key: TabKey; label: string; icon: string }[] = [
+export const TABS: { key: TabKey; label: string; icon: string }[] = [
   { key: "designs", label: "Designs", icon: Icons.designs },
   { key: "uploads", label: "Galleri", icon: Icons.uploads },
   { key: "text", label: "Text", icon: Icons.text },
@@ -96,12 +103,25 @@ export function LeftSidebar() {
           background: theme.bgSidebar,
         }}
       >
-        {activeTab === "designs" && <DesignsTab isUploading={isUploading} />}
-        {activeTab === "uploads" && <UploadsTab />}
-        {activeTab === "text" && <TextTab />}
-        {activeTab === "settings" && <SettingsTab />}
+        <TabContent tab={activeTab} />
       </div>
     </aside>
+  );
+}
+
+/**
+ * The panel body on its own, so the mobile shell can show the same tabs
+ * in a bottom drawer instead of a fixed sidebar.
+ */
+export function TabContent({ tab }: { tab: TabKey }) {
+  const { isUploading } = useEditorStore();
+  return (
+    <>
+      {tab === "designs" && <DesignsTab isUploading={isUploading} />}
+      {tab === "uploads" && <UploadsTab />}
+      {tab === "text" && <TextTab />}
+      {tab === "settings" && <SettingsTab />}
+    </>
   );
 }
 
@@ -142,8 +162,11 @@ function DesignsTab({ isUploading }: { isUploading: boolean }) {
 
 function UploadsTab() {
   const { images, addImage } = useEditorStore();
-  // Show all uploaded images as a reusable gallery
-  const allUploads = images.filter((img) => img.originalUrl);
+  // One tile per uploaded design. Filling a sheet creates dozens of copies
+  // of the same artwork and the gallery used to list every one of them.
+  const allUploads = groupImages(images)
+    .map((g) => g.master)
+    .filter((img) => img.originalUrl);
 
   return (
     <>
@@ -188,12 +211,11 @@ function UploadsTab() {
                   boxShadow: theme.shadow,
                 }}
                 onClick={() => {
-                  // Add another copy of this image to the canvas
+                  // Add it as a separate design — addImage finds a free spot
                   addImage({
                     ...img,
                     id: "img_" + Math.random().toString(36).substring(2, 10),
-                    positionX: 20 + Math.random() * 100,
-                    positionY: 20 + Math.random() * 100,
+                    groupId: "grp_" + Math.random().toString(36).substring(2, 10),
                     placed: true,
                   });
                 }}
@@ -304,6 +326,7 @@ function TextTab() {
       addImage({
         id: result.imageId || result.id,
         dbId: result.id,
+        groupId: "grp_" + Math.random().toString(36).slice(2, 10),
         filename: `Text: ${text.substring(0, 20)}`,
         thumbnailUrl: thumbUrl,
         originalUrl: origUrl,
@@ -484,7 +507,8 @@ function TextTab() {
 }
 
 function SettingsTab() {
-  const { sheetSize } = useEditorStore();
+  const { sheetSize, gapMm, setGapMm } = useEditorStore();
+  const activePreset = gapPresetFromMm(gapMm);
 
   return (
     <>
@@ -499,6 +523,59 @@ function SettingsTab() {
           gap: theme.space.lg,
         }}
       >
+        {/* One gap for the whole sheet. It used to be a per-design field
+            that disagreed with what auto-arrange and the export actually used. */}
+        <div>
+          <label style={{ fontSize: theme.fontSize.labelMd, color: theme.textMuted, fontWeight: theme.fontWeight.semibold }}>
+            Avstånd mellan motiv
+          </label>
+          <div style={{ display: "flex", gap: 6, marginTop: theme.space.sm }}>
+            {(Object.keys(GAP_PRESETS) as GapPreset[]).map((key) => {
+              const active = activePreset === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => setGapMm(GAP_PRESETS[key])}
+                  style={{
+                    flex: 1,
+                    padding: "8px 4px",
+                    border: `1px solid ${active ? theme.accent : theme.border}`,
+                    borderRadius: theme.radiusSm,
+                    background: active ? theme.accentBg : theme.bgCard,
+                    color: active ? theme.accent : theme.textMuted,
+                    fontSize: theme.fontSize.labelMd,
+                    fontFamily: theme.fontFamily,
+                    fontWeight: active ? theme.fontWeight.semibold : theme.fontWeight.regular,
+                    cursor: "pointer",
+                  }}
+                >
+                  {GAP_PRESET_LABELS[key]}
+                  <span style={{ display: "block", fontSize: theme.fontSize.labelXs, color: theme.textDim }}>
+                    {GAP_PRESETS[key]} mm
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ margin: `${theme.space.sm}px 0 0`, fontSize: theme.fontSize.labelMd, color: theme.textDim, lineHeight: theme.lineHeight.normal }}>
+            Utrymmet du klipper i mellan motiven. 5 mm räcker för att klippa
+            isär utan att skada grannen.
+          </p>
+        </div>
+
+        <div>
+          <label style={{ fontSize: theme.fontSize.labelMd, color: theme.textMuted, fontWeight: theme.fontWeight.semibold }}>
+            Marginal mot kanten
+          </label>
+          <p style={{ margin: `${theme.space.xs}px 0 0`, fontSize: theme.fontSize.bodyMd, fontWeight: theme.fontWeight.semibold }}>
+            {EDGE_MARGIN_MM} mm
+          </p>
+          <p style={{ margin: `${theme.space.xs}px 0 0`, fontSize: theme.fontSize.labelMd, color: theme.textDim, lineHeight: theme.lineHeight.normal }}>
+            Fast värde. Ytterkanten av filmen är opålitlig att trycka på, så
+            inga motiv placeras där.
+          </p>
+        </div>
+
         <div>
           <label style={{ fontSize: theme.fontSize.labelMd, color: theme.textMuted, fontWeight: theme.fontWeight.semibold }}>
             Aktuellt ark

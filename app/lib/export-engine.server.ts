@@ -6,7 +6,11 @@ import {
   type CompositeImage,
 } from "./image-processing.server";
 import { mmToPx, EXPORT_DPI } from "./constants";
-import { computeCopyPlacements, resolveRasterKey } from "./placement";
+import {
+  computeCopyPlacements,
+  parseStoredPlacements,
+  resolveRasterKey,
+} from "./placement";
 
 /**
  * Generate the final 300 DPI export file for a gang sheet.
@@ -47,7 +51,7 @@ export async function exportGangSheet(gangSheetId: string): Promise<{
     const key = resolveRasterKey(extractR2Key(imageUrl));
     const buffer = await downloadFile(key);
 
-    // Compute one placement per copy using the shared quantity grid
+    // Compute one placement per copy using the placements saved by the editor
     const { placements, skipped } = computeCopyPlacements(
       {
         positionX: image.positionX,
@@ -56,6 +60,7 @@ export async function exportGangSheet(gangSheetId: string): Promise<{
         displayHeight: image.displayHeight,
         rotation: image.rotation,
         quantity: image.quantity,
+        placements: parseStoredPlacements(image.placementsJson),
       },
       gangSheet.widthMm,
       gangSheet.heightMm,

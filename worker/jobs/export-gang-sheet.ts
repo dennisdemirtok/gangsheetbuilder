@@ -7,6 +7,7 @@ import {
 import sharp from "sharp";
 import {
   computeCopyPlacements,
+  parseStoredPlacements,
   resolveRasterKey,
 } from "../../app/lib/placement";
 
@@ -146,7 +147,7 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
     const bboxWidthPx = meta.width || 0;
     const bboxHeightPx = meta.height || 0;
 
-    // One placement per copy using the shared quantity grid
+    // One placement per copy using the placements saved by the editor
     const { placements, skipped } = computeCopyPlacements(
       {
         positionX: image.positionX,
@@ -155,6 +156,7 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
         displayHeight: image.displayHeight,
         rotation: image.rotation,
         quantity: image.quantity,
+        placements: parseStoredPlacements(image.placementsJson),
       },
       gangSheet.widthMm,
       gangSheet.heightMm,

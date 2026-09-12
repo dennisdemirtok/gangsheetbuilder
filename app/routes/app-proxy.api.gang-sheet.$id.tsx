@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+import { Prisma } from "@prisma/client";
 import prisma from "../db.server";
 import { getPresignedDownloadUrl } from "../lib/r2.server";
 
@@ -80,6 +81,11 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       for (const img of images) {
         if (!img.id) continue;
 
+        // The editor sends every copy's own position. Store them so the
+        // export prints the arrangement the customer actually saw instead
+        // of re-deriving a grid that ignores the other designs.
+        const placements = sanitizePlacements(img.placements);
+
         try {
           await prisma.gangSheetImage.update({
             where: { id: img.id },
@@ -92,7 +98,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               rotation: img.rotation || 0,
               flipX: img.flipX || false,
               flipY: img.flipY || false,
-              quantity: img.quantity || 1,
+              quantity: placements ? placements.length : img.quantity || 1,
+              placementsJson: placements ?? Prisma.DbNull,
             },
           });
         } catch (imgErr) {
@@ -120,3 +127,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     );
   }
 };
+
+
+/** Hard cap so a malformed client can't write an unbounded blob. */
+const MAX_PLACEMENTS = 2000;
+
+/**
+ * Keep only well-formed {xMm, yMm} entries. Returns null when the client
+ * sent nothing usable, which makes the export fall back to the grid.
+ */
+function sanitizePlacements(
+  value: unknown,
+): { xMm: number; yMm: number }[] | null {
+  if (!Array.isArray(value)) return null;
+  const out: { xMm: number; yMm: number }[] = [];
+  for (const entry of value.slice(0, MAX_PLACEMENTS)) {
+    if (!entry || typeof entry !== "object") continue;
+    const { xMm, yMm } = entry as { xMm?: unknown; yMm?: unknown };
+    if (typeof xMm !== "number" || typeof yMm !== "number") continue;
+    if (!Number.isFinite(xMm) || !Number.isFinite(yMm)) continue;
+    out.push({ xMm, yMm });
+  }
+  return out.length > 0 ? out : null;
+}

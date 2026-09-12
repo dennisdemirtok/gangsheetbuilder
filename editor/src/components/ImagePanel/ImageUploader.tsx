@@ -8,7 +8,7 @@ export function ImageUploader() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
-  const { sessionId, gangSheetId, sheetSize, filmType, addImage, setUploading, setGangSheetId } = useEditorStore();
+  const { sessionId, gangSheetId, sheetSize, filmType, gapMm, addImage, setUploading, setGangSheetId } = useEditorStore();
 
   const handleFiles = useCallback(
     async (files: FileList) => {
@@ -60,9 +60,12 @@ export function ImageUploader() {
             ? base + result.originalUrl
             : result.originalUrl;
 
+          // positionX/Y are placeholders — addImage finds a free spot so
+          // designs never land on top of each other.
           addImage({
             id: result.imageId || result.id,
             dbId: result.id,
+            groupId: "grp_" + Math.random().toString(36).slice(2, 10),
             filename: result.filename,
             thumbnailUrl: thumbUrl,
             originalUrl: origUrl,
@@ -70,15 +73,15 @@ export function ImageUploader() {
             heightPx: result.height,
             dpiX: result.dpiX || 72,
             dpiY: result.dpiY || 72,
-            positionX: 10,
-            positionY: 10,
+            positionX: 0,
+            positionY: 0,
             displayWidth: naturalWidthMm * scale,
             displayHeight: naturalHeightMm * scale,
             rotation: 0,
             flipX: false,
             flipY: false,
             quantity: 1,
-            marginMm: 5,
+            marginMm: gapMm,
             bgRemoved: result.hasAlpha || false,
             hasWhiteBackground: result.hasWhiteBackground || false,
             placed: true,
@@ -102,7 +105,7 @@ export function ImageUploader() {
       setUploadProgress(null);
       setUploading(false);
     },
-    [sessionId, gangSheetId, sheetSize, filmType, addImage, setUploading, setGangSheetId],
+    [sessionId, gangSheetId, sheetSize, filmType, gapMm, addImage, setUploading, setGangSheetId],
   );
 
   const handleDrop = useCallback(

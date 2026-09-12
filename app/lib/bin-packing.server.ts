@@ -2,6 +2,7 @@
  * MAXRECTS Bin Packing Algorithm
  * Places rectangles optimally on a 2D sheet using Best Short Side Fit.
  */
+import { EDGE_MARGIN_MM } from "./placement";
 
 export interface PackingInput {
   id: string;
@@ -41,8 +42,15 @@ export function packImages(
   items: PackingInput[],
   sheetWidthMm: number,
   sheetHeightMm: number,
-  gapMm: number = 3,
+  gapMm: number = 5,
+  edgeMm: number = EDGE_MARGIN_MM,
 ): PackingOutput {
+  // Nest inside the printable area, then shift results back onto sheet
+  // coordinates — designs must never touch the film edge.
+  const edge = Math.max(0, edgeMm);
+  const innerWidth = Math.max(0, sheetWidthMm - edge * 2);
+  const innerHeight = Math.max(0, sheetHeightMm - edge * 2);
+
   // Expand items by quantity
   const expanded: { id: string; width: number; height: number }[] = [];
   for (const item of items) {
@@ -76,7 +84,7 @@ export function packImages(
   let bestResult: PackingOutput | null = null;
 
   for (const sorted of strategies) {
-    const result = runMaxRects(sorted, sheetWidthMm, sheetHeightMm, gapMm);
+    const result = runMaxRects(sorted, innerWidth, innerHeight, gapMm);
     if (
       !bestResult ||
       result.utilization > bestResult.utilization ||
@@ -87,7 +95,16 @@ export function packImages(
     }
   }
 
-  return bestResult!;
+  const best = bestResult!;
+  return {
+    ...best,
+    placements: best.placements.map((p) => ({
+      ...p,
+      x: p.x + edge,
+      y: p.y + edge,
+    })),
+    usedHeight: best.usedHeight + edge * 2,
+  };
 }
 
 function runMaxRects(

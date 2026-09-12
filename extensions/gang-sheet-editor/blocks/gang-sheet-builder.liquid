@@ -161,17 +161,30 @@
   #gangsheet-launch-btn, #gangsheet-upload-modal, #gangsheet-upload-modal * {
     font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif !important;
   }
-  body.gangsheet-open { overflow: hidden !important; height: 100vh !important; }
+  body.gangsheet-open { overflow: hidden !important; height: 100vh !important; height: 100dvh !important; }
   #gangsheet-overlay, #gangsheet-overlay * { box-sizing: border-box !important; }
   #gangsheet-overlay {
     position: fixed !important; top: 0 !important; left: 0 !important; right: 0 !important; bottom: 0 !important;
     width: 100vw !important; height: 100vh !important; max-width: none !important; max-height: none !important;
     margin: 0 !important; padding: 0 !important; transform: none !important; z-index: 2147483647 !important; background: #f7f9fb !important;
+    overscroll-behavior: contain !important;
+  }
+  /* dvh keeps the bottom action bar above the mobile browser chrome —
+     with plain vh the "Lägg i varukorg" button sits under the URL bar. */
+  @supports (height: 100dvh) {
+    #gangsheet-overlay { height: 100dvh !important; }
   }
   #gangsheet-editor-root {
     position: fixed !important; top: 0 !important; left: 0 !important; width: 100vw !important; height: 100vh !important;
     max-width: none !important; margin: 0 !important; padding: 0 !important;
+    overflow: hidden !important;
   }
+  @supports (height: 100dvh) {
+    #gangsheet-editor-root { height: 100dvh !important; }
+  }
+  /* The theme's own styles must not leak sizing into the editor tree. */
+  #gangsheet-editor-root img, #gangsheet-editor-root svg { max-width: none; }
+  #gangsheet-editor-root button { font: inherit; }
   #gs-sheet-dropzone:hover, #gs-sheet-dropzone.dragover { border-color: #bb0018 !important; background: rgba(187,0,24,0.06) !important; }
   #gangsheet-upload-modal {
     position: fixed !important; top: 0 !important; left: 0 !important;

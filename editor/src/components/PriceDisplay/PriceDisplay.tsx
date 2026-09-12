@@ -1,13 +1,8 @@
-import { useEditorStore, getSheetsTotalPrice } from "../../store/editorStore";
+import { useEditorStore, getSheetsTotalPrice, groupImages } from "../../store/editorStore";
 import { theme } from "../../styles/theme";
+import { SHEET_SIZES } from "../../config/sheets";
 
-const SHEET_SIZES = [
-  { key: "58x100", widthMm: 580, heightMm: 1000, label: "1 meter (58×100 cm)", meters: 1 },
-  { key: "58x200", widthMm: 580, heightMm: 2000, label: "2 meter (58×200 cm)", meters: 2 },
-  { key: "58x300", widthMm: 580, heightMm: 3000, label: "3 meter (58×300 cm)", meters: 3 },
-  { key: "58x400", widthMm: 580, heightMm: 4000, label: "4 meter (58×400 cm)", meters: 4 },
-  { key: "58x500", widthMm: 580, heightMm: 5000, label: "5 meter (58×500 cm)", meters: 5 },
-];
+
 
 const chevronSvg = (color: string) =>
   `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='${encodeURIComponent(color)}' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E")`;
@@ -15,7 +10,8 @@ const chevronSvg = (color: string) =>
 export function PriceDisplay() {
   const { sheetSize, images, sheets, setSheetSize } = useEditorStore();
 
-  const totalQuantity = images.reduce((sum, img) => sum + img.quantity, 0);
+  const groups = groupImages(images);
+  const totalCopies = images.length;
   const totalSheets = sheets?.length || 1;
 
   return (
@@ -59,11 +55,11 @@ export function PriceDisplay() {
       <div style={{ fontSize: theme.fontSize.labelMd, color: theme.textMuted, display: "flex", flexDirection: "column", gap: 4 }}>
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <span>Designs</span>
-          <span style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>{images.length} st</span>
+          <span style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>{groups.length} st</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <span>Totalt motiv</span>
-          <span style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>{totalQuantity} st</span>
+          <span>Motiv att trycka</span>
+          <span style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>{totalCopies} st</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <span>Antal ark</span>

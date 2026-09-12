@@ -83,6 +83,9 @@ model GangSheetImage {
   flipX            Boolean   @default(false) @map("flip_x")
   flipY            Boolean   @default(false) @map("flip_y")
   quantity         Int       @default(1)
+  /// Explicit top-left position (mm) of every copy: [{ "xMm": 10, "yMm": 10 }, ...].
+  /// NULL falls back to the legacy quantity grid in app/lib/placement.ts.
+  placementsJson   Json?     @map("placements_json")
   bgRemoved        Boolean   @default(false) @map("bg_removed")
   bgRemovedUrl     String?   @map("bg_removed_url")
   createdAt        DateTime  @default(now()) @map("created_at")

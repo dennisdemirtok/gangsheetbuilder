@@ -42,15 +42,25 @@ export function calculateDisplayDpi(
 }
 
 /**
- * Get DPI quality level matching competitor's color coding.
+ * DPI quality bands, calibrated for DTF rather than offset print.
+ * 300 is ideal, but DTF film still holds detail well down to ~200, and
+ * 150 prints acceptably for large motifs — flagging 229 DPI as "bad"
+ * only scares customers off designs that would have printed fine.
+ * Below 150 the result is visibly soft and deserves a real warning.
  */
-export type DpiLevel = "optimal" | "good" | "bad" | "terrible";
+export type DpiLevel = "optimal" | "good" | "low" | "bad";
+
+export const DPI_THRESHOLDS = {
+  optimal: 300,
+  good: 200,
+  low: 150,
+} as const;
 
 export function getDpiLevel(dpi: number): DpiLevel {
-  if (dpi >= 300) return "optimal";
-  if (dpi >= 250) return "good";
-  if (dpi >= 200) return "bad";
-  return "terrible";
+  if (dpi >= DPI_THRESHOLDS.optimal) return "optimal";
+  if (dpi >= DPI_THRESHOLDS.good) return "good";
+  if (dpi >= DPI_THRESHOLDS.low) return "low";
+  return "bad";
 }
 
 export function getDpiColor(dpi: number): string {
@@ -59,11 +69,30 @@ export function getDpiColor(dpi: number): string {
 }
 
 export const DPI_LEVEL_COLORS: Record<DpiLevel, string> = {
-  optimal: "#22c55e",  // Green
-  good: "#f59e0b",     // Yellow
-  bad: "#ef4444",      // Red
-  terrible: "#1a1a1a", // Black
+  optimal: "#16a34a", // Green
+  good: "#65a30d",    // Lime — fine for DTF
+  low: "#f59e0b",     // Amber — usable, but soft up close
+  bad: "#ef4444",     // Red — will look blurry
 };
+
+export const DPI_LEVEL_LABELS: Record<DpiLevel, string> = {
+  optimal: "Perfekt",
+  good: "Bra",
+  low: "OK",
+  bad: "För låg",
+};
+
+/** Warning text for a design that is below the comfortable band, else null. */
+export function dpiWarning(dpi: number): string | null {
+  const level = getDpiLevel(dpi);
+  if (level === "bad") {
+    return `${dpi} DPI — bilden blir suddig i tryck. Ladda upp en större fil eller gör motivet mindre.`;
+  }
+  if (level === "low") {
+    return `${dpi} DPI — fungerar för större motiv, men detaljer kan bli mjuka.`;
+  }
+  return null;
+}
 
 // Backwards compatibility
 export function getDpiQuality(dpi: number): "good" | "warning" | "bad" {

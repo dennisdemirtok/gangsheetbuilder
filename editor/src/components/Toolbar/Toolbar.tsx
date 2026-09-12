@@ -1,13 +1,13 @@
-import { useEditorStore } from "../../store/editorStore";
+import { useEditorStore, groupKey } from "../../store/editorStore";
 import { theme } from "../../styles/theme";
 
 export function Toolbar() {
   const {
     selectedImageId,
     images,
-    updateImage,
+    updateGroup,
     duplicateImage,
-    removeImage,
+    removeGroup,
     zoom,
     setZoom,
   } = useEditorStore();
@@ -15,6 +15,16 @@ export function Toolbar() {
   const selectedImage = selectedImageId
     ? images.find((img) => img.id === selectedImageId)
     : null;
+
+  /*
+   * Transforms apply to every copy of the design, like the sidebar does.
+   * Rotating a single copy changes its footprint and drops it on top of
+   * its neighbours — and nobody wants 1 of 24 shirts printed sideways.
+   */
+  const transformGroup = (updates: Parameters<typeof updateGroup>[1]) => {
+    if (!selectedImage) return;
+    updateGroup(groupKey(selectedImage), updates);
+  };
 
   return (
     <div
@@ -59,34 +69,21 @@ export function Toolbar() {
       <ToolButton
         icon="↻"
         title="Rotera 90°"
-        onClick={() => {
-          if (!selectedImageId) return;
-          const img = images.find((i) => i.id === selectedImageId);
-          if (img)
-            updateImage(selectedImageId, {
-              rotation: (img.rotation + 90) % 360,
-            });
-        }}
+        onClick={() =>
+          transformGroup({ rotation: ((selectedImage?.rotation ?? 0) + 90) % 360 })
+        }
         disabled={!selectedImage}
       />
       <ToolButton
         icon="⇔"
         title="Flippa horisontellt"
-        onClick={() => {
-          if (!selectedImageId) return;
-          const img = images.find((i) => i.id === selectedImageId);
-          if (img) updateImage(selectedImageId, { flipX: !img.flipX });
-        }}
+        onClick={() => transformGroup({ flipX: !selectedImage?.flipX })}
         disabled={!selectedImage}
       />
       <ToolButton
         icon="⇕"
         title="Flippa vertikalt"
-        onClick={() => {
-          if (!selectedImageId) return;
-          const img = images.find((i) => i.id === selectedImageId);
-          if (img) updateImage(selectedImageId, { flipY: !img.flipY });
-        }}
+        onClick={() => transformGroup({ flipY: !selectedImage?.flipY })}
         disabled={!selectedImage}
       />
 
@@ -101,7 +98,7 @@ export function Toolbar() {
       <ToolButton
         icon="✕"
         title="Ta bort"
-        onClick={() => selectedImageId && removeImage(selectedImageId)}
+        onClick={() => selectedImage && removeGroup(groupKey(selectedImage))}
         disabled={!selectedImage}
         danger
       />

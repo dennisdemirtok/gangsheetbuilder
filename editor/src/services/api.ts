@@ -119,45 +119,67 @@ export async function createGangSheet(data: {
   });
 }
 
+interface PlacementPayloadImage {
+  id: string;
+  dbId?: string;
+  groupId?: string;
+  positionX: number;
+  positionY: number;
+  displayWidth: number;
+  displayHeight: number;
+  rotation: number;
+  flipX: boolean;
+  flipY: boolean;
+  quantity: number;
+  marginMm?: number;
+}
+
 /**
  * Serialize the current placements to the save payload.
  * Shared by AddToCartButton and AutoBuildButton so cart and
  * auto-build send byte-identical state to the backend.
+ *
+ * Copies of one design are separate images in the editor but a single row
+ * in the database — they share a dbId. Collapse them into one entry and
+ * send every copy's position in `placements`, otherwise each copy would
+ * overwrite the previous one's position and only one would be printed.
  */
 export function buildPlacementsPayload(
-  images: Array<{
-    id: string;
-    dbId?: string;
-    positionX: number;
-    positionY: number;
-    displayWidth: number;
-    displayHeight: number;
-    rotation: number;
-    flipX: boolean;
-    flipY: boolean;
-    quantity: number;
-    marginMm?: number;
-  }>,
+  images: PlacementPayloadImage[],
   sheetSize: { widthMm: number; heightMm: number },
   filmType: string,
 ): any {
+  const byRecord = new Map<string, PlacementPayloadImage[]>();
+  for (const img of images) {
+    const key = img.dbId || img.id;
+    const existing = byRecord.get(key);
+    if (existing) existing.push(img);
+    else byRecord.set(key, [img]);
+  }
+
+  const payloadImages = [...byRecord.entries()].map(([id, copies]) => {
+    const first = copies[0]!;
+    return {
+      id,
+      positionX: first.positionX,
+      positionY: first.positionY,
+      displayWidth: first.displayWidth,
+      displayHeight: first.displayHeight,
+      rotation: first.rotation,
+      flipX: first.flipX,
+      flipY: first.flipY,
+      quantity: copies.length,
+      marginMm: first.marginMm ?? 5,
+      placements: copies.map((c) => ({ xMm: c.positionX, yMm: c.positionY })),
+    };
+  });
+
   return {
     filmType,
     widthMm: sheetSize.widthMm,
     heightMm: sheetSize.heightMm,
     linkImages: true, // Signal to backend to link unlinked images
-    images: images.map((img) => ({
-      id: img.dbId || img.id,
-      positionX: img.positionX,
-      positionY: img.positionY,
-      displayWidth: img.displayWidth,
-      displayHeight: img.displayHeight,
-      rotation: img.rotation,
-      flipX: img.flipX,
-      flipY: img.flipY,
-      quantity: img.quantity,
-      marginMm: img.marginMm ?? 5,
-    })),
+    images: payloadImages,
   };
 }
 
@@ -178,6 +200,8 @@ export async function autoBuild(data: {
   sheetWidthMm: number;
   sheetHeightMm: number;
   gapMm?: number;
+  /** One entry per copy; ids are the editor's image ids. */
+  items?: { id: string; width: number; height: number }[];
 }): Promise<any> {
   return fetchApi("/api/auto-build", {
     method: "POST",

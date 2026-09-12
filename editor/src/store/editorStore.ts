@@ -1,9 +1,33 @@
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import {
+  DEFAULT_GAP_MM,
+  EDGE_MARGIN_MM,
+  freeCapacityFor,
+  findFreeSpot,
+  imageBbox,
+  packAll,
+  placeGroup,
+  type Rect,
+} from "../utils/layout";
+import { nextSheetUp } from "../config/sheets";
+import {
+  autoBuild,
+  buildPlacementsPayload,
+  ensureGangSheet,
+  saveGangSheet,
+} from "../services/api";
 
 export interface EditorImage {
   id: string;
   dbId?: string;
+  /**
+   * Copies of the same uploaded design share a groupId. The design list
+   * shows one row per group, so filling a sheet with 45 logos stays one
+   * entry instead of 45. Older persisted state has no groupId — treat
+   * such an image as its own group via `groupKey`.
+   */
+  groupId?: string;
   filename: string;
   thumbnailUrl: string;
   originalUrl: string;
@@ -53,13 +77,20 @@ export interface EditorState {
   filmType: string;
   images: EditorImage[];
   prices: Record<string, Record<string, number>>;
-  currentPrice: number | null;
   selectedImageId: string | null;
   isUploading: boolean;
   isAutoBuilding: boolean;
   isSaving: boolean;
   zoom: number;
   showDpiOverlay: boolean;
+  /** Gap between neighbouring designs (mm) — one setting for the whole sheet. */
+  gapMm: number;
+  /**
+   * Outcome of the last arrange. Cleared by any edit, so the sidebar can't
+   * keep claiming "1 placerade" after the sheet has been filled with 312.
+   * Utilization is deliberately absent — SheetInsight already shows it.
+   */
+  lastArrange: { placed: number; overflow: number } | null;
 
   // Multi-sheet
   sheets: SheetEntry[];
@@ -68,11 +99,33 @@ export interface EditorState {
   // Actions
   setSheetSize: (size: SheetSize) => void;
   setFilmType: (type: string) => void;
+  setGapMm: (mm: number) => void;
   addImage: (image: EditorImage) => void;
   removeImage: (id: string) => void;
+  removeGroup: (groupId: string) => void;
   updateImage: (id: string, updates: Partial<EditorImage>) => void;
+  /** Apply updates to every copy in a group, then re-tile it. */
+  updateGroup: (groupId: string, updates: Partial<EditorImage>) => void;
+  /**
+   * Grow or shrink a group, laid out collision-free. Fewer copies than
+   * asked for means the sheet ran out of room; `lastFillShortfall` says
+   * how many did not fit so the UI can say so.
+   */
+  setGroupCount: (groupId: string, count: number) => void;
+  /** Copies that did not fit on the last count change, or null. */
+  lastFillShortfall: { filename: string; missing: number } | null;
+  clearFillShortfall: () => void;
+  /** Fill every free cell on the sheet with copies of this group. */
+  autoFillGroup: (groupId: string) => void;
+  /** Re-pack everything on the sheet locally, tallest first. */
+  arrangeAll: () => void;
+  /**
+   * The single "tidy up my sheet" action every button calls. Uses the
+   * server's nesting (better packing = less film) and falls back to the
+   * local packer when the backend is unreachable.
+   */
+  arrangeSheet: () => Promise<void>;
   duplicateImage: (id: string) => void;
-  setImageQuantity: (id: string, quantity: number) => void;
   resizeImage: (id: string, widthMm: number, heightMm: number, keepRatio: boolean) => void;
   selectImage: (id: string | null) => void;
   setUploading: (val: boolean) => void;
@@ -81,11 +134,9 @@ export interface EditorState {
   setZoom: (zoom: number) => void;
   setShowDpiOverlay: (val: boolean) => void;
   setPrices: (prices: Record<string, Record<string, number>>) => void;
-  updatePrice: () => void;
   setGangSheetId: (id: string) => void;
   setSheetGangSheetId: (index: number, id: string) => void;
   applyAutoBuild: (placements: any[]) => void;
-  autoFillSheet: (id: string) => void;
   addSheet: () => void;
   removeSheet: (index: number) => void;
   switchSheet: (index: number) => void;
@@ -103,6 +154,60 @@ const DEFAULT_SHEET: SheetSize = {
 
 function generateSessionId(): string {
   return "gs_" + Math.random().toString(36).substring(2, 15);
+}
+
+function generateImageId(): string {
+  return "img_" + Math.random().toString(36).substring(2, 10);
+}
+
+/**
+ * The group an image belongs to.
+ *
+ * `dbId` comes first on purpose: copies sharing a database row MUST stay
+ * one group. The save route writes one row per dbId, so two groups on the
+ * same row would collapse at export — every copy printed at whichever
+ * size happened to be serialized first, at spacing meant for the other.
+ * Uploading the same file twice yields two rows, which is how a customer
+ * gets one artwork in two sizes.
+ */
+export function groupKey(img: EditorImage): string {
+  return img.dbId ?? img.groupId ?? img.id;
+}
+
+export interface ImageGroup {
+  groupId: string;
+  /** The copy that carries the group's settings and canvas selection. */
+  master: EditorImage;
+  members: EditorImage[];
+  count: number;
+}
+
+/** Collapse the flat image list into one entry per uploaded design. */
+export function groupImages(images: EditorImage[]): ImageGroup[] {
+  const order: string[] = [];
+  const byGroup = new Map<string, EditorImage[]>();
+  for (const img of images) {
+    const key = groupKey(img);
+    if (!byGroup.has(key)) {
+      byGroup.set(key, []);
+      order.push(key);
+    }
+    byGroup.get(key)!.push(img);
+  }
+  return order.map((key) => {
+    const members = byGroup.get(key)!;
+    return { groupId: key, master: members[0]!, members, count: members.length };
+  });
+}
+
+/** Bounding boxes of every placed image except those in `exceptGroup`. */
+function blockersExcept(
+  images: EditorImage[],
+  exceptGroup: string | null,
+): Rect[] {
+  return images
+    .filter((img) => img.placed && (!exceptGroup || groupKey(img) !== exceptGroup))
+    .map(imageBbox);
 }
 
 /**
@@ -163,15 +268,18 @@ export const useEditorStore = create<EditorState>()(
       sheets: [{ id: "sheet_1", name: "Ark 1", gangSheetId: null, imageCount: 0, size: "58 × 100 cm", quantity: 1, savedImages: [], sheetSize: DEFAULT_SHEET, filmType: "standard" }],
       activeSheetIndex: 0,
       prices: {},
-      currentPrice: null,
       selectedImageId: null,
       isUploading: false,
       isAutoBuilding: false,
       isSaving: false,
       zoom: 1,
       showDpiOverlay: false,
+      gapMm: DEFAULT_GAP_MM,
+      lastArrange: null,
+      lastFillShortfall: null,
 
       setSheetSize: (size) => {
+        const shrinking = size.heightMm < get().sheetSize.heightMm;
         set((state) => ({
           sheetSize: size,
           // Keep the active sheet's entry in sync so per-sheet pricing is correct
@@ -181,7 +289,9 @@ export const useEditorStore = create<EditorState>()(
               : s,
           ),
         }));
-        get().updatePrice();
+        // On a shorter sheet, designs further down would silently fall off
+        // the film. Re-pack so the customer sees what actually prints.
+        if (shrinking && get().images.length > 0) get().arrangeAll();
       },
 
       setFilmType: (type) => {
@@ -191,11 +301,65 @@ export const useEditorStore = create<EditorState>()(
             i === state.activeSheetIndex ? { ...s, filmType: type } : s,
           ),
         }));
-        get().updatePrice();
       },
 
+      setGapMm: (mm) => {
+        set({ gapMm: Math.max(0, mm) });
+        // Every design carries the gap too, because the export reads
+        // marginMm per image — keep both in step or print won't match.
+        set((state) => ({
+          images: state.images.map((img) => ({ ...img, marginMm: Math.max(0, mm) })),
+        }));
+        get().arrangeAll();
+      },
+
+      /**
+       * Drop a newly uploaded design onto the first spot where it touches
+       * nothing. Uploads used to land on a fixed 10,10 and pile up, so a
+       * customer with three logos saw one blob.
+       */
       addImage: (image) =>
-        set((state) => ({ images: [...state.images, image] })),
+        set((state) => {
+          const { sheetSize, gapMm } = state;
+          const bbox = imageBbox({ ...image, positionX: 0, positionY: 0 });
+          const blockers = blockersExcept(state.images, null);
+
+          let size = sheetSize;
+          let spot = findFreeSpot(bbox.w, bbox.h, size, gapMm, blockers);
+
+          // Sheet full? Grow it rather than silently stacking designs.
+          while (!spot) {
+            const bigger = nextSheetUp(size);
+            if (!bigger) break;
+            size = bigger;
+            spot = findFreeSpot(bbox.w, bbox.h, size, gapMm, blockers);
+          }
+
+          const placed: EditorImage = {
+            ...image,
+            groupId: image.groupId ?? image.id,
+            marginMm: gapMm,
+            quantity: 1,
+            positionX: spot?.x ?? EDGE_MARGIN_MM,
+            positionY: spot?.y ?? EDGE_MARGIN_MM,
+            placed: true,
+          };
+
+          const grew = size.key !== sheetSize.key;
+          return {
+            images: [...state.images, placed],
+            selectedImageId: placed.id,
+            lastArrange: null,
+            sheetSize: grew ? size : state.sheetSize,
+            sheets: grew
+              ? state.sheets.map((s, i) =>
+                  i === state.activeSheetIndex
+                    ? { ...s, size: size.label, sheetSize: size }
+                    : s,
+                )
+              : state.sheets,
+          };
+        }),
 
       removeImage: (id) =>
         set((state) => ({
@@ -204,6 +368,20 @@ export const useEditorStore = create<EditorState>()(
             state.selectedImageId === id ? null : state.selectedImageId,
         })),
 
+      removeGroup: (groupId) =>
+        set((state) => {
+          const remaining = state.images.filter(
+            (img) => groupKey(img) !== groupId,
+          );
+          const stillSelected = remaining.some(
+            (img) => img.id === state.selectedImageId,
+          );
+          return {
+            images: remaining,
+            selectedImageId: stillSelected ? state.selectedImageId : null,
+          };
+        }),
+
       updateImage: (id, updates) =>
         set((state) => ({
           images: state.images.map((img) =>
@@ -211,36 +389,225 @@ export const useEditorStore = create<EditorState>()(
           ),
         })),
 
-      duplicateImage: (id) =>
-        set((state) => ({
-          // Master concept: increase quantity instead of creating new layer
-          images: state.images.map((img) =>
-            img.id === id ? { ...img, quantity: img.quantity + 1 } : img,
-          ),
-        })),
-
-      setImageQuantity: (id, quantity) =>
+      updateGroup: (groupId, updates) => {
         set((state) => ({
           images: state.images.map((img) =>
-            img.id === id ? { ...img, quantity: Math.max(1, quantity) } : img,
+            groupKey(img) === groupId ? { ...img, ...updates } : img,
           ),
-        })),
-
-      resizeImage: (id, widthMm, heightMm, keepRatio) => {
-        set((state) => ({
-          images: state.images.map((img) => {
-            if (img.id !== id) return img;
-            if (keepRatio) {
-              const ratio = img.widthPx / img.heightPx;
-              if (widthMm !== img.displayWidth) {
-                return { ...img, displayWidth: widthMm, displayHeight: widthMm / ratio };
-              } else {
-                return { ...img, displayWidth: heightMm * ratio, displayHeight: heightMm };
-              }
-            }
-            return { ...img, displayWidth: widthMm, displayHeight: heightMm };
-          }),
         }));
+        // A resize or rotation changes the footprint, so re-tile the group
+        // to keep it clear of everything else.
+        const state = get();
+        const group = groupImages(state.images).find((g) => g.groupId === groupId);
+        if (group && group.count > 1) get().setGroupCount(groupId, group.count);
+      },
+
+      setGroupCount: (groupId, count) =>
+        set((state) => {
+          const groups = groupImages(state.images);
+          const group = groups.find((g) => g.groupId === groupId);
+          if (!group) return state;
+
+          const wanted = Math.max(1, Math.floor(count));
+          const source = group.master;
+          const bbox = imageBbox({ ...source, positionX: 0, positionY: 0 });
+          const blockers = blockersExcept(state.images, groupId);
+
+          const spots = placeGroup(
+            wanted,
+            bbox.w,
+            bbox.h,
+            state.sheetSize,
+            state.gapMm,
+            blockers,
+          );
+
+          // Reuse existing copies so ids (and their dbId links) survive.
+          const copies: EditorImage[] = spots.map((spot, i) => {
+            const existing = group.members[i];
+            return {
+              ...source,
+              id: existing?.id ?? generateImageId(),
+              groupId,
+              quantity: 1,
+              marginMm: state.gapMm,
+              positionX: spot.x,
+              positionY: spot.y,
+              placed: true,
+            };
+          });
+
+          const others = state.images.filter(
+            (img) => groupKey(img) !== groupId,
+          );
+          const selected = copies.some((c) => c.id === state.selectedImageId)
+            ? state.selectedImageId
+            : (copies[0]?.id ?? null);
+
+          const missing = wanted - copies.length;
+
+          return {
+            images: [...others, ...copies],
+            selectedImageId: selected,
+            lastArrange: null,
+            lastFillShortfall:
+              missing > 0
+                ? { filename: source.filename, missing }
+                : null,
+          };
+        }),
+
+      clearFillShortfall: () => set({ lastFillShortfall: null }),
+
+      autoFillGroup: (groupId) => {
+        const state = get();
+        const group = groupImages(state.images).find((g) => g.groupId === groupId);
+        if (!group) return;
+        const bbox = imageBbox({
+          ...group.master,
+          positionX: 0,
+          positionY: 0,
+        });
+        const blockers = blockersExcept(state.images, groupId);
+        const fits = freeCapacityFor(
+          bbox.w,
+          bbox.h,
+          state.sheetSize,
+          state.gapMm,
+          blockers,
+        );
+        // Only ever add: a full sheet reports fewer free cells than the
+        // group already owns, and "fill" must never delete the customer's
+        // copies.
+        if (fits > group.count) get().setGroupCount(groupId, fits);
+      },
+
+      arrangeAll: () =>
+        set((state) => {
+          const items = state.images
+            .filter((img) => img.placed)
+            .map((img) => {
+              const b = imageBbox(img);
+              return { id: img.id, w: b.w, h: b.h };
+            });
+          const { positions, overflow } = packAll(
+            items,
+            state.sheetSize,
+            state.gapMm,
+          );
+          return {
+            images: state.images.map((img) => {
+              const pos = positions.get(img.id);
+              return pos
+                ? { ...img, positionX: pos.x, positionY: pos.y, placed: true }
+                : img;
+            }),
+            lastArrange: { placed: positions.size, overflow: overflow.length },
+          };
+        }),
+
+      arrangeSheet: async () => {
+        const state = get();
+        if (state.images.length === 0) return;
+
+        set({ isAutoBuilding: true, lastArrange: null });
+        try {
+          const gsId = await ensureGangSheet(
+            state.sessionId,
+            state.sheetSize.widthMm,
+            state.sheetSize.heightMm,
+            state.filmType,
+            state.gangSheetId,
+          );
+          if (gsId !== state.gangSheetId) set({ gangSheetId: gsId });
+
+          // Save the live state first so the server nests the customer's
+          // current sizes, not the ones captured at upload time.
+          await saveGangSheet(
+            gsId,
+            buildPlacementsPayload(
+              get().images,
+              get().sheetSize,
+              get().filmType,
+            ),
+          );
+
+          const result = await autoBuild({
+            gangSheetId: gsId,
+            sheetWidthMm: get().sheetSize.widthMm,
+            sheetHeightMm: get().sheetSize.heightMm,
+            gapMm: get().gapMm,
+            // One item per copy, keyed by its editor id. Copies share a
+            // database row, so packing rows would give them all one spot.
+            items: get()
+              .images.filter((img) => img.placed)
+              .map((img) => ({
+                id: img.id,
+                width: img.displayWidth,
+                height: img.displayHeight,
+              })),
+          });
+
+          // A 200 with no placements is not a usable answer — treat it the
+          // same as a failed request and pack locally instead.
+          if (!Array.isArray(result?.placements)) {
+            throw new Error("Auto-arrange returned no placements");
+          }
+
+          get().applyAutoBuild(result.placements);
+          set({
+            lastArrange: {
+              placed: result.placements.length,
+              overflow: Array.isArray(result.overflow) ? result.overflow.length : 0,
+            },
+          });
+        } catch (err) {
+          console.error("Auto-arrange failed, packing locally:", err);
+          get().arrangeAll();
+        } finally {
+          set({ isAutoBuilding: false });
+        }
+      },
+
+      duplicateImage: (id) => {
+        const state = get();
+        const img = state.images.find((i) => i.id === id);
+        if (!img) return;
+        const key = groupKey(img);
+        const group = groupImages(state.images).find((g) => g.groupId === key);
+        get().setGroupCount(key, (group?.count ?? 1) + 1);
+      },
+
+      /**
+       * Resize a design. Every copy of it changes too — they are the same
+       * artwork, and letting them drift apart is never what a customer means.
+       */
+      resizeImage: (id, widthMm, heightMm, keepRatio) => {
+        const target = get().images.find((img) => img.id === id);
+        if (!target) return;
+        const key = groupKey(target);
+        const ratio = target.widthPx / target.heightPx;
+
+        let nextW = widthMm;
+        let nextH = heightMm;
+        if (keepRatio) {
+          if (widthMm !== target.displayWidth) {
+            nextH = widthMm / ratio;
+          } else {
+            nextW = heightMm * ratio;
+          }
+        }
+
+        set((state) => ({
+          images: state.images.map((img) =>
+            groupKey(img) === key
+              ? { ...img, displayWidth: nextW, displayHeight: nextH }
+              : img,
+          ),
+        }));
+
+        const group = groupImages(get().images).find((g) => g.groupId === key);
+        if (group && group.count > 1) get().setGroupCount(key, group.count);
       },
 
       selectImage: (id) => set({ selectedImageId: id }),
@@ -253,14 +620,6 @@ export const useEditorStore = create<EditorState>()(
 
       setPrices: (prices) => {
         set({ prices });
-        get().updatePrice();
-      },
-
-      updatePrice: () => {
-        const { prices, sheetSize, filmType } = get();
-        const sizeKey = sheetSize.key;
-        const price = prices[sizeKey]?.[filmType];
-        set({ currentPrice: typeof price === "number" ? price : null });
       },
 
       setGangSheetId: (id) => set({ gangSheetId: id }),
@@ -277,9 +636,11 @@ export const useEditorStore = create<EditorState>()(
       applyAutoBuild: (placements) =>
         set((state) => {
           const updatedImages = state.images.map((img) => {
-            const placement = placements.find(
-              (p: any) => p.id === img.dbId || p.id === img.id,
-            );
+            // Match on the editor id first: copies of one design share a
+            // dbId, so a dbId match would hand them all the same position.
+            const placement =
+              placements.find((p: any) => p.id === img.id) ??
+              placements.find((p: any) => p.id === img.dbId);
             if (!placement) return img;
             // NOTE: displayWidth/displayHeight are intentionally NOT overwritten —
             // placement width/height are bbox dims; overwriting would double-transform
@@ -293,49 +654,6 @@ export const useEditorStore = create<EditorState>()(
             };
           });
           return { images: updatedImages };
-        }),
-
-      autoFillSheet: (id) =>
-        set((state) => {
-          const source = state.images.find((img) => img.id === id);
-          if (!source) return state;
-
-          const { sheetSize } = state;
-          const gap = source.marginMm ?? 5;
-          const imgW = source.displayWidth + gap;
-          const imgH = source.displayHeight + gap;
-
-          const cols = Math.floor((sheetSize.widthMm - gap) / imgW);
-          const rows = Math.floor((sheetSize.heightMm - gap) / imgH);
-          const totalFit = cols * rows;
-
-          if (totalFit <= 1) return state;
-
-          // Remove existing duplicates of this image
-          const otherImages = state.images.filter(
-            (img) => img.id !== id,
-          );
-
-          const filledImages: EditorImage[] = [];
-          for (let row = 0; row < rows; row++) {
-            for (let col = 0; col < cols; col++) {
-              const isFirst = row === 0 && col === 0;
-              filledImages.push({
-                ...source,
-                id: isFirst
-                  ? source.id
-                  : "img_" + Math.random().toString(36).substring(2, 10),
-                positionX: gap + col * imgW,
-                positionY: gap + row * imgH,
-                placed: true,
-              });
-            }
-          }
-
-          return {
-            images: [...otherImages, ...filledImages],
-            selectedImageId: source.id,
-          };
         }),
 
       addSheet: () => {
@@ -374,7 +692,6 @@ export const useEditorStore = create<EditorState>()(
             selectedImageId: null,
           };
         });
-        get().updatePrice();
       },
 
       removeSheet: (index) => {
@@ -418,7 +735,6 @@ export const useEditorStore = create<EditorState>()(
             filmType: target?.filmType ?? state.filmType,
           };
         });
-        get().updatePrice();
       },
 
       switchSheet: (index) => {
@@ -449,7 +765,6 @@ export const useEditorStore = create<EditorState>()(
             filmType: target?.filmType ?? state.filmType,
           };
         });
-        get().updatePrice();
       },
 
       duplicateSheet: (index) =>
@@ -495,9 +810,12 @@ export const useEditorStore = create<EditorState>()(
           selectedImageId: null,
           sheetSize: DEFAULT_SHEET,
           filmType: "standard",
-          currentPrice: null,
-          sheets: [{ id: "sheet_1", name: "Ark 1", gangSheetId: null, imageCount: 0, size: "58 × 100 cm", quantity: 1, savedImages: [], sheetSize: DEFAULT_SHEET, filmType: "standard" }],
+              sheets: [{ id: "sheet_1", name: "Ark 1", gangSheetId: null, imageCount: 0, size: "58 × 100 cm", quantity: 1, savedImages: [], sheetSize: DEFAULT_SHEET, filmType: "standard" }],
           activeSheetIndex: 0,
+          lastArrange: null,
+          lastFillShortfall: null,
+          gapMm: DEFAULT_GAP_MM,
+          zoom: 1,
         }),
     }),
     {

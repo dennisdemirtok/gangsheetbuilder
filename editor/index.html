@@ -11,6 +11,98 @@
 </head>
 <body>
   <div id="gangsheet-editor-root" data-app-proxy-url="" data-shop-domain="preview.myshopify.com"></div>
-  <script type="module" src="/src/main.tsx"></script>
+
+  <!--
+    Local preview only — never shipped. The storefront loads editor.iife.js
+    and calls __gangsheetMount() itself; here we stub the app proxy so the
+    UI can be worked on without a backend.
+  -->
+  <script type="module">
+    const realFetch = window.fetch.bind(window);
+
+    function json(data) {
+      return Promise.resolve(
+        new Response(JSON.stringify(data), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }
+
+    // A solid PNG stands in for the uploaded artwork.
+    function swatch(w, h, hue) {
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const x = c.getContext("2d");
+      x.fillStyle = `hsl(${hue} 70% 55%)`;
+      x.fillRect(0, 0, w, h);
+      x.fillStyle = "#fff";
+      x.font = `bold ${Math.floor(Math.min(w, h) / 4)}px sans-serif`;
+      x.textAlign = "center";
+      x.textBaseline = "middle";
+      x.fillText("TC", w / 2, h / 2);
+      return c.toDataURL("image/png");
+    }
+
+    let uploadSeq = 0;
+
+    window.fetch = function (input, init) {
+      const url = typeof input === "string" ? input : input.url;
+
+      if (url.includes("/api/pricing")) {
+        return json({
+          prices: {
+            "58x100": { standard: 349 },
+            "58x200": { standard: 629 },
+            "58x300": { standard: 899 },
+            "58x400": { standard: 1149 },
+            "58x500": { standard: 1379 },
+          },
+        });
+      }
+
+      if (url.includes("/api/gang-sheet")) {
+        return json({ gangSheet: { id: "gs_dev_1" }, ok: true });
+      }
+
+      if (url.includes("/api/upload")) {
+        uploadSeq++;
+        const body = init && init.body;
+        const file = body && body.get ? body.get("file") : null;
+        const hue = (uploadSeq * 67) % 360;
+        // Vary the pixel size so DPI badges and sizing differ per upload.
+        const w = [1200, 2400, 600][uploadSeq % 3];
+        const h = [1200, 800, 600][uploadSeq % 3];
+        const data = swatch(w, h, hue);
+        return json({
+          id: "dbimg_" + uploadSeq,
+          imageId: "img_dev_" + uploadSeq,
+          filename: (file && file.name) || `design-${uploadSeq}.png`,
+          thumbnailUrl: data,
+          originalUrl: data,
+          width: w,
+          height: h,
+          dpiX: 300,
+          dpiY: 300,
+          hasAlpha: true,
+          hasWhiteBackground: uploadSeq === 2,
+          warnings: [],
+        });
+      }
+
+      if (url.includes("/api/auto-build")) {
+        return json({ error: "mock: use local arrange" }, 500);
+      }
+
+      if (url.includes("/api/cart")) {
+        return json({ variantId: "1", properties: {} });
+      }
+
+      return realFetch(input, init);
+    };
+
+    await import("/src/main.tsx");
+    window.__gangsheetMount();
+  </script>
 </body>
 </html>

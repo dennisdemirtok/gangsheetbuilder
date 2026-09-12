@@ -5,6 +5,9 @@ import { packImages, suggestLargerSheet } from "../lib/bin-packing.server";
 import prisma from "../db.server";
 import { pxToMm } from "../lib/constants";
 
+/** Upper bound on how many motifs one request may nest. */
+const MAX_ITEMS = 2000;
+
 /**
  * Run the MAXRECTS auto-build nesting algorithm.
  */
@@ -14,7 +17,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (!session) return json({ error: "Unauthorized" }, { status: 401 });
 
     const body = await request.json();
-    const { gangSheetId, sheetWidthMm, sheetHeightMm, gapMm = 5 } = body;
+    const { gangSheetId, sheetWidthMm, sheetHeightMm, gapMm = 5, items } = body;
 
     if (!sheetWidthMm || !sheetHeightMm) {
       return json({ error: "Missing sheet dimensions" }, { status: 400 });
@@ -24,32 +27,59 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: "Invalid sheet dimensions" }, { status: 400 });
     }
 
-    // Load images — either from gangSheet or by sessionId
-    let images;
-    if (gangSheetId) {
-      images = await prisma.gangSheetImage.findMany({
+    /*
+     * Preferred path: the editor sends one item per copy, keyed by its own
+     * image id. Packing the database rows instead can't work once a design
+     * has copies — they share one row, so every copy would come back with
+     * the same position.
+     */
+    let packingInputs: { id: string; width: number; height: number; quantity: number }[];
+
+    if (Array.isArray(items) && items.length > 0) {
+      packingInputs = [];
+      for (const item of items.slice(0, MAX_ITEMS)) {
+        const width = Number(item?.width);
+        const height = Number(item?.height);
+        if (
+          typeof item?.id !== "string" ||
+          !Number.isFinite(width) ||
+          !Number.isFinite(height) ||
+          width <= 0 ||
+          height <= 0
+        ) {
+          continue;
+        }
+        packingInputs.push({ id: item.id, width, height, quantity: 1 });
+      }
+      if (packingInputs.length === 0) {
+        return json({ error: "Inga giltiga motiv att arrangera" }, { status: 400 });
+      }
+    } else {
+      // Legacy path — pack whatever is linked to the gang sheet.
+      if (!gangSheetId) {
+        return json({ error: "Missing gangSheetId" }, { status: 400 });
+      }
+      const images = await prisma.gangSheetImage.findMany({
         where: { gangSheetId },
       });
-    } else {
-      return json({ error: "Missing gangSheetId" }, { status: 400 });
+
+      if (images.length === 0) {
+        return json({ error: "Inga bilder att arrangera" }, { status: 400 });
+      }
+
+      packingInputs = images.map((img) => {
+        const dpi = img.dpiX || 72;
+        const widthMm = img.displayWidth || pxToMm(img.widthPx, dpi);
+        const heightMm = img.displayHeight || pxToMm(img.heightPx, dpi);
+
+        return {
+          id: img.id,
+          width: widthMm,
+          height: heightMm,
+          quantity: img.quantity,
+        };
+      });
     }
-
-    if (images.length === 0) {
-      return json({ error: "Inga bilder att arrangera" }, { status: 400 });
-    }
-
-    const packingInputs = images.map((img) => {
-      const dpi = img.dpiX || 72;
-      const widthMm = img.displayWidth || pxToMm(img.widthPx, dpi);
-      const heightMm = img.displayHeight || pxToMm(img.heightPx, dpi);
-
-      return {
-        id: img.id,
-        width: widthMm,
-        height: heightMm,
-        quantity: img.quantity,
-      };
-    });
 
     const result = packImages(
       packingInputs,

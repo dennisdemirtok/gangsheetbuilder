@@ -8,7 +8,11 @@ import {
   calculateDisplayDpi,
   getDpiColor,
   DPI_LEVEL_COLORS,
+  DPI_LEVEL_LABELS,
+  DPI_THRESHOLDS,
 } from "../../utils/units";
+import { printableArea } from "../../utils/layout";
+import { useSheetStats } from "../../utils/sheetStats";
 import { theme } from "../../styles/theme";
 
 /** Custom data attached to Fabric objects (not part of Fabric's typings). */
@@ -36,6 +40,14 @@ export function GangSheetCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
   const scaleRef = useRef<number>(1);
   const syncGenRef = useRef<number>(0);
+  /**
+   * True while the canvas is being rebuilt. Removing objects fires
+   * selection:cleared, which used to wipe the store selection — so after
+   * every drag the handles and the sidebar controls vanished.
+   */
+  const rebuildingRef = useRef<boolean>(false);
+  /** Selection to restore once the rebuild finishes. */
+  const selectedIdRef = useRef<string | null>(null);
   const [overflowCount, setOverflowCount] = useState(0);
 
   const {
@@ -47,7 +59,11 @@ export function GangSheetCanvas() {
     selectImage,
     updateImage,
     setShowDpiOverlay,
+    arrangeSheet,
   } = useEditorStore();
+
+  // Collision + out-of-bounds state, recomputed whenever anything moves.
+  const stats = useSheetStats();
 
   // Initialize canvas
   useEffect(() => {
@@ -85,7 +101,10 @@ export function GangSheetCanvas() {
       const imageId = getObjData(obj)?.imageId;
       if (imageId) selectImage(imageId);
     });
-    canvas.on("selection:cleared", () => selectImage(null));
+    canvas.on("selection:cleared", () => {
+      if (rebuildingRef.current) return;
+      selectImage(null);
+    });
 
     /**
      * Persist one object's absolute transform to the store per the shared
@@ -173,18 +192,63 @@ export function GangSheetCanvas() {
     // resolutions adding objects after a re-render replaced them.
     const gen = ++syncGenRef.current;
     const isStale = () => syncGenRef.current !== gen || fabricRef.current !== canvas;
+    rebuildingRef.current = true;
+    selectedIdRef.current = useEditorStore.getState().selectedImageId;
 
     const scaleFactor = scaleRef.current;
     const sheetW = sheetSize.widthMm;
     const sheetH = sheetSize.heightMm;
 
-    // Remove existing image objects and DPI overlays
+    // Remove existing image objects, DPI overlays and guides
     const toRemove = canvas
       .getObjects()
-      .filter((obj) => getObjData(obj)?.imageId || getObjData(obj)?.dpiOverlay);
+      .filter(
+        (obj) =>
+          getObjData(obj)?.imageId ||
+          getObjData(obj)?.dpiOverlay ||
+          getObjData(obj)?.guide,
+      );
     toRemove.forEach((obj) => canvas.remove(obj));
 
+    // Safety margin to the film edge — designs nested into the outer
+    // centimetre are unreliable to print, so show customers the line.
+    const area = printableArea(sheetSize);
+    canvas.add(
+      new Rect({
+        left: mmToCanvasPx(area.x, scaleFactor),
+        top: mmToCanvasPx(area.y, scaleFactor),
+        width: mmToCanvasPx(area.w, scaleFactor),
+        height: mmToCanvasPx(area.h, scaleFactor),
+        fill: "transparent",
+        stroke: "rgba(0,0,0,0.22)",
+        strokeWidth: 1,
+        strokeDashArray: [6, 5],
+        selectable: false,
+        evented: false,
+        excludeFromExport: true,
+        data: { guide: true },
+      } as any),
+    );
+
     let overflow = 0;
+    const pending: Promise<unknown>[] = [];
+
+    /**
+     * Decode each distinct artwork once per rebuild and clone it for the
+     * rest. Copies are separate images now, so a filled sheet meant 300+
+     * decodes of the same file and locked the main thread for ~0.7 s on
+     * every change.
+     */
+    const decoded = new Map<string, Promise<FabricImage>>();
+    const loadImage = (url: string): Promise<FabricImage> => {
+      let base = decoded.get(url);
+      if (!base) {
+        base = FabricImage.fromURL(url, { crossOrigin: "anonymous" });
+        decoded.set(url, base);
+        return base;
+      }
+      return base.then((img) => img.clone());
+    };
 
     for (const img of images) {
       if (!img.placed) continue;
@@ -215,7 +279,8 @@ export function GangSheetCanvas() {
 
       overflow += positions.filter((p) => p.y + bboxH > sheetH).length;
 
-      FabricImage.fromURL(url, { crossOrigin: "anonymous" }).then(
+      pending.push(
+      loadImage(url).then(
         async (fabricImg) => {
           if (isStale()) return;
           const displayW = mmToCanvasPx(img.displayWidth, scaleFactor);
@@ -227,6 +292,8 @@ export function GangSheetCanvas() {
             const centerX = mmToCanvasPx(pos.x + bboxW / 2, scaleFactor);
             const centerY = mmToCanvasPx(pos.y + bboxH / 2, scaleFactor);
             const doesNotFit = pos.y + bboxH > sheetH;
+            const isClashing =
+              stats.overlappingIds.has(img.id) || stats.outsideIds.has(img.id);
             obj.set({
               originX: "center",
               originY: "center",
@@ -251,16 +318,17 @@ export function GangSheetCanvas() {
             } as any);
             canvas.add(obj);
 
-            if (doesNotFit) {
+            if (doesNotFit || isClashing) {
               canvas.add(
                 new Rect({
                   left: mmToCanvasPx(pos.x, scaleFactor),
                   top: mmToCanvasPx(pos.y, scaleFactor),
                   width: mmToCanvasPx(bboxW, scaleFactor),
                   height: mmToCanvasPx(bboxH, scaleFactor),
-                  fill: "rgba(239,68,68,0.25)",
+                  fill: doesNotFit ? "rgba(239,68,68,0.25)" : "transparent",
                   stroke: "#ef4444",
                   strokeWidth: 2,
+                  strokeDashArray: isClashing && !doesNotFit ? [5, 4] : undefined,
                   selectable: false,
                   evented: false,
                   data: { dpiOverlay: true },
@@ -302,13 +370,29 @@ export function GangSheetCanvas() {
             if (isStale()) return;
             applySettings(cloned, i);
           }
+          // Draw what has arrived so far: a filled sheet takes a moment to
+          // rebuild and a customer should see it fill in, not go blank.
           if (!isStale()) canvas.renderAll();
         },
-      );
+      ));
     }
 
+    // Put the customer's selection back once every object exists again.
+    Promise.allSettled(pending).then(() => {
+      if (isStale()) return;
+      const wanted = selectedIdRef.current;
+      if (wanted) {
+        const obj = canvas
+          .getObjects()
+          .find((o) => getObjData(o)?.imageId === wanted && o.selectable);
+        if (obj) canvas.setActiveObject(obj);
+      }
+      rebuildingRef.current = false;
+      canvas.renderAll();
+    });
+
     setOverflowCount(overflow);
-  }, [images, sheetSize, showDpiOverlay]);
+  }, [images, sheetSize, showDpiOverlay, stats]);
 
   // Apply zoom via CSS transform (not Fabric zoom — simpler, works with all objects)
   useEffect(() => {
@@ -353,34 +437,12 @@ export function GangSheetCanvas() {
         <canvas ref={canvasRef} />
       </div>
 
-      {/* Overflow warning — copies outside the sheet won't print */}
-      {overflowCount > 0 && (
-        <div
-          style={{
-            position: "absolute",
-            top: 12,
-            left: "50%",
-            transform: "translateX(-50%)",
-            background: "#fef2f2",
-            border: "1px solid #f87171",
-            color: "#991b1b",
-            borderRadius: theme.radius,
-            padding: "8px 14px",
-            fontSize: theme.fontSize.labelMd,
-            fontFamily: theme.fontFamily,
-            fontWeight: theme.fontWeight.semibold,
-            zIndex: 6,
-            boxShadow: theme.shadow,
-            maxWidth: "90%",
-            textAlign: "center",
-          }}
-        >
-          {overflowCount === 1
-            ? "1 kopia får inte plats på arket och kommer inte att skrivas ut."
-            : `${overflowCount} kopior får inte plats på arket och kommer inte att skrivas ut.`}{" "}
-          Minska antal eller välj ett större ark.
-        </div>
-      )}
+      {/* One banner for everything that would print wrong */}
+      <CanvasAlerts
+        overflowCount={overflowCount}
+        issues={stats.issues}
+        onTidy={() => void arrangeSheet()}
+      />
 
       {/* DPI Legend */}
       <DpiLegend
@@ -399,10 +461,22 @@ function DpiLegend({
   onToggle: () => void;
 }) {
   const levels = [
-    { label: "Optimal ≥ 300 DPI", color: DPI_LEVEL_COLORS.optimal },
-    { label: "Bra ≥ 250 DPI", color: DPI_LEVEL_COLORS.good },
-    { label: "Dålig ≥ 200 DPI", color: DPI_LEVEL_COLORS.bad },
-    { label: "Otillräcklig < 200 DPI", color: DPI_LEVEL_COLORS.terrible },
+    {
+      label: `${DPI_LEVEL_LABELS.optimal} ≥ ${DPI_THRESHOLDS.optimal} DPI`,
+      color: DPI_LEVEL_COLORS.optimal,
+    },
+    {
+      label: `${DPI_LEVEL_LABELS.good} ≥ ${DPI_THRESHOLDS.good} DPI`,
+      color: DPI_LEVEL_COLORS.good,
+    },
+    {
+      label: `${DPI_LEVEL_LABELS.low} ≥ ${DPI_THRESHOLDS.low} DPI`,
+      color: DPI_LEVEL_COLORS.low,
+    },
+    {
+      label: `${DPI_LEVEL_LABELS.bad} < ${DPI_THRESHOLDS.low} DPI`,
+      color: DPI_LEVEL_COLORS.bad,
+    },
   ];
 
   return (
@@ -464,6 +538,104 @@ function DpiLegend({
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Everything the customer needs to fix before printing, in one place at
+ * the top of the sheet — overlaps, designs off the film, copies that fall
+ * past the end — each with the one-click fix next to it.
+ */
+function CanvasAlerts({
+  overflowCount,
+  issues,
+  onTidy,
+}: {
+  overflowCount: number;
+  issues: { severity: "error" | "warning"; message: string }[];
+  onTidy: () => void;
+}) {
+  const errors = issues.filter((i) => i.severity === "error");
+  const hasOverflow = overflowCount > 0;
+  if (errors.length === 0 && !hasOverflow) return null;
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 12,
+        left: "50%",
+        transform: "translateX(-50%)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+        zIndex: 6,
+        maxWidth: "92%",
+      }}
+    >
+      {hasOverflow && (
+        <Alert>
+          {overflowCount === 1
+            ? "1 kopia får inte plats och skrivs inte ut."
+            : `${overflowCount} kopior får inte plats och skrivs inte ut.`}{" "}
+          Minska antalet eller välj ett längre ark.
+        </Alert>
+      )}
+      {errors.map((issue, i) => (
+        <Alert key={i} action={{ label: "Ordna om", onClick: onTidy }}>
+          {issue.message}
+        </Alert>
+      ))}
+    </div>
+  );
+}
+
+function Alert({
+  children,
+  action,
+}: {
+  children: React.ReactNode;
+  action?: { label: string; onClick: () => void };
+}) {
+  return (
+    <div
+      style={{
+        background: "#fef2f2",
+        border: "1px solid #f87171",
+        color: "#991b1b",
+        borderRadius: theme.radius,
+        padding: "8px 12px",
+        fontSize: theme.fontSize.labelMd,
+        fontFamily: theme.fontFamily,
+        fontWeight: theme.fontWeight.medium,
+        boxShadow: theme.shadow,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        lineHeight: theme.lineHeight.normal,
+      }}
+    >
+      <span style={{ flex: 1 }}>{children}</span>
+      {action && (
+        <button
+          onClick={action.onClick}
+          style={{
+            flexShrink: 0,
+            padding: "4px 10px",
+            border: "1px solid #f87171",
+            borderRadius: theme.radiusSm,
+            background: "#fff",
+            color: "#991b1b",
+            fontSize: theme.fontSize.labelMd,
+            fontFamily: theme.fontFamily,
+            fontWeight: theme.fontWeight.semibold,
+            cursor: "pointer",
+          }}
+        >
+          {action.label}
+        </button>
       )}
     </div>
   );
