@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useEditorStore, getSheetsTotalPrice } from "../../store/editorStore";
 import { computeSheetStats, type SheetIssue } from "../../utils/sheetStats";
+import { getSheetVariantId } from "../../services/storefrontPrices";
 import {
   prepareForCart,
   saveGangSheet,
@@ -87,15 +88,24 @@ export function AddToCartButton() {
             buildPlacementsPayload(job.sheetImages, job.size, job.filmType),
           );
 
-          // Step 3: Prepare for cart
+          // Step 3: Prepare for cart (persists the sheet, returns properties)
           const cartData = await prepareForCart(gsId);
-          if (!cartData.variantId) {
+
+          // Prefer the variant the theme rendered. The app's variantMapping
+          // is optional config that nobody had filled in, which made every
+          // single add-to-cart fail with "Variant-koppling saknas".
+          const variantId =
+            getSheetVariantId(job.size.key) ?? cartData.variantId ?? null;
+
+          if (!variantId) {
             throw new Error(
-              "Variant-koppling saknas i inställningarna — kontakta admin.",
+              `Hittade ingen produktvariant för ${job.size.label}. ` +
+                "Kontrollera att prisprodukten är vald i temat.",
             );
           }
+
           items.push({
-            id: cartData.variantId,
+            id: variantId,
             quantity: Math.max(1, job.sheet.quantity || 1),
             properties: cartData.properties,
           });

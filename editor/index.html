@@ -12,6 +12,19 @@
 <body>
   <div id="gangsheet-editor-root" data-app-proxy-url="" data-shop-domain="preview.myshopify.com"></div>
 
+  <!-- Stands in for what the theme block renders: real Shopify variants at
+       200 kr/m, so the local preview exercises the storefront price path. -->
+  <script id="gangsheet-variant-data" type="application/json">
+    {
+      "1-meter":  { "id": 57661167272310, "price": "200,00", "price_cents": 20000, "available": true, "size_key": "58x100", "title": "1 meter" },
+      "2-meter":  { "id": 57666583593334, "price": "400,00", "price_cents": 40000, "available": true, "size_key": "58x200", "title": "2 meter" },
+      "3-meter":  { "id": 57666583626102, "price": "600,00", "price_cents": 60000, "available": true, "size_key": "58x300", "title": "3 meter" },
+      "4-meter":  { "id": 57666583658870, "price": "800,00", "price_cents": 80000, "available": true, "size_key": "58x400", "title": "4 meter" },
+      "5-meter":  { "id": 57666583691638, "price": "1000,00", "price_cents": 100000, "available": true, "size_key": "58x500", "title": "5 meter" },
+      "per-decimeter": { "id": 57667732472182, "price": "20,00", "price_cents": 2000, "available": true, "title": "Per decimeter" }
+    }
+  </script>
+
   <!--
     Local preview only — never shipped. The storefront loads editor.iife.js
     and calls __gangsheetMount() itself; here we stub the app proxy so the

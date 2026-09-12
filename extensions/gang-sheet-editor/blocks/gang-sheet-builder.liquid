@@ -46,14 +46,37 @@
   </div>
   {% endif %}
 
-  <!-- Variant data for JS -->
+  {%- comment -%}
+    Prices for the editor and the upload flow.
+
+    Rendered by Liquid on purpose: Shopify prices these variants for whoever
+    is looking, so a B2B contact on a company catalog sees their negotiated
+    rate here without the app knowing anything about catalogs. The app used
+    to compute its own price from a config table, which meant the number on
+    screen and the number charged at checkout came from two places that
+    could — and did — disagree.
+
+    `price_product` should point at the per-length product (for example
+    "DTF Transfers By Size"); it falls back to the product the block sits on.
+  {%- endcomment -%}
+  {%- assign price_product = block.settings.price_product -%}
+  {%- if price_product == blank -%}
+    {%- assign price_product = all_products['dtf-transfers-by-size'] -%}
+  {%- endif -%}
+  {%- if price_product == blank or price_product.variants.size == 0 -%}
+    {%- assign price_product = product -%}
+  {%- endif -%}
   <script id="gangsheet-variant-data" type="application/json">
     {
-      {% for variant in product.variants %}
+      {% for variant in price_product.variants %}
+        {%- assign meters = variant.title | split: " " | first | plus: 0 -%}
         "{{ variant.title | handle }}": {
           "id": {{ variant.id }},
           "price": "{{ variant.price | money_without_currency }}",
-          "title": "{{ variant.title }}"
+          "price_cents": {{ variant.price }},
+          "available": {{ variant.available | json }},
+          {% if meters > 0 %}"size_key": "58x{{ meters | times: 100 }}",{% endif %}
+          "title": {{ variant.title | json }}
         }{% unless forloop.last %},{% endunless %}
       {% endfor %}
     }
@@ -655,6 +678,12 @@
       "id": "upload_subtext",
       "label": "Uppladdningstext",
       "default": "Ladda enkelt upp ditt färdiga ark med några klick!"
+    },
+    {
+      "type": "product",
+      "id": "price_product",
+      "label": "Prisprodukt (per längd)",
+      "info": "Produkten vars varianter styr pris och varukorg, t.ex. \"DTF Transfers By Size\". Varje variant ska heta \"1 meter\", \"2 meter\" osv. Lämnas den tom används produkten som blocket ligger på."
     }
   ]
 }

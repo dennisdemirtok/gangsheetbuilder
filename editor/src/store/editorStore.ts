@@ -11,6 +11,7 @@ import {
   type Rect,
 } from "../utils/layout";
 import { nextSheetUp } from "../config/sheets";
+import { getSheetPrice, hasStorefrontPrices } from "../services/storefrontPrices";
 import {
   autoBuild,
   buildPlacementsPayload,
@@ -222,9 +223,22 @@ export function getSheetUnitPrice(
 ): number | null {
   const sizeKey = sheet.sheetSize?.key ?? fallbackSize.key;
   const film = sheet.filmType ?? fallbackFilmType;
+
+  // What Shopify will actually charge, straight from the theme. Only the
+  // standard film reads from it — the specialty films are modifiers the
+  // app still owns, and quoting a plain-film price for glitter would be
+  // worse than falling back.
+  if (film === "standard") {
+    const storefront = getSheetPrice(sizeKey);
+    if (storefront !== null) return storefront;
+  }
+
   const price = prices?.[sizeKey]?.[film];
   return typeof price === "number" ? price : null;
 }
+
+/** True when prices come from Shopify rather than the app's own table. */
+export { hasStorefrontPrices };
 
 /**
  * Total price across all sheets (each sheet's own size/film × quantity).
