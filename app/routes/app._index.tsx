@@ -34,68 +34,57 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
    */
   const real = { shopDomain, shopifyOrderId: { not: null } };
 
-  const [
-    total,
-    pending,
-    exported,
-    downloaded,
-    printed,
-    shipped,
-    last30Days,
-    totalDesigns,
-    revenueResult,
-  ] = await Promise.all([
-    prisma.gangSheet.count({ where: real }),
-    prisma.gangSheet.count({ where: { ...real, status: "pending" } }),
-    prisma.gangSheet.count({ where: { ...real, status: "exported" } }),
-    prisma.gangSheet.count({ where: { ...real, status: "downloaded" } }),
-    prisma.gangSheet.count({ where: { ...real, status: "printed" } }),
-    prisma.gangSheet.count({ where: { ...real, status: "shipped" } }),
-    prisma.gangSheet.count({
-      where: { ...real, createdAt: { gte: thirtyDaysAgo } },
-    }),
-    prisma.gangSheetImage.count({
-      where: { gangSheet: { shopDomain } },
-    }),
-    prisma.gangSheet.aggregate({
-      where: real,
-      _sum: { priceSEK: true },
-      _avg: { priceSEK: true },
-    }),
-  ]);
+  /*
+   * Five queries, all at once.
+   *
+   * This used to be eleven: one count per status plus a separate total, a
+   * revenue aggregate nothing displays, and two more queries that waited
+   * for the first batch to finish. The app and its database are far apart,
+   * so every round trip costs close to a second — the dashboard sat blank
+   * for several seconds. Statuses now come back from a single groupBy.
+   */
+  const [byStatus, last30Days, totalDesigns, sizeCounts, recentOrders] =
+    await Promise.all([
+      prisma.gangSheet.groupBy({
+        by: ["status"],
+        where: real,
+        _count: { _all: true },
+      }),
+      prisma.gangSheet.count({
+        where: { ...real, createdAt: { gte: thirtyDaysAgo } },
+      }),
+      prisma.gangSheetImage.count({
+        where: { gangSheet: { shopDomain } },
+      }),
+      prisma.gangSheet.groupBy({
+        by: ["widthMm", "heightMm"],
+        where: real,
+        _count: true,
+        orderBy: { _count: { id: "desc" } },
+        take: 5,
+      }),
+      prisma.gangSheet.findMany({
+        where: real,
+        orderBy: { createdAt: "desc" },
+        take: 8,
+        include: { _count: { select: { images: true } } },
+      }),
+    ]);
 
-  // Popular sheet sizes
-  const sizeCounts = await prisma.gangSheet.groupBy({
-    by: ["widthMm", "heightMm"],
-    where: { shopDomain, shopifyOrderId: { not: null } },
-    _count: true,
-    orderBy: { _count: { id: "desc" } },
-    take: 5,
-  });
-
-  // Recent orders
-  const recentOrders = await prisma.gangSheet.findMany({
-    where: { shopDomain, shopifyOrderId: { not: null } },
-    orderBy: { createdAt: "desc" },
-    take: 8,
-    include: { _count: { select: { images: true } } },
-  });
-
-  const totalRevenue = revenueResult._sum.priceSEK || 0;
-  const avgPrice = Math.round(revenueResult._avg.priceSEK || 0);
+  const countOf = (status: string) =>
+    byStatus.find((row) => row.status === status)?._count._all ?? 0;
+  const total = byStatus.reduce((sum, row) => sum + row._count._all, 0);
 
   return json({
     stats: {
       total,
-      pending,
-      exported,
-      downloaded,
-      printed,
-      shipped,
+      pending: countOf("pending"),
+      exported: countOf("exported"),
+      downloaded: countOf("downloaded"),
+      printed: countOf("printed"),
+      shipped: countOf("shipped"),
       last30Days,
       totalDesigns,
-      totalRevenue,
-      avgPrice,
     },
     sizeCounts,
     recentOrders,
@@ -278,7 +267,7 @@ function StatCard({
           as="p"
           variant={large ? "heading2xl" : "headingXl"}
           fontWeight="bold"
-          tone={tone}
+          tone={tone === "warning" ? "caution" : tone}
         >
           {value}
         </Text>
