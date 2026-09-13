@@ -4,21 +4,40 @@ import { getExportQueue, type ExportJobData } from "../lib/queue.server";
 import { Prisma } from "@prisma/client";
 import prisma from "../db.server";
 import { bookOrderShipment } from "../lib/order-shipment.server";
+import {
+  DEFAULT_PRINT_TYPE,
+  detectPrintType,
+  findUploadedFile,
+  propertyMm,
+  visibleProperties,
+  type LineProperty,
+} from "../lib/print-jobs";
+
+interface WebhookAddress {
+  name?: string | null;
+  company?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  zip?: string | null;
+  city?: string | null;
+  country?: string | null;
+  country_code?: string | null;
+  phone?: string | null;
+}
+
+interface WebhookLineItem {
+  id: number;
+  product_id?: number | null;
+  title?: string;
+  variant_title?: string | null;
+  quantity?: number;
+  price?: string;
+  requires_shipping?: boolean;
+  properties: LineProperty[];
+}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, payload } = await authenticate.webhook(request);
-
-  interface WebhookAddress {
-    name?: string | null;
-    company?: string | null;
-    address1?: string | null;
-    address2?: string | null;
-    zip?: string | null;
-    city?: string | null;
-    country?: string | null;
-    country_code?: string | null;
-    phone?: string | null;
-  }
+  const { shop, payload, admin } = await authenticate.webhook(request);
 
   const order = payload as {
     id: number;
@@ -28,116 +47,124 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     customer?: { first_name?: string | null; last_name?: string | null } | null;
     shipping_address?: WebhookAddress | null;
     billing_address?: WebhookAddress | null;
-    line_items: Array<{
-      id: number;
-      title?: string;
-      variant_title?: string | null;
-      quantity?: number;
-      requires_shipping?: boolean;
-      properties: Array<{ name: string; value: string }>;
-    }>;
+    line_items: WebhookLineItem[];
   };
+  const lineItems = order.line_items || [];
 
   /*
-   * The BWS pickup in Poland is for DTF transfers only. Transfer presses and
-   * blanks on the same order ship some other way, so remember them: the
-   * admin warns about them and auto-booking leaves mixed orders alone.
+   * Product types decide what is printed. The webhook does not carry them,
+   * so look them up once. If that fails the product titles still classify
+   * the DTF lines, just without a custom type such as "PolyBlock".
    */
-  const otherLineItems = (order.line_items || [])
-    .filter(
-      (li) =>
-        li.requires_shipping !== false &&
-        !li.properties?.some((p) => p.name === "_gang_sheet_id"),
-    )
+  const productTypes = new Map<string, string>();
+  const productIds = [
+    ...new Set(lineItems.map((li) => li.product_id).filter(Boolean).map(String)),
+  ];
+  if (admin && productIds.length > 0) {
+    try {
+      const res = await admin.graphql(
+        `#graphql
+        query PrintProductTypes($ids: [ID!]!) {
+          nodes(ids: $ids) { ... on Product { id productType } }
+        }`,
+        { variables: { ids: productIds.map((id) => `gid://shopify/Product/${id}`) } },
+      );
+      const body = await res.json();
+      for (const node of body.data?.nodes ?? []) {
+        if (node?.id) productTypes.set(node.id.split("/").pop(), node.productType || "");
+      }
+    } catch (error) {
+      console.error(`[orders-paid] Could not look up product types for ${order.id}:`, error);
+    }
+  }
+
+  const gangSheetIdOf = (li: WebhookLineItem) =>
+    li.properties?.find((p) => p.name === "_gang_sheet_id")?.value;
+  const printTypeOf = (li: WebhookLineItem) =>
+    gangSheetIdOf(li)
+      ? detectPrintType(productTypes.get(String(li.product_id)), li.title) ?? DEFAULT_PRINT_TYPE
+      : detectPrintType(productTypes.get(String(li.product_id)), li.title);
+
+  /*
+   * Everything printed leaves the print shop in Poland in one BWS parcel.
+   * What is left — presses, blanks — ships some other way, so remember it:
+   * the admin warns about it and auto-booking leaves mixed orders alone.
+   */
+  const otherLineItems = lineItems
+    .filter((li) => li.requires_shipping !== false && !printTypeOf(li))
     .map((li) => ({
       title: [li.title, li.variant_title].filter(Boolean).join(" – "),
       quantity: li.quantity ?? 1,
     }));
 
-  // Find line items with gang sheet metadata. Each line item is handled
-  // independently so one bad ID can't 500 the whole webhook (Shopify would
-  // retry-storm on non-200 responses).
-  for (const lineItem of order.line_items || []) {
+  const ship = order.shipping_address || order.billing_address || null;
+  const orderDetails = {
+    shopifyOrderId: String(order.id),
+    orderName: order.name ? String(order.name) : null,
+    otherLineItems: otherLineItems.length > 0 ? otherLineItems : Prisma.DbNull,
+    customerName:
+      ship?.name ||
+      [order.customer?.first_name, order.customer?.last_name].filter(Boolean).join(" ") ||
+      null,
+    shippingAddress: ship
+      ? {
+          name: ship.name ?? null,
+          company: ship.company ?? null,
+          address1: ship.address1 ?? null,
+          address2: ship.address2 ?? null,
+          zip: ship.zip ?? null,
+          city: ship.city ?? null,
+          country: ship.country ?? null,
+          countryCode: ship.country_code ?? null,
+          phone: ship.phone ?? order.phone ?? null,
+          email: order.email ?? null,
+        }
+      : Prisma.DbNull,
+  };
+
+  // Each line item is handled on its own so one bad line cannot fail the
+  // webhook — Shopify retries non-200 responses over and over.
+  for (const lineItem of lineItems) {
     try {
-      const gangSheetIdProp = lineItem.properties?.find(
-        (p) => p.name === "_gang_sheet_id",
-      );
+      const printType = printTypeOf(lineItem);
+      if (!printType) continue;
 
-      if (!gangSheetIdProp) continue;
+      const lineDetails = {
+        shopifyLineItemId: String(lineItem.id),
+        printType,
+        productTitle: lineItem.title ?? null,
+        variantTitle: lineItem.variant_title ?? null,
+        lineQuantity: lineItem.quantity ?? 1,
+        lineProperties: visibleProperties(lineItem.properties || []).map((p) => ({
+          name: String(p.name),
+          value: String(p.value),
+        })) as Prisma.InputJsonArray,
+      };
 
-      const gangSheetId = gangSheetIdProp.value;
+      const gangSheetId = gangSheetIdOf(lineItem);
+      const jobId = gangSheetId
+        ? await linkGangSheet(shop, gangSheetId, order.id)
+        : await createCutJob(shop, order.id, lineItem);
+      if (!jobId) continue;
 
-      // Verify the gang sheet exists and belongs to this shop
-      const gangSheet = await prisma.gangSheet.findUnique({
-        where: { id: gangSheetId },
-        select: { id: true, shopDomain: true },
+      // A redelivery of an order already in production must not send it back
+      // to "Preparing file" — that used to reset printed sheets.
+      const current = await prisma.gangSheet.findUnique({
+        where: { id: jobId },
+        select: { status: true },
       });
-
-      if (!gangSheet) {
-        console.warn(
-          `[orders-paid] Gang sheet ${gangSheetId} not found (order ${order.id}, shop ${shop})`,
-        );
-        continue;
-      }
-
-      if (gangSheet.shopDomain !== shop) {
-        console.warn(
-          `[orders-paid] Gang sheet ${gangSheetId} belongs to ${gangSheet.shopDomain}, not ${shop} — skipping`,
-        );
-        continue;
-      }
-
-      /*
-       * Copy what the print shop needs onto the sheet.
-       *
-       * The app only stored the numeric order id, so its order list showed
-       * "#13513260728694" and the detail page had no recipient at all — the
-       * shop could print a sheet but had no way to post it without going
-       * back to Shopify to look the customer up.
-       */
-      const ship = order.shipping_address || order.billing_address || null;
-      const customerName =
-        ship?.name ||
-        [order.customer?.first_name, order.customer?.last_name]
-          .filter(Boolean)
-          .join(" ") ||
-        null;
+      const fresh = !current || current.status === "draft" || current.status === "pending";
 
       await prisma.gangSheet.update({
-        where: { id: gangSheetId },
-        data: {
-          shopifyOrderId: String(order.id),
-          shopifyLineItemId: String(lineItem.id),
-          orderName: order.name ? String(order.name) : null,
-          otherLineItems: otherLineItems.length > 0 ? otherLineItems : Prisma.DbNull,
-          customerName,
-          shippingAddress: ship
-            ? {
-                name: ship.name ?? null,
-                company: ship.company ?? null,
-                address1: ship.address1 ?? null,
-                address2: ship.address2 ?? null,
-                zip: ship.zip ?? null,
-                city: ship.city ?? null,
-                country: ship.country ?? null,
-                countryCode: ship.country_code ?? null,
-                phone: ship.phone ?? order.phone ?? null,
-                email: order.email ?? null,
-              }
-            : Prisma.DbNull,
-          status: "pending",
-        },
+        where: { id: jobId },
+        data: { ...orderDetails, ...lineDetails, ...(fresh ? { status: "pending" } : {}) },
       });
+      if (!fresh) continue;
 
-      // Enqueue export job with a deterministic jobId so BullMQ dedupes
-      // webhook redeliveries.
-      const exportQueue = getExportQueue();
-      const jobData: ExportJobData = {
-        gangSheetId,
-        shopDomain: shop,
-      };
-      await exportQueue.add(`export-${gangSheetId}`, jobData, {
-        jobId: `export-${gangSheetId}-${order.id}`,
+      // Deterministic jobId, so a webhook redelivery does not queue it twice.
+      const jobData: ExportJobData = { gangSheetId: jobId, shopDomain: shop };
+      await getExportQueue().add(`export-${jobId}`, jobData, {
+        jobId: `export-${jobId}-${order.id}`,
       });
     } catch (error) {
       console.error(
@@ -170,3 +197,52 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   return new Response(null, { status: 200 });
 };
+
+/** The app-built gang sheet on this line, if it exists and is this shop's. */
+async function linkGangSheet(shop: string, gangSheetId: string, orderId: number) {
+  const gangSheet = await prisma.gangSheet.findUnique({
+    where: { id: gangSheetId },
+    select: { id: true, shopDomain: true },
+  });
+  if (!gangSheet) {
+    console.warn(`[orders-paid] Gang sheet ${gangSheetId} not found (order ${orderId}, shop ${shop})`);
+    return null;
+  }
+  if (gangSheet.shopDomain !== shop) {
+    console.warn(`[orders-paid] Gang sheet ${gangSheetId} belongs to ${gangSheet.shopDomain}, not ${shop} — skipping`);
+    return null;
+  }
+  return gangSheet.id;
+}
+
+/**
+ * A job for a line the app did not build: the customer's motif, printed the
+ * ordered number of times and cut out. Found again by line item id, so a
+ * webhook redelivery does not create a second job.
+ */
+async function createCutJob(shop: string, orderId: number, lineItem: WebhookLineItem) {
+  const existing = await prisma.gangSheet.findFirst({
+    where: { shopDomain: shop, shopifyLineItemId: String(lineItem.id) },
+    select: { id: true },
+  });
+  if (existing) return existing.id;
+
+  const properties = lineItem.properties || [];
+  const quantity = lineItem.quantity ?? 1;
+  const unitPrice = parseFloat(lineItem.price || "");
+
+  const job = await prisma.gangSheet.create({
+    data: {
+      sessionId: `order-${orderId}`,
+      shopDomain: shop,
+      kind: "cut",
+      widthMm: propertyMm(properties, /bredd|width/i),
+      heightMm: propertyMm(properties, /höjd|hojd|height/i),
+      sourceFileUrl: findUploadedFile(properties),
+      priceSEK: Number.isFinite(unitPrice) ? Math.round(unitPrice * quantity) : null,
+      status: "pending",
+    },
+    select: { id: true },
+  });
+  return job.id;
+}

@@ -147,11 +147,22 @@ export function orderLabel(sheet: {
 
 /** "1002_58x50cm.png" — what the print shop sees in their downloads folder. */
 export function printFileName(
-  sheet: { orderName?: string | null; shopifyOrderId?: string | null; id: string; widthMm: number; heightMm: number },
+  sheet: {
+    orderName?: string | null;
+    shopifyOrderId?: string | null;
+    id: string;
+    widthMm: number;
+    heightMm: number;
+    kind?: string | null;
+    lineQuantity?: number | null;
+  },
   ext: string,
 ): string {
   const order = (sheet.orderName || sheet.shopifyOrderId || sheet.id.slice(0, 8))
     .replace(/^#/, "")
     .replace(/[^\w.\-]+/g, "_");
-  return `${order}_${sheet.widthMm / 10}x${sheet.heightMm / 10}cm.${ext}`;
+  const size = sheet.widthMm > 0 ? `_${sheet.widthMm / 10}x${sheet.heightMm / 10}cm` : "";
+  // A cut job's file is one motif; the count belongs in the name.
+  const copies = sheet.kind === "cut" && sheet.lineQuantity ? `_x${sheet.lineQuantity}` : "";
+  return `${order}${size}${copies}.${ext}`;
 }

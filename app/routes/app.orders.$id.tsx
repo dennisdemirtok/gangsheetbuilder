@@ -27,10 +27,10 @@ import {
   formatDateTime,
   orderLabel,
   printFileName,
-  sheetSize,
   statusInfo,
 } from "../lib/order-status";
 import { withOrderDetails } from "../lib/order-details.server";
+import { jobSize, printLabel, type LineProperty } from "../lib/print-jobs";
 import { saveUrl } from "../lib/save-file";
 import {
   getPickupAddress,
@@ -216,6 +216,26 @@ export default function OrderDetailPage() {
   const address = (gangSheet.shippingAddress as ShippingAddress | null) || null;
   const status = statusInfo(gangSheet.status);
   const latestFile = gangSheet.exports[0];
+  const isCut = gangSheet.kind === "cut";
+  const customerProps = (gangSheet.lineProperties as LineProperty[] | null) || [];
+  const motif = isCut ? gangSheet.images[0] : undefined;
+  const missingFile = isCut && !gangSheet.sourceFileUrl;
+
+  /*
+   * What to do, in the job's own terms. A cut job is not a sheet to print as
+   * it is: the motif goes onto the shop's own layout the ordered number of
+   * times and each copy is cut out.
+   */
+  const nextStep =
+    isCut && gangSheet.status === "pending"
+      ? "Paid. Fetching the customer's file."
+      : isCut && gangSheet.status === "exported"
+        ? missingFile
+          ? "No file came with this order. Contact the customer before printing."
+          : `Download the motif, print it ${gangSheet.lineQuantity ?? 1} × at ${jobSize({ ...gangSheet, lineQuantity: null })} and cut each one out.`
+        : isCut && gangSheet.status === "downloaded"
+          ? "Motif downloaded. Mark as printed once every copy is cut out."
+          : status.hint;
 
   // Separate fetchers, so downloading does not spin the status buttons.
   const statusFetcher = useFetcher();
@@ -257,9 +277,13 @@ export default function OrderDetailPage() {
 
   const statusBusy = statusFetcher.state !== "idle";
   const fileMeta = [
-    sheetSize(gangSheet),
-    "300 DPI",
-    gangSheet.filmType === "standard" ? "standard film" : gangSheet.filmType,
+    jobSize(gangSheet),
+    isCut
+      ? motif?.dpiX
+        ? `${motif.dpiX} DPI at print size`
+        : null
+      : "300 DPI",
+    gangSheet.filmType === "standard" ? null : gangSheet.filmType,
     latestFile?.fileSizeBytes
       ? `${latestFile.format.toUpperCase()} ${(latestFile.fileSizeBytes / 1024 / 1024).toFixed(1)} MB`
       : null,
@@ -306,8 +330,14 @@ export default function OrderDetailPage() {
                 <Text as="h2" variant="headingMd">
                   Next step
                 </Text>
+                <InlineStack gap="200" blockAlign="center">
+                  <Badge tone={isCut ? "info" : undefined}>{printLabel(gangSheet)}</Badge>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {jobSize(gangSheet)}
+                  </Text>
+                </InlineStack>
                 <Text as="p" variant="bodyMd">
-                  {status.hint}
+                  {nextStep}
                 </Text>
 
                 {gangSheet.status === "exported" && latestFile && (
@@ -391,7 +421,7 @@ export default function OrderDetailPage() {
                 <InlineStack align="space-between" blockAlign="center" gap="200">
                   <BlockStack gap="050">
                     <Text as="h2" variant="headingMd">
-                      Print file
+                      {isCut ? "Customer's motif" : "Print file"}
                     </Text>
                     <Text as="p" variant="bodySm" tone="subdued">
                       {fileMeta}
@@ -429,15 +459,54 @@ export default function OrderDetailPage() {
                       />
                     </div>
                   </Box>
-                ) : (
+                ) : missingFile ? (
+                  <Banner tone="warning">
+                    The customer did not upload a file with this order.
+                  </Banner>
+                ) : gangSheet.status === "pending" ? (
                   <Banner tone="info">
-                    The file is being generated. This page updates when it is
+                    The file is being prepared. This page updates when it is
                     ready.
+                  </Banner>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    No preview for this file type — download it to open it.
+                  </Text>
+                )}
+                {isCut && motif?.dpiX != null && motif.dpiX < 200 && (
+                  <Banner tone="warning" title="Low resolution">
+                    {`${motif.dpiX} DPI at ${jobSize({ ...gangSheet, lineQuantity: null })}. The print may look blurry — check with the customer.`}
                   </Banner>
                 )}
               </BlockStack>
             </Card>
 
+            {customerProps.length > 0 && (
+              <Card>
+                <BlockStack gap="200">
+                  <Text as="h2" variant="headingMd">
+                    From the customer
+                  </Text>
+                  {customerProps.map((p) => (
+                    <InlineStack key={p.name} align="space-between" gap="400" wrap={false}>
+                      <Text as="span" variant="bodyMd" tone="subdued">
+                        {p.name}
+                      </Text>
+                      <Text as="span" variant="bodyMd" alignment="end">
+                        {p.value}
+                      </Text>
+                    </InlineStack>
+                  ))}
+                  {gangSheet.productTitle && (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {[gangSheet.productTitle, gangSheet.variantTitle].filter(Boolean).join(" – ")}
+                    </Text>
+                  )}
+                </BlockStack>
+              </Card>
+            )}
+
+            {!isCut && (
             <Card padding="0">
               <Box padding="400" paddingBlockEnd="200">
                 <Text as="h2" variant="headingMd">
@@ -450,6 +519,7 @@ export default function OrderDetailPage() {
                 rows={designRows}
               />
             </Card>
+            )}
           </BlockStack>
         </Layout.Section>
 

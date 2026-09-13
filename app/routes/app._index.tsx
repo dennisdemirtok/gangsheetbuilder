@@ -20,11 +20,11 @@ import {
   OPEN_STATUSES,
   orderLabel,
   plural,
-  sheetSize,
   statusInfo,
   timeAgo,
 } from "../lib/order-status";
 import { withOrderDetails } from "../lib/order-details.server";
+import { filmMetres, jobSize, printLabel } from "../lib/print-jobs";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -47,10 +47,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         where: real,
         _count: { _all: true },
       }),
-      prisma.gangSheet.aggregate({
+      // Film is summed per job: a cut job's motifs use area, not height.
+      prisma.gangSheet.findMany({
         where: { ...real, createdAt: { gte: thirtyDaysAgo } },
-        _count: { _all: true },
-        _sum: { heightMm: true },
+        select: { kind: true, widthMm: true, heightMm: true, lineQuantity: true },
       }),
       prisma.gangSheet.count({
         where: { ...real, status: "shipped", shippedAt: { gte: thirtyDaysAgo } },
@@ -79,16 +79,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       printed: countOf("printed"),
     },
     month: {
-      orders: month._count._all,
-      metres: (month._sum.heightMm ?? 0) / 1000,
+      orders: month.length,
+      metres: month.reduce((sum, job) => sum + filmMetres(job), 0),
       shipped: shippedThisMonth,
     },
     upNext: named.map((sheet) => ({
       id: sheet.id,
       label: orderLabel(sheet),
       customerName: sheet.customerName,
-      size: sheetSize(sheet),
-      designs: sheet._count.images,
+      print: printLabel(sheet),
+      size: jobSize(sheet),
       filmType: sheet.filmType,
       status: sheet.status,
       age: timeAgo(sheet.createdAt, now),
@@ -177,8 +177,8 @@ export default function Dashboard() {
                           </Text>
                           <Text as="span" variant="bodySm" tone="subdued">
                             {[
+                              order.print,
                               order.size,
-                              plural(order.designs, "design"),
                               order.filmType !== "standard" ? order.filmType : null,
                               order.age,
                             ]

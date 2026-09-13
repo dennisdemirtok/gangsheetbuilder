@@ -79,7 +79,7 @@ export function BwsShippingCard({
   const { packageCm: pkg } = shipping;
   const others = shipping.summary.otherLineItems;
   const othersBanner = others.length > 0 && (
-    <Banner tone="warning" title="Only the DTF transfers ship from Poland">
+    <Banner tone="warning" title="Only the printed items ship from Poland">
       <Text as="p" variant="bodySm">
         This order also contains{" "}
         {others.map((o) => `${o.quantity} × ${o.title}`).join(", ")}. Those are
@@ -128,7 +128,7 @@ export function BwsShippingCard({
           )}
           {sheet.shopifyFulfillmentId ? (
             <Text as="p" variant="bodySm" tone="subdued">
-              Customer notified with tracking (DTF items fulfilled in Shopify).
+              Customer notified with tracking (printed items fulfilled in Shopify).
             </Text>
           ) : (
             <fetcher.Form method="post">
@@ -177,7 +177,7 @@ export function BwsShippingCard({
             {shipping.pickupFrom} · DDP · {pkg.length}×{pkg.width}×{pkg.height} cm
             · {shipping.summary.meters} m film
             {shipping.summary.sheetCount > 1
-              ? ` (${shipping.summary.sheetCount} sheets in this order)`
+              ? ` (${shipping.summary.sheetCount} print jobs in this order)`
               : ""}
           </Text>
           <InlineStack gap="200" wrap={false}>

@@ -1,4 +1,5 @@
 import prisma from "../db.server";
+import { filmMetres } from "./print-jobs";
 import { uploadFile } from "./r2.server";
 import { fulfillLineItemsWithTracking } from "./shopify-fulfillment.server";
 import {
@@ -11,8 +12,8 @@ import {
 /**
  * Book one BWS pickup for a whole Shopify order.
  *
- * An order can hold several gang sheets (one per line item) but they leave
- * Poland in one tube, so the booking — and its label and tracking — is per
+ * An order can hold several print jobs (one per line item: gang sheets and
+ * cut transfers) but they leave Poland in one tube, so the booking — and its label and tracking — is per
  * order and copied onto every sheet of it.
  */
 
@@ -50,7 +51,9 @@ export async function summarizeOrderShipment(
   shopifyOrderId: string,
 ): Promise<OrderShipmentSummary> {
   const sheets = await loadOrderSheets(shopDomain, shopifyOrderId);
-  const meters = sheets.reduce((sum, s) => sum + s.heightMm / 1000, 0);
+  // Every printed line on the order travels in the tube — gang sheets and
+  // cut transfers alike — so weight is estimated from the film they use.
+  const meters = sheets.reduce((sum, s) => sum + filmMetres(s), 0);
   return {
     meters: Math.round(meters * 10) / 10,
     weightKg: weightForMeters(meters),

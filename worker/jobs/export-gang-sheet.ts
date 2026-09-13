@@ -103,11 +103,121 @@ async function renderPlacedImage(
   return processed.png().toBuffer();
 }
 
+const MAX_MOTIF_BYTES = 200 * 1024 * 1024;
+
+/**
+ * A cut job (DTF Transfers By Size): nothing to compose. Copy the customer's
+ * motif from Shopify's CDN into file storage so it downloads like any print
+ * file, and make a preview when the format allows one.
+ */
+async function importCutMotif(
+  gangSheet: {
+    id: string;
+    sourceFileUrl: string | null;
+    widthMm: number;
+    heightMm: number;
+    lineQuantity: number | null;
+  },
+): Promise<void> {
+  if (!gangSheet.sourceFileUrl) {
+    // No file on the order: still the print shop's job, they need to see it.
+    await prisma.gangSheet.update({
+      where: { id: gangSheet.id },
+      data: { status: "exported" },
+    });
+    return;
+  }
+
+  const source = new URL(gangSheet.sourceFileUrl);
+  if (source.protocol !== "https:" || source.hostname !== "cdn.shopify.com") {
+    throw new Error(`Refusing to download motif from ${source.hostname}`);
+  }
+
+  const res = await fetch(source, { signal: AbortSignal.timeout(60_000) });
+  if (!res.ok) throw new Error(`Motif download failed: HTTP ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  if (buffer.length > MAX_MOTIF_BYTES) throw new Error("Motif is larger than 200 MB");
+
+  const originalName = decodeURIComponent(source.pathname.split("/").pop() || "motif");
+  const ext = (originalName.split(".").pop() || "bin").toLowerCase().slice(0, 5);
+  const contentType = res.headers.get("content-type") || "application/octet-stream";
+  const fileKey = `exports/${gangSheet.id}/motif.${ext}`;
+  await uploadToR2(fileKey, buffer, contentType);
+
+  let widthPx = 0;
+  let heightPx = 0;
+  let previewKey: string | null = null;
+  try {
+    const meta = await sharp(buffer, { limitInputPixels: false }).metadata();
+    widthPx = meta.width || 0;
+    heightPx = meta.height || 0;
+    const preview = await sharp(buffer, { limitInputPixels: false })
+      .resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true })
+      .webp({ quality: 85 })
+      .toBuffer();
+    previewKey = `exports/${gangSheet.id}/preview.webp`;
+    await uploadToR2(previewKey, preview, "image/webp");
+  } catch {
+    // PDF, AI and the like: the file still downloads, just without a preview.
+  }
+
+  // Resolution at the ordered print width, so a low-res logo is visible.
+  const effectiveDpi =
+    widthPx > 0 && gangSheet.widthMm > 0
+      ? Math.round(widthPx / (gangSheet.widthMm / 25.4))
+      : null;
+
+  await prisma.gangSheetImage.deleteMany({ where: { gangSheetId: gangSheet.id } });
+  await prisma.gangSheetImage.create({
+    data: {
+      gangSheetId: gangSheet.id,
+      originalUrl: fileKey,
+      thumbnailUrl: previewKey,
+      originalFilename: originalName,
+      mimeType: contentType,
+      fileSizeBytes: buffer.length,
+      widthPx,
+      heightPx,
+      dpiX: effectiveDpi,
+      dpiY: effectiveDpi,
+      displayWidth: gangSheet.widthMm || null,
+      displayHeight: gangSheet.heightMm || null,
+      quantity: gangSheet.lineQuantity || 1,
+    },
+  });
+
+  await prisma.gangSheetExport.deleteMany({ where: { gangSheetId: gangSheet.id } });
+  await prisma.gangSheetExport.create({
+    data: {
+      gangSheetId: gangSheet.id,
+      format: ext,
+      url: fileKey,
+      fileSizeBytes: buffer.length,
+      dpi: effectiveDpi ?? EXPORT_DPI,
+    },
+  });
+
+  await prisma.gangSheet.update({
+    where: { id: gangSheet.id },
+    data: {
+      status: "exported",
+      exportUrl: fileKey,
+      previewUrl: previewKey,
+      imagesCount: 1,
+    },
+  });
+}
+
 export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
   const gangSheet = await prisma.gangSheet.findUniqueOrThrow({
     where: { id: data.gangSheetId },
     include: { images: true },
   });
+
+  if (gangSheet.kind === "cut") {
+    await importCutMotif(gangSheet);
+    return;
+  }
 
   const canvasWidthPx = mmToPx(gangSheet.widthMm);
   const canvasHeightPx = mmToPx(gangSheet.heightMm);

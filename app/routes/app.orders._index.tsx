@@ -24,10 +24,10 @@ import {
   STATUS_FILTERS,
   formatDate,
   orderLabel,
-  sheetSize,
   statusInfo,
   timeAgo,
 } from "../lib/order-status";
+import { KIND_LABEL, jobSize, type PrintKind } from "../lib/print-jobs";
 import { withOrderDetails } from "../lib/order-details.server";
 import { saveBlob } from "../lib/save-file";
 
@@ -86,9 +86,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       customerName: o.customerName,
       date: formatDate(o.createdAt),
       age: timeAgo(o.createdAt, now),
-      size: sheetSize(o),
+      printType: o.printType || "DTF Transfer",
+      format: KIND_LABEL[(o.kind as PrintKind) || "gang_sheet"] ?? o.kind,
+      cut: o.kind === "cut",
+      size: jobSize(o),
       filmType: o.filmType,
-      designs: o._count.images,
       status: o.status,
     })),
     totalCount,
@@ -191,16 +193,23 @@ export default function OrdersPage() {
         </BlockStack>
       </IndexTable.Cell>
       <IndexTable.Cell>
-        <InlineStack gap="200" blockAlign="center" wrap={false}>
+        {/* What to make: the type, and whether it goes out on the roll or
+            cut per design — the two are produced differently. */}
+        <BlockStack gap="0">
           <Text as="span" variant="bodyMd">
-            {order.size}
+            {order.printType}
           </Text>
-          {order.filmType !== "standard" && <Badge>{order.filmType}</Badge>}
-        </InlineStack>
+          <InlineStack gap="100" blockAlign="center" wrap={false}>
+            <Text as="span" variant="bodySm" tone={order.cut ? undefined : "subdued"} fontWeight={order.cut ? "semibold" : undefined}>
+              {order.format}
+            </Text>
+            {order.filmType !== "standard" && <Badge size="small">{order.filmType}</Badge>}
+          </InlineStack>
+        </BlockStack>
       </IndexTable.Cell>
       <IndexTable.Cell>
-        <Text as="span" variant="bodyMd" alignment="end" numeric>
-          {order.designs}
+        <Text as="span" variant="bodyMd">
+          {order.size}
         </Text>
       </IndexTable.Cell>
       <IndexTable.Cell>
@@ -248,8 +257,8 @@ export default function OrdersPage() {
             { title: "Order" },
             { title: "Customer" },
             { title: "Ordered" },
+            { title: "Print" },
             { title: "Size" },
-            { title: "Designs", alignment: "end" },
             { title: "Status" },
           ]}
           emptyState={

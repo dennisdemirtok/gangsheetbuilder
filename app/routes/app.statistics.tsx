@@ -15,6 +15,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { plural, sheetSize } from "../lib/order-status";
+import { KIND_LABEL, type PrintKind } from "../lib/print-jobs";
 
 /*
  * The business view, next to the dashboard's work view.
@@ -39,23 +40,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   since.setUTCHours(0, 0, 0, 0);
   since.setUTCMonth(since.getUTCMonth() - (MONTHS - 1));
 
-  const [totals, shipped, bySize, byFilm, monthly] = await Promise.all([
-    prisma.gangSheet.aggregate({
-      where: real,
-      _count: { _all: true },
-      _sum: { heightMm: true },
-      _avg: { imagesCount: true },
-    }),
+  // Film in metres of 58 cm roll. A cut job prints its motif lineQuantity
+  // times side by side, so its area counts, not the height of one motif.
+  const [totals, shipped, bySize, byType, monthly] = await Promise.all([
+    prisma.$queryRaw<{ orders: number; mm: number; avg_designs: number | null }[]>`
+      SELECT count(*)::int AS orders,
+             coalesce(sum(CASE WHEN kind = 'cut'
+               THEN width_mm * height_mm * coalesce(line_quantity, 1) / 580.0
+               ELSE height_mm END), 0)::float AS mm,
+             avg(CASE WHEN kind = 'gang_sheet' THEN images_count END)::float AS avg_designs
+      FROM gangsheet_gang_sheet
+      WHERE shop_domain = ${shopDomain} AND shopify_order_id IS NOT NULL
+    `,
     prisma.gangSheet.count({ where: { ...real, status: "shipped" } }),
     prisma.gangSheet.groupBy({
       by: ["widthMm", "heightMm"],
-      where: real,
+      where: { ...real, kind: "gang_sheet" },
       _count: { _all: true },
       orderBy: { _count: { id: "desc" } },
       take: 8,
     }),
     prisma.gangSheet.groupBy({
-      by: ["filmType"],
+      by: ["printType", "kind"],
       where: real,
       _count: { _all: true },
       orderBy: { _count: { id: "desc" } },
@@ -63,7 +69,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     prisma.$queryRaw<{ month: Date; orders: number; mm: number }[]>`
       SELECT date_trunc('month', created_at) AS month,
              count(*)::int AS orders,
-             coalesce(sum(height_mm), 0)::int AS mm
+             coalesce(sum(CASE WHEN kind = 'cut'
+               THEN width_mm * height_mm * coalesce(line_quantity, 1) / 580.0
+               ELSE height_mm END), 0)::float AS mm
       FROM gangsheet_gang_sheet
       WHERE shop_domain = ${shopDomain}
         AND shopify_order_id IS NOT NULL
@@ -88,24 +96,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     };
   });
 
-  const orders = totals._count._all;
-  const metres = (totals._sum.heightMm ?? 0) / 1000;
+  const orders = totals[0]?.orders ?? 0;
+  const metres = (totals[0]?.mm ?? 0) / 1000;
 
   return json({
     kpis: {
       metres,
       orders,
       avgMetres: orders ? metres / orders : 0,
-      avgDesigns: totals._avg.imagesCount ?? 0,
+      avgDesigns: totals[0]?.avg_designs ?? 0,
       shipped,
     },
     months,
     sizes: bySize.map((s) => ({
       size: sheetSize(s),
       count: s._count._all,
-      share: orders ? s._count._all / orders : 0,
+      share: s._count._all / Math.max(1, bySize.reduce((n, x) => n + x._count._all, 0)),
     })),
-    films: byFilm.map((f) => ({ film: f.filmType, count: f._count._all })),
+    types: byType.map((t) => ({
+      label: `${t.printType || "DTF Transfer"} · ${KIND_LABEL[(t.kind as PrintKind) || "gang_sheet"] ?? t.kind}`,
+      count: t._count._all,
+    })),
   });
 };
 
@@ -113,7 +124,7 @@ const m = (value: number) =>
   `${value.toLocaleString("en-GB", { maximumFractionDigits: 1 })} m`;
 
 export default function StatisticsPage() {
-  const { kpis, months, sizes, films } = useLoaderData<typeof loader>();
+  const { kpis, months, sizes, types } = useLoaderData<typeof loader>();
   const maxMetres = Math.max(...months.map((x) => x.metres), 0);
 
   return (
@@ -181,16 +192,15 @@ export default function StatisticsPage() {
                 </BlockStack>
               </Card>
 
-              {/* Only worth a card once something other than standard film sells. */}
-              {films.length > 1 && (
+              {types.length > 0 && (
                 <Card>
                   <BlockStack gap="300">
                     <Text as="h2" variant="headingMd">
-                      Film types
+                      Print types
                     </Text>
                     <BlockStack gap="200">
-                      {films.map((f) => (
-                        <Row key={f.film} label={f.film} value={plural(f.count, "order")} />
+                      {types.map((t) => (
+                        <Row key={t.label} label={t.label} value={plural(t.count, "job")} />
                       ))}
                     </BlockStack>
                   </BlockStack>
