@@ -20,6 +20,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getPresignedDownloadUrl } from "../lib/r2.server";
+import { orderLabel, statusInfo } from "../lib/order-status";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -125,32 +126,103 @@ export default function OrderDetailPage() {
     useLoaderData<typeof loader>();
   const address = (gangSheet.shippingAddress as ShippingAddress | null) || null;
   const fetcher = useFetcher();
+  const busy = fetcher.state !== "idle";
+  const status = statusInfo(gangSheet.status);
 
-  const dpiRows = gangSheet.images.map((img) => [
+  const designRows = gangSheet.images.map((img) => [
     img.originalFilename,
     `${img.widthPx} × ${img.heightPx}`,
-    img.dpiX ? String(img.dpiX) : "-",
+    img.dpiX ? String(img.dpiX) : "—",
     img.displayWidth
-      ? `${img.displayWidth.toFixed(1)} × ${img.displayHeight?.toFixed(1)} mm`
-      : "-",
+      ? `${(img.displayWidth / 10).toFixed(1)} × ${((img.displayHeight ?? 0) / 10).toFixed(1)} cm`
+      : "—",
     img.quantity,
-    img.bgRemoved ? "Ja" : "Nej",
   ]);
 
   return (
     <Page
-      backAction={{ content: "Ordrar", url: "/app/orders" }}
-      title={`Order #${gangSheet.shopifyOrderId || gangSheet.id.slice(0, 8)}`}
-      titleMetadata={<StatusBadge status={gangSheet.status} />}
+      backAction={{ content: "Orders", url: "/app/orders" }}
+      title={orderLabel(gangSheet)}
+      subtitle={gangSheet.customerName || undefined}
+      titleMetadata={<Badge tone={status.tone}>{status.label}</Badge>}
     >
+      <TitleBar title={orderLabel(gangSheet)} />
       <BlockStack gap="500">
         <Layout>
           <Layout.Section>
-            {/* Preview */}
+            {/* The single thing to do next. The page used to offer every
+                status button at once, leaving the shop to work out which
+                one applied. */}
+            <Card>
+              <BlockStack gap="300">
+                <InlineStack align="space-between" blockAlign="center">
+                  <Text as="h2" variant="headingMd">
+                    Next step
+                  </Text>
+                  <Badge tone={status.tone}>{status.label}</Badge>
+                </InlineStack>
+                <Text as="p" variant="bodyMd">
+                  {status.hint}
+                </Text>
+
+                {(gangSheet.status === "exported" ||
+                  gangSheet.status === "downloaded") && (
+                  <InlineStack gap="200">
+                    {exportFiles[0] && (
+                      <Button url={exportFiles[0].downloadUrl} external>
+                        Download print file
+                      </Button>
+                    )}
+                    <fetcher.Form method="post">
+                      <input type="hidden" name="action" value="mark_printed" />
+                      <Button submit variant="primary" loading={busy}>
+                        Mark as printed
+                      </Button>
+                    </fetcher.Form>
+                  </InlineStack>
+                )}
+
+                {gangSheet.status === "printed" && (
+                  <fetcher.Form method="post">
+                    <input type="hidden" name="action" value="mark_shipped" />
+                    <BlockStack gap="200">
+                      <TextField
+                        label="Tracking number"
+                        name="trackingNumber"
+                        autoComplete="off"
+                        helpText="Optional, but the customer will want it."
+                      />
+                      <InlineStack>
+                        <Button submit variant="primary" loading={busy}>
+                          Mark as shipped
+                        </Button>
+                      </InlineStack>
+                    </BlockStack>
+                  </fetcher.Form>
+                )}
+
+                {gangSheet.status === "shipped" && (
+                  <BlockStack gap="100">
+                    {gangSheet.shippedAt && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Shipped{" "}
+                        {new Date(gangSheet.shippedAt).toLocaleString("en-GB")}
+                      </Text>
+                    )}
+                    {gangSheet.trackingNumber && (
+                      <Text as="p" variant="bodySm">
+                        Tracking: {gangSheet.trackingNumber}
+                      </Text>
+                    )}
+                  </BlockStack>
+                )}
+              </BlockStack>
+            </Card>
+
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">
-                  Förhandsvisning
+                  Preview
                 </Text>
                 {previewDownloadUrl ? (
                   <Box>
@@ -161,58 +233,43 @@ export default function OrderDetailPage() {
                         maxWidth: "100%",
                         border: "1px solid #e1e3e5",
                         borderRadius: "8px",
+                        background:
+                          "repeating-conic-gradient(#f1f1f1 0% 25%, #fff 0% 50%) 50%/16px 16px",
                       }}
                     />
                   </Box>
                 ) : (
-                  <Banner tone="warning">
-                    Ingen förhandsvisning tillgänglig ännu.
+                  <Banner tone="info">
+                    The preview appears once the print file has been generated.
                   </Banner>
                 )}
               </BlockStack>
             </Card>
 
-            {/* Image details */}
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">
-                  Designs ({gangSheet.images.length})
+                  Designs on this sheet
                 </Text>
                 <DataTable
-                  columnContentTypes={[
-                    "text",
-                    "text",
-                    "text",
-                    "text",
-                    "numeric",
-                    "text",
-                  ]}
-                  headings={[
-                    "Fil",
-                    "Original (px)",
-                    "DPI",
-                    "Storlek på ark",
-                    "Antal",
-                    "Bg borttagen",
-                  ]}
-                  rows={dpiRows}
+                  columnContentTypes={["text", "text", "numeric", "text", "numeric"]}
+                  headings={["File", "Pixels", "DPI", "Printed size", "Copies"]}
+                  rows={designRows}
                 />
               </BlockStack>
             </Card>
           </Layout.Section>
 
           <Layout.Section variant="oneThird">
-            {/* Who and where to send it — the page had neither, so a sheet
-                could be printed but not posted without leaving the app. */}
             <Card>
               <BlockStack gap="200">
                 <Text as="h2" variant="headingMd">
-                  Mottagare
+                  Ship to
                 </Text>
                 {address ? (
                   <BlockStack gap="050">
                     <Text as="p" variant="bodyMd" fontWeight="semibold">
-                      {address.name || gangSheet.customerName || "-"}
+                      {address.name || gangSheet.customerName || "—"}
                     </Text>
                     {address.company && (
                       <Text as="p" variant="bodySm">{address.company}</Text>
@@ -238,145 +295,55 @@ export default function OrderDetailPage() {
                   </BlockStack>
                 ) : (
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Ingen leveransadress sparad för den här ordern.
+                    No shipping address saved for this order.
                   </Text>
                 )}
-                {gangSheet.orderName && (
-                  <DetailRow label="Order" value={gangSheet.orderName} />
-                )}
               </BlockStack>
             </Card>
 
-            {/* Info */}
-            <Card>
-              <BlockStack gap="200">
-                <Text as="h2" variant="headingMd">
-                  Detaljer
-                </Text>
-                <DetailRow
-                  label="Storlek"
-                  value={`${gangSheet.widthMm / 10} × ${gangSheet.heightMm / 10} cm`}
-                />
-                <DetailRow label="Filmtyp" value={gangSheet.filmType} />
-                <DetailRow
-                  label="Pris"
-                  value={
-                    gangSheet.priceSEK ? `${gangSheet.priceSEK} kr` : "-"
-                  }
-                />
-                <DetailRow
-                  label="Designs"
-                  value={String(gangSheet.imagesCount)}
-                />
-                <DetailRow
-                  label="Skapad"
-                  value={new Date(gangSheet.createdAt).toLocaleString("sv-SE")}
-                />
-              </BlockStack>
-            </Card>
-
-            {/* Download */}
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">
-                  Nedladdning
+                  Print file
                 </Text>
                 {exportFiles.length > 0 ? (
                   <BlockStack gap="200">
                     {exportFiles.map((exp) => (
-                      <Button
-                        key={exp.id}
-                        url={exp.downloadUrl}
-                        fullWidth
-                      >
-                        Ladda ner {exp.format.toUpperCase()}
-                        {exp.fileSizeBytes
-                          ? ` (${(exp.fileSizeBytes / 1024 / 1024).toFixed(1)} MB)`
-                          : ""}
+                      <Button key={exp.id} url={exp.downloadUrl} external fullWidth>
+                        {`Download ${exp.format.toUpperCase()}${
+                          exp.fileSizeBytes
+                            ? ` (${(exp.fileSizeBytes / 1024 / 1024).toFixed(1)} MB)`
+                            : ""
+                        }`}
                       </Button>
                     ))}
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {`300 DPI · ${gangSheet.widthMm / 10} × ${gangSheet.heightMm / 10} cm`}
+                    </Text>
                   </BlockStack>
                 ) : (
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Export pågår eller saknas.
+                    Not generated yet.
                   </Text>
                 )}
               </BlockStack>
             </Card>
 
-            {/* Status actions */}
             <Card>
-              <BlockStack gap="300">
+              <BlockStack gap="200">
                 <Text as="h2" variant="headingMd">
-                  Uppdatera status
+                  Details
                 </Text>
-                <InlineStack gap="200">
-                  <fetcher.Form method="post">
-                    <input
-                      type="hidden"
-                      name="action"
-                      value="mark_downloaded"
-                    />
-                    <Button
-                      submit
-                      disabled={gangSheet.status === "downloaded"}
-                    >
-                      Markera nedladdad
-                    </Button>
-                  </fetcher.Form>
-                  <fetcher.Form method="post">
-                    <input
-                      type="hidden"
-                      name="action"
-                      value="mark_printed"
-                    />
-                    <Button
-                      submit
-                      disabled={gangSheet.status === "printed"}
-                    >
-                      Markera utskriven
-                    </Button>
-                  </fetcher.Form>
-                </InlineStack>
-              </BlockStack>
-            </Card>
-
-            {/* Shipping. The status ladder used to stop at "printed", so a
-                sheet waiting to go out looked the same as one on its way. */}
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingMd">
-                  Frakt
-                </Text>
-                {gangSheet.status === "shipped" ? (
-                  <BlockStack gap="100">
-                    <Text as="p" variant="bodyMd" fontWeight="semibold">
-                      Skickad
-                      {gangSheet.shippedAt
-                        ? ` ${new Date(gangSheet.shippedAt).toLocaleDateString("sv-SE")}`
-                        : ""}
-                    </Text>
-                    {gangSheet.trackingNumber && (
-                      <Text as="p" variant="bodySm">
-                        Spårning: {gangSheet.trackingNumber}
-                      </Text>
-                    )}
-                  </BlockStack>
-                ) : (
-                  <fetcher.Form method="post">
-                    <input type="hidden" name="action" value="mark_shipped" />
-                    <BlockStack gap="200">
-                      <TextField
-                        label="Spårningsnummer"
-                        name="trackingNumber"
-                        autoComplete="off"
-                      />
-                      <Button submit variant="primary">
-                        Markera som skickad
-                      </Button>
-                    </BlockStack>
-                  </fetcher.Form>
-                )}
+                <DetailRow
+                  label="Size"
+                  value={`${gangSheet.widthMm / 10} × ${gangSheet.heightMm / 10} cm`}
+                />
+                <DetailRow label="Film" value={gangSheet.filmType} />
+                <DetailRow label="Designs" value={String(gangSheet.imagesCount)} />
+                <DetailRow
+                  label="Ordered"
+                  value={new Date(gangSheet.createdAt).toLocaleString("en-GB")}
+                />
               </BlockStack>
             </Card>
 
@@ -385,26 +352,30 @@ export default function OrderDetailPage() {
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">
-                  Kommentarer
+                  Notes
                 </Text>
                 <fetcher.Form method="post">
                   <input type="hidden" name="action" value="add_note" />
                   <BlockStack gap="200">
                     <TextField
-                      label="Ny kommentar"
+                      label="New note"
                       labelHidden
                       name="body"
                       multiline={3}
                       autoComplete="off"
-                      placeholder="T.ex. omtryckt pga färgavvikelse"
+                      placeholder="e.g. Reprinted because of a colour issue"
                     />
-                    <Button submit>Spara kommentar</Button>
+                    <InlineStack>
+                      <Button submit loading={busy}>
+                        Add note
+                      </Button>
+                    </InlineStack>
                   </BlockStack>
                 </fetcher.Form>
 
                 {gangSheet.notes.length === 0 ? (
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Inga kommentarer ännu.
+                    No notes yet.
                   </Text>
                 ) : (
                   <BlockStack gap="200">
@@ -415,12 +386,14 @@ export default function OrderDetailPage() {
                         background="bg-surface-secondary"
                         borderRadius="200"
                       >
-                        <Text as="p" variant="bodySm">
-                          {note.body}
-                        </Text>
-                        <Text as="p" variant="bodyXs" tone="subdued">
-                          {new Date(note.createdAt).toLocaleString("sv-SE")}
-                        </Text>
+                        <BlockStack gap="100">
+                          <Text as="p" variant="bodySm">
+                            {note.body}
+                          </Text>
+                          <Text as="p" variant="bodyXs" tone="subdued">
+                            {new Date(note.createdAt).toLocaleString("en-GB")}
+                          </Text>
+                        </BlockStack>
                       </Box>
                     ))}
                   </BlockStack>
@@ -445,17 +418,4 @@ function DetailRow({ label, value }: { label: string; value: string }) {
       </Text>
     </InlineStack>
   );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { tone: any; label: string }> = {
-    draft: { tone: undefined, label: "Utkast" },
-    pending: { tone: "attention", label: "Väntar" },
-    exported: { tone: "success", label: "Exporterad" },
-    downloaded: { tone: "info", label: "Nedladdad" },
-    printed: { tone: undefined, label: "Utskriven" },
-    shipped: { tone: "success", label: "Skickad" },
-  };
-  const { tone, label } = map[status] || { tone: undefined, label: status };
-  return <Badge tone={tone}>{label}</Badge>;
 }

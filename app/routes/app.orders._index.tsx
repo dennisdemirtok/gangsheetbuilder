@@ -18,11 +18,18 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import {
+  OPEN_STATUSES,
+  STATUS_FILTERS,
+  orderLabel,
+  statusInfo,
+} from "../lib/order-status";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const statusFilter = url.searchParams.get("status") || "all";
+  // The shop opens this to see what still needs doing, not the archive.
+  const statusFilter = url.searchParams.get("status") || "open";
   const page = parseInt(url.searchParams.get("page") || "1");
   const pageSize = 20;
 
@@ -30,14 +37,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     shopDomain: session.shop,
     shopifyOrderId: { not: null },
   };
-  if (statusFilter !== "all") {
+  if (statusFilter === "open") {
+    where.status = { in: OPEN_STATUSES };
+  } else if (statusFilter !== "all") {
     where.status = statusFilter;
   }
 
   const [orders, totalCount] = await Promise.all([
     prisma.gangSheet.findMany({
       where,
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: statusFilter === "open" ? "asc" : "desc" },
       take: pageSize,
       skip: (page - 1) * pageSize,
       include: {
@@ -64,7 +73,7 @@ export default function OrdersPage() {
 
   const resourceName = {
     singular: "order",
-    plural: "ordrar",
+    plural: "orders",
   };
 
   // Selection drives the bulk download, which is how the print shop pulls a
@@ -73,14 +82,7 @@ export default function OrdersPage() {
   const { selectedResources, allResourcesSelected, handleSelectionChange } =
     useIndexResourceState(orders.map((o) => ({ id: o.id })));
 
-  const statusOptions = [
-    { label: "Alla", value: "all" },
-    { label: "Väntar", value: "pending" },
-    { label: "Exporterad", value: "exported" },
-    { label: "Nedladdad", value: "downloaded" },
-    { label: "Skickad", value: "shipped" },
-    { label: "Utskriven", value: "printed" },
-  ];
+  const statusOptions = STATUS_FILTERS;
 
   const filters = [
     {
@@ -123,21 +125,19 @@ export default function OrdersPage() {
           removeUnderline
         >
           <Text as="span" variant="bodyMd" fontWeight="bold">
-            {order.orderName || `#${order.shopifyOrderId}`}
+            {orderLabel(order)}
           </Text>
         </PolarisLink>
       </IndexTable.Cell>
+      <IndexTable.Cell>{order.customerName || "—"}</IndexTable.Cell>
       <IndexTable.Cell>
-        {new Date(order.createdAt).toLocaleDateString("sv-SE")}
+        {new Date(order.createdAt).toLocaleDateString("en-GB")}
       </IndexTable.Cell>
       <IndexTable.Cell>
         {order.widthMm / 10} × {order.heightMm / 10} cm
       </IndexTable.Cell>
       <IndexTable.Cell>{order.filmType}</IndexTable.Cell>
       <IndexTable.Cell>{order._count.images}</IndexTable.Cell>
-      <IndexTable.Cell>
-        {order.priceSEK ? `${order.priceSEK} kr` : "-"}
-      </IndexTable.Cell>
       <IndexTable.Cell>
         <StatusBadge status={order.status} />
       </IndexTable.Cell>
@@ -148,14 +148,14 @@ export default function OrdersPage() {
 
   return (
     <Page>
-      <TitleBar title="Gang Sheet-ordrar" />
+      <TitleBar title="Orders" />
       <BlockStack gap="400">
         {selectedResources.length > 0 && (
           <InlineStack gap="200">
             <Button
               url={`/app/orders/download?ids=${selectedResources.join(",")}`}
             >
-              Ladda ner valda ({selectedResources.length})
+              Download selected ({selectedResources.length})
             </Button>
           </InlineStack>
         )}
@@ -169,16 +169,16 @@ export default function OrdersPage() {
             onSelectionChange={handleSelectionChange}
             headings={[
               { title: "Order" },
-              { title: "Datum" },
-              { title: "Storlek" },
+              { title: "Customer" },
+              { title: "Date" },
+              { title: "Size" },
               { title: "Film" },
               { title: "Designs" },
-              { title: "Pris" },
               { title: "Status" },
             ]}
             filters={filters}
             appliedFilters={
-              statusFilter !== "all"
+              statusFilter !== "all" && statusFilter !== "open"
                 ? [
                     {
                       key: "status",
@@ -208,10 +208,10 @@ export default function OrdersPage() {
                 setSearchParams(params);
               }}
             >
-              Föregående
+              Previous
             </Button>
             <Text as="span" variant="bodySm">
-              Sida {page} av {totalPages}
+              Page {page} of {totalPages}
             </Text>
             <Button
               disabled={page >= totalPages}
@@ -221,7 +221,7 @@ export default function OrdersPage() {
                 setSearchParams(params);
               }}
             >
-              Nästa
+              Next
             </Button>
           </InlineStack>
         )}
@@ -231,13 +231,6 @@ export default function OrdersPage() {
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { tone: any; label: string }> = {
-    pending: { tone: "attention", label: "Väntar" },
-    exported: { tone: "success", label: "Exporterad" },
-    downloaded: { tone: "info", label: "Nedladdad" },
-    shipped: { tone: "success", label: "Skickad" },
-    printed: { tone: undefined, label: "Utskriven" },
-  };
-  const { tone, label } = map[status] || { tone: undefined, label: status };
+  const { tone, label } = statusInfo(status);
   return <Badge tone={tone}>{label}</Badge>;
 }

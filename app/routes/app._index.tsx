@@ -18,6 +18,7 @@ import {
 import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { orderLabel, statusInfo } from "../lib/order-status";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -26,35 +27,38 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
+  /*
+   * Every count is limited to sheets that reached a paid order. The status
+   * counters used to include abandoned carts too, so the dashboard showed
+   * "Total orders 0" beside "Waiting 4" and the waiting ones led nowhere.
+   */
+  const real = { shopDomain, shopifyOrderId: { not: null } };
+
   const [
     total,
     pending,
     exported,
     downloaded,
     printed,
+    shipped,
     last30Days,
     totalDesigns,
     revenueResult,
   ] = await Promise.all([
+    prisma.gangSheet.count({ where: real }),
+    prisma.gangSheet.count({ where: { ...real, status: "pending" } }),
+    prisma.gangSheet.count({ where: { ...real, status: "exported" } }),
+    prisma.gangSheet.count({ where: { ...real, status: "downloaded" } }),
+    prisma.gangSheet.count({ where: { ...real, status: "printed" } }),
+    prisma.gangSheet.count({ where: { ...real, status: "shipped" } }),
     prisma.gangSheet.count({
-      where: { shopDomain, shopifyOrderId: { not: null } },
-    }),
-    prisma.gangSheet.count({ where: { shopDomain, status: "pending" } }),
-    prisma.gangSheet.count({ where: { shopDomain, status: "exported" } }),
-    prisma.gangSheet.count({ where: { shopDomain, status: "downloaded" } }),
-    prisma.gangSheet.count({ where: { shopDomain, status: "printed" } }),
-    prisma.gangSheet.count({
-      where: {
-        shopDomain,
-        shopifyOrderId: { not: null },
-        createdAt: { gte: thirtyDaysAgo },
-      },
+      where: { ...real, createdAt: { gte: thirtyDaysAgo } },
     }),
     prisma.gangSheetImage.count({
       where: { gangSheet: { shopDomain } },
     }),
     prisma.gangSheet.aggregate({
-      where: { shopDomain, shopifyOrderId: { not: null } },
+      where: real,
       _sum: { priceSEK: true },
       _avg: { priceSEK: true },
     }),
@@ -87,6 +91,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       exported,
       downloaded,
       printed,
+      shipped,
       last30Days,
       totalDesigns,
       totalRevenue,
@@ -99,63 +104,67 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function DashboardIndex() {
   const { stats, sizeCounts, recentOrders } = useLoaderData<typeof loader>();
+  const toDo =
+    stats.pending + stats.exported + stats.downloaded + stats.printed;
 
   return (
     <Page>
-      <TitleBar title="Gang Sheet Builder — Dashboard" />
+      <TitleBar title="Gang Sheet Builder" />
       <BlockStack gap="500">
-        {/* Key Metrics */}
-        <InlineGrid columns={{ xs: 2, sm: 3, md: 5 }} gap="400">
-          <StatCard title="Totalt ordrar" value={stats.total} />
-          <StatCard title="Senaste 30 dagar" value={stats.last30Days} />
-          <StatCard
-            title="Väntar"
-            value={stats.pending}
-            tone="warning"
-          />
-          <StatCard
-            title="Redo"
-            value={stats.exported}
-            tone="success"
-          />
-          <StatCard title="Utskrivna" value={stats.printed} />
-        </InlineGrid>
+        {/* The work queue, in the order a job moves through it. This is
+            what the print shop opens the app to see. */}
+        <BlockStack gap="200">
+          <Text as="h2" variant="headingMd">
+            {toDo === 0 ? "Nothing to do right now" : `${toDo} orders to handle`}
+          </Text>
+          <InlineGrid columns={{ xs: 2, sm: 4 }} gap="400">
+            <QueueCard
+              title="Ready to print"
+              value={stats.exported}
+              tone="success"
+              status="exported"
+            />
+            <QueueCard
+              title="Downloaded"
+              value={stats.downloaded}
+              status="downloaded"
+            />
+            <QueueCard
+              title="Printed – to ship"
+              value={stats.printed}
+              tone="warning"
+              status="printed"
+            />
+            <QueueCard
+              title="Preparing file"
+              value={stats.pending}
+              status="pending"
+            />
+          </InlineGrid>
+        </BlockStack>
 
-        {/* Revenue + Designs */}
-        <InlineGrid columns={{ xs: 1, sm: 3 }} gap="400">
-          <StatCard
-            title="Total intäkt"
-            value={`${stats.totalRevenue} kr`}
-            large
-          />
-          <StatCard
-            title="Snittorder"
-            value={`${stats.avgPrice} kr`}
-            large
-          />
-          <StatCard
-            title="Uppladdade designs"
-            value={stats.totalDesigns}
-            large
-          />
+        <InlineGrid columns={{ xs: 2, sm: 4 }} gap="400">
+          <StatCard title="Orders, last 30 days" value={stats.last30Days} />
+          <StatCard title="Shipped" value={stats.shipped} />
+          <StatCard title="Orders total" value={stats.total} />
+          <StatCard title="Designs uploaded" value={stats.totalDesigns} />
         </InlineGrid>
 
         <Layout>
-          {/* Recent Orders */}
           <Layout.Section>
             <Card>
               <BlockStack gap="300">
                 <InlineStack align="space-between">
                   <Text as="h2" variant="headingMd">
-                    Senaste ordrar
+                    Latest orders
                   </Text>
                   <Link to="/app/orders" style={{ textDecoration: "none" }}>
-                    <Button variant="plain">Visa alla</Button>
+                    <Button variant="plain">View all</Button>
                   </Link>
                 </InlineStack>
                 {recentOrders.length === 0 ? (
                   <Text as="p" variant="bodyMd" tone="subdued">
-                    Inga ordrar ännu.
+                    No orders yet.
                   </Text>
                 ) : (
                   <BlockStack gap="200">
@@ -170,26 +179,15 @@ export default function DashboardIndex() {
                           background="bg-surface-secondary"
                           borderRadius="200"
                         >
-                          <InlineStack align="space-between">
+                          <InlineStack align="space-between" blockAlign="center">
                             <BlockStack gap="100">
-                              <Text
-                                as="span"
-                                variant="bodyMd"
-                                fontWeight="bold"
-                              >
-                                {order.shopifyOrderId
-                                  ? `Order #${order.shopifyOrderId}`
-                                  : `Gang Sheet ${order.id.slice(0, 8)}`}
+                              <Text as="span" variant="bodyMd" fontWeight="bold">
+                                {orderLabel(order)}
+                                {order.customerName ? ` · ${order.customerName}` : ""}
                               </Text>
-                              <Text
-                                as="span"
-                                variant="bodySm"
-                                tone="subdued"
-                              >
-                                {order.widthMm / 10} x {order.heightMm / 10}{" "}
-                                cm | {order._count.images} designs |{" "}
-                                {order.filmType} |{" "}
-                                {order.priceSEK ? `${order.priceSEK} kr` : "–"}
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                {order.widthMm / 10} × {order.heightMm / 10} cm ·{" "}
+                                {order._count.images} designs · {order.filmType}
                               </Text>
                             </BlockStack>
                             <StatusBadge status={order.status} />
@@ -203,16 +201,15 @@ export default function DashboardIndex() {
             </Card>
           </Layout.Section>
 
-          {/* Popular Sizes */}
           <Layout.Section variant="oneThird">
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">
-                  Populära storlekar
+                  Popular sizes
                 </Text>
                 {sizeCounts.length === 0 ? (
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Ingen data ännu.
+                    No data yet.
                   </Text>
                 ) : (
                   <BlockStack gap="200">
@@ -222,9 +219,9 @@ export default function DashboardIndex() {
                         align="space-between"
                       >
                         <Text as="span" variant="bodyMd">
-                          {sc.widthMm / 10} x {sc.heightMm / 10} cm
+                          {sc.widthMm / 10} × {sc.heightMm / 10} cm
                         </Text>
-                        <Badge>{sc._count} st</Badge>
+                        <Badge>{`${sc._count}`}</Badge>
                       </InlineStack>
                     ))}
                   </BlockStack>
@@ -235,6 +232,28 @@ export default function DashboardIndex() {
         </Layout>
       </BlockStack>
     </Page>
+  );
+}
+
+/** A queue count that jumps straight to the matching filtered list. */
+function QueueCard({
+  title,
+  value,
+  tone,
+  status,
+}: {
+  title: string;
+  value: number;
+  tone?: "success" | "warning";
+  status: string;
+}) {
+  return (
+    <Link
+      to={`/app/orders?status=${status}`}
+      style={{ textDecoration: "none", color: "inherit" }}
+    >
+      <StatCard title={title} value={value} tone={value > 0 ? tone : undefined} />
+    </Link>
   );
 }
 
@@ -269,13 +288,6 @@ function StatCard({
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { tone: any; label: string }> = {
-    draft: { tone: undefined, label: "Utkast" },
-    pending: { tone: "attention", label: "Väntar" },
-    exported: { tone: "success", label: "Exporterad" },
-    downloaded: { tone: "info", label: "Nedladdad" },
-    printed: { tone: undefined, label: "Utskriven" },
-  };
-  const { tone, label } = map[status] || { tone: undefined, label: status };
+  const { tone, label } = statusInfo(status);
   return <Badge tone={tone}>{label}</Badge>;
 }
