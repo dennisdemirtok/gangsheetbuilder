@@ -1,7 +1,10 @@
 import { createRoot, type Root } from "react-dom/client";
 import { App } from "./App";
+import { ReadySheetModal } from "./components/ReadySheet/ReadySheetModal";
+import { setAppProxyUrl } from "./services/api";
 
 let activeRoot: Root | null = null;
+let uploadRoot: Root | null = null;
 
 function mount() {
   // Clean up previous mount if it exists
@@ -102,3 +105,50 @@ function cleanup() {
   document.body.classList.remove("gangsheet-open");
   document.body.style.overflow = "";
 };
+
+
+/* ─────────────── Ready-made sheet flow ───────────────
+ * Mounted on its own so a customer who already has a finished sheet never
+ * loads the builder. It lives in this bundle rather than in the theme
+ * because it shares the same upload, pricing and cart code — keeping a
+ * second copy in Liquid is what let a hardcoded price survive there.
+ */
+
+function readProxyUrl(): void {
+  const root = document.getElementById("gangsheet-editor-root");
+  if (root?.dataset.appProxyUrl) setAppProxyUrl(root.dataset.appProxyUrl);
+}
+
+function closeUpload(): void {
+  if (uploadRoot) {
+    try {
+      uploadRoot.unmount();
+    } catch {
+      // ignore
+    }
+    uploadRoot = null;
+  }
+  document.getElementById("gangsheet-upload-portal")?.remove();
+  document.body.style.overflow = "";
+}
+
+function openUpload(): void {
+  closeUpload();
+  readProxyUrl();
+
+  const portal = document.createElement("div");
+  portal.id = "gangsheet-upload-portal";
+  document.body.appendChild(portal);
+  document.body.style.overflow = "hidden";
+
+  uploadRoot = createRoot(portal);
+  uploadRoot.render(<ReadySheetModal onClose={closeUpload} />);
+}
+
+(window as any).__gangsheetOpenUpload = function () {
+  // Leaving the builder open behind a fullscreen modal traps the customer.
+  if (activeRoot) (window as any).__gangsheetCloseEditor?.();
+  openUpload();
+};
+
+(window as any).__gangsheetCloseUpload = closeUpload;

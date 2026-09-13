@@ -232,3 +232,87 @@ export async function prepareForCart(
     body: JSON.stringify({ gangSheetId, quotedPrice }),
   });
 }
+
+
+/* ─────────────── Ready-made sheets ───────────────
+ * A customer who already has a finished 58 cm sheet uploads it whole
+ * instead of laying one out. Same backend, same R2, same gang sheet
+ * records — so it belongs next to the builder's calls rather than in a
+ * second implementation inside the theme.
+ */
+
+export interface ReadySheetPresign {
+  uploadUrl: string;
+  sheetId: string;
+  r2Key: string;
+}
+
+export async function presignReadySheet(file: File): Promise<ReadySheetPresign> {
+  return fetchApi("/api/presign-sheet", {
+    method: "POST",
+    body: JSON.stringify({
+      filename: file.name,
+      contentType: file.type || "image/png",
+      fileSize: file.size,
+    }),
+  });
+}
+
+/** PUT straight to storage so a 500 MB file never passes through the app. */
+export function uploadReadySheetToStorage(
+  uploadUrl: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", uploadUrl, true);
+    xhr.setRequestHeader("Content-Type", file.type || "image/png");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    };
+    xhr.onload = () =>
+      xhr.status >= 200 && xhr.status < 300
+        ? resolve()
+        : reject(new Error(`Uppladdning till lagring misslyckades (${xhr.status})`));
+    xhr.onerror = () => reject(new Error("Nätverksfel vid uppladdning"));
+    xhr.send(file);
+  });
+}
+
+export interface ReadySheetAnalysis {
+  sheetId: string;
+  gangSheetId: string | null;
+  r2Key: string;
+  filename: string;
+  widthPx: number;
+  heightPx: number;
+  widthMm: number;
+  heightMm: number;
+  widthCm: number;
+  heightCm: number;
+  dpi: number;
+  hasAlpha: boolean;
+  fileSizeBytes: number;
+  sizeKey: string;
+  warnings: string[];
+  approved: boolean;
+  error?: string;
+}
+
+export async function analyzeReadySheet(
+  presign: ReadySheetPresign,
+  file: File,
+): Promise<ReadySheetAnalysis> {
+  return fetchApi("/api/analyze-sheet", {
+    method: "POST",
+    body: JSON.stringify({
+      r2Key: presign.r2Key,
+      sheetId: presign.sheetId,
+      filename: file.name,
+      fileSize: file.size,
+    }),
+  });
+}

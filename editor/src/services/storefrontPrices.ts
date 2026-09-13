@@ -10,8 +10,8 @@
  */
 
 export interface SheetVariant {
-  /** Sheet size key, e.g. "58x100". */
-  sizeKey: string;
+  /** Sheet size key, e.g. "58x100". Null for the per-decimetre variant. */
+  sizeKey: string | null;
   /** Numeric Shopify variant id for cart/add.js. */
   variantId: string;
   /** Price in the shop's currency, already contextual to the buyer. */
@@ -36,18 +36,25 @@ export function getSheetVariants(): Record<string, SheetVariant> {
     if (!el?.textContent) return out;
 
     const raw = JSON.parse(el.textContent) as Record<string, unknown>;
-    for (const entry of Object.values(raw)) {
+    for (const [handle, entry] of Object.entries(raw)) {
       if (!entry || typeof entry !== "object") continue;
       const v = entry as Record<string, unknown>;
-      const sizeKey = typeof v.size_key === "string" ? v.size_key : null;
       const cents = typeof v.price_cents === "number" ? v.price_cents : null;
-      if (!sizeKey || cents === null || v.id === undefined) continue;
+      if (cents === null || v.id === undefined) continue;
 
-      out[sizeKey] = {
+      const sizeKey = typeof v.size_key === "string" ? v.size_key : null;
+      /*
+       * Keyed by sheet size when there is one, otherwise by the variant
+       * handle. Dropping size-less variants used to discard the
+       * per-decimetre one, and the ready-sheet flow then fell back to the
+       * whole-metre variant while still passing a quantity in decimetres —
+       * ten times the price it had just shown the customer.
+       */
+      out[sizeKey ?? handle] = {
         sizeKey,
         variantId: String(v.id),
         priceSek: cents / 100,
-        title: typeof v.title === "string" ? v.title : sizeKey,
+        title: typeof v.title === "string" ? v.title : handle,
         available: v.available !== false,
       };
     }
@@ -59,14 +66,30 @@ export function getSheetVariants(): Record<string, SheetVariant> {
   return out;
 }
 
+/**
+ * The variant a ready sheet is billed with: one unit per decimetre, so a
+ * file is charged for the length it actually uses. Both the displayed
+ * price and the cart line must come from this one object — deriving the
+ * price from one variant and billing another is how they drift apart.
+ */
+export function getPerDecimeterVariant(): SheetVariant | null {
+  return (
+    Object.values(getSheetVariants()).find(
+      (v) => v.sizeKey === null && /decimeter|dm/i.test(v.title),
+    ) ?? null
+  );
+}
+
 /** Price for one sheet of this size, or null when the theme did not supply one. */
 export function getSheetPrice(sizeKey: string): number | null {
-  return getSheetVariants()[sizeKey]?.priceSek ?? null;
+  const v = getSheetVariants()[sizeKey];
+  return v && v.sizeKey ? v.priceSek : null;
 }
 
 /** Variant to put in the cart for this sheet size. */
 export function getSheetVariantId(sizeKey: string): string | null {
-  return getSheetVariants()[sizeKey]?.variantId ?? null;
+  const v = getSheetVariants()[sizeKey];
+  return v && v.sizeKey ? v.variantId : null;
 }
 
 /** True when the theme gave us a usable price table. */
