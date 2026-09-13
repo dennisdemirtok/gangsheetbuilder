@@ -12,6 +12,34 @@ dev_store_url = "viwrsi-jk.myshopify.com"
 [webhooks]
 api_version = "2026-07"
 
+  # Without these the app is never told an order was paid, so no gang sheet
+  # is ever linked to an order and no export job is queued — the admin order
+  # list stays empty forever. They were added to shopify.app.toml in July,
+  # but the storefront runs THIS config, so the fix never reached it.
+  [[webhooks.subscriptions]]
+  topics = [ "orders/paid" ]
+  uri = "/webhooks/orders-paid"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/data_request" ]
+  uri = "/webhooks/customers-data-request"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "customers/redact" ]
+  uri = "/webhooks/customers-redact"
+
+  [[webhooks.subscriptions]]
+  compliance_topics = [ "shop/redact" ]
+  uri = "/webhooks/shop-redact"
+
 [access_scopes]
 scopes = "read_all_orders,read_orders,read_products,write_orders,write_products"
 

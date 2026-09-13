@@ -1,8 +1,8 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { downloadFile } from "../lib/r2.server";
-import { extractMetadata } from "../lib/image-processing.server";
+import { downloadFile, uploadFile } from "../lib/r2.server";
+import { extractMetadata, generateThumbnail } from "../lib/image-processing.server";
 import { SHEET_WIDTH_MM } from "../lib/constants";
 import prisma from "../db.server";
 
@@ -139,6 +139,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
      */
     let gangSheetId: string | null = null;
     if (approved) {
+      /*
+       * A ready sheet had no thumbnail, so the admin Designs grid showed
+       * "Ingen bild" for exactly the files the print shop needs to look at.
+       * Generated here from the buffer we already downloaded.
+       */
+      let thumbnailKey: string | null = null;
+      try {
+        const thumb = await generateThumbnail(buffer);
+        const key = r2Key.replace(/\/original\.[^.]+$/, "/thumbnail.webp");
+        await uploadFile(key, thumb, "image/webp");
+        thumbnailKey = key;
+      } catch (thumbError) {
+        // A missing thumbnail costs a preview, not the order.
+        console.error("Could not build ready-sheet thumbnail:", thumbError);
+        thumbnailKey = null;
+      }
+
       try {
         const created = await prisma.gangSheet.create({
           data: {
@@ -152,6 +169,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             images: {
               create: {
                 originalUrl: r2Key,
+                thumbnailUrl: thumbnailKey,
                 originalFilename: filename || "fardigt-ark.png",
                 mimeType: `image/${metadata.format || "png"}`,
                 fileSizeBytes: Math.round(fileSize || buffer.length),

@@ -1,13 +1,32 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { getExportQueue, type ExportJobData } from "../lib/queue.server";
+import { Prisma } from "@prisma/client";
 import prisma from "../db.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, payload } = await authenticate.webhook(request);
 
+  interface WebhookAddress {
+    name?: string | null;
+    company?: string | null;
+    address1?: string | null;
+    address2?: string | null;
+    zip?: string | null;
+    city?: string | null;
+    country?: string | null;
+    country_code?: string | null;
+    phone?: string | null;
+  }
+
   const order = payload as {
     id: number;
+    name?: string;
+    email?: string | null;
+    phone?: string | null;
+    customer?: { first_name?: string | null; last_name?: string | null } | null;
+    shipping_address?: WebhookAddress | null;
+    billing_address?: WebhookAddress | null;
     line_items: Array<{
       id: number;
       properties: Array<{ name: string; value: string }>;
@@ -47,12 +66,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         continue;
       }
 
-      // Update gang sheet with order info
+      /*
+       * Copy what the print shop needs onto the sheet.
+       *
+       * The app only stored the numeric order id, so its order list showed
+       * "#13513260728694" and the detail page had no recipient at all — the
+       * shop could print a sheet but had no way to post it without going
+       * back to Shopify to look the customer up.
+       */
+      const ship = order.shipping_address || order.billing_address || null;
+      const customerName =
+        ship?.name ||
+        [order.customer?.first_name, order.customer?.last_name]
+          .filter(Boolean)
+          .join(" ") ||
+        null;
+
       await prisma.gangSheet.update({
         where: { id: gangSheetId },
         data: {
           shopifyOrderId: String(order.id),
           shopifyLineItemId: String(lineItem.id),
+          orderName: order.name ? String(order.name) : null,
+          customerName,
+          shippingAddress: ship
+            ? {
+                name: ship.name ?? null,
+                company: ship.company ?? null,
+                address1: ship.address1 ?? null,
+                address2: ship.address2 ?? null,
+                zip: ship.zip ?? null,
+                city: ship.city ?? null,
+                country: ship.country ?? null,
+                countryCode: ship.country_code ?? null,
+                phone: ship.phone ?? order.phone ?? null,
+                email: order.email ?? null,
+              }
+            : Prisma.DbNull,
           status: "pending",
         },
       });

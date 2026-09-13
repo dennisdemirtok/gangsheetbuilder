@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
+import { Link, useLoaderData, useSearchParams } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -9,9 +9,9 @@ import {
   Text,
   Filters,
   ChoiceList,
-  useIndexResourceState,
   Button,
   InlineStack,
+  useIndexResourceState,
   BlockStack,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -59,7 +59,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export default function OrdersPage() {
   const { orders, totalCount, page, pageSize, statusFilter } =
     useLoaderData<typeof loader>();
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const resourceName = {
@@ -67,6 +66,9 @@ export default function OrdersPage() {
     plural: "ordrar",
   };
 
+  // Selection drives the bulk download, which is how the print shop pulls a
+  // batch of sheets in one go — worth keeping. The order number is a link
+  // rather than a row click because a selectable row uses the click itself.
   const { selectedResources, allResourcesSelected, handleSelectionChange } =
     useIndexResourceState(orders.map((o) => ({ id: o.id })));
 
@@ -75,6 +77,7 @@ export default function OrdersPage() {
     { label: "Väntar", value: "pending" },
     { label: "Exporterad", value: "exported" },
     { label: "Nedladdad", value: "downloaded" },
+    { label: "Skickad", value: "shipped" },
     { label: "Utskriven", value: "printed" },
   ];
 
@@ -106,12 +109,15 @@ export default function OrdersPage() {
       key={order.id}
       position={index}
       selected={selectedResources.includes(order.id)}
-      onClick={() => navigate(`/app/orders/${order.id}`)}
     >
       <IndexTable.Cell>
-        <Text as="span" variant="bodyMd" fontWeight="bold">
-          #{order.shopifyOrderId}
-        </Text>
+        {/* A link, not a row click: selectable rows consume the click for
+            their checkbox, so nothing opened when the row was pressed. */}
+        <Link to={`/app/orders/${order.id}`}>
+          <Text as="span" variant="bodyMd" fontWeight="bold">
+            {order.orderName || `#${order.shopifyOrderId}`}
+          </Text>
+        </Link>
       </IndexTable.Cell>
       <IndexTable.Cell>
         {new Date(order.createdAt).toLocaleDateString("sv-SE")}
@@ -221,6 +227,7 @@ function StatusBadge({ status }: { status: string }) {
     pending: { tone: "attention", label: "Väntar" },
     exported: { tone: "success", label: "Exporterad" },
     downloaded: { tone: "info", label: "Nedladdad" },
+    shipped: { tone: "success", label: "Skickad" },
     printed: { tone: undefined, label: "Utskriven" },
   };
   const { tone, label } = map[status] || { tone: undefined, label: status };

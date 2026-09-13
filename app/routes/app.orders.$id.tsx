@@ -12,6 +12,7 @@ import {
   InlineStack,
   Thumbnail,
   Box,
+  TextField,
   DataTable,
   Banner,
 } from "@shopify/polaris";
@@ -28,6 +29,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     include: {
       images: true,
       exports: { orderBy: { createdAt: "desc" } },
+      notes: { orderBy: { createdAt: "desc" } },
     },
   });
 
@@ -78,14 +80,50 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       where: { id: params.id },
       data: { status: "printed" },
     });
+  } else if (action === "mark_shipped") {
+    // The status ladder stopped at "printed", so nobody could tell a sheet
+    // waiting to go out from one already on its way to the customer.
+    const tracking = String(formData.get("trackingNumber") || "").trim();
+    await prisma.gangSheet.update({
+      where: { id: params.id },
+      data: {
+        status: "shipped",
+        shippedAt: new Date(),
+        trackingNumber: tracking || null,
+      },
+    });
+  } else if (action === "add_note") {
+    const body = String(formData.get("body") || "").trim();
+    if (body) {
+      await prisma.gangSheetNote.create({
+        data: {
+          gangSheetId: params.id!,
+          author: session.shop,
+          body: body.slice(0, 2000),
+        },
+      });
+    }
   }
 
   return json({ success: true });
 };
 
+interface ShippingAddress {
+  name?: string | null;
+  company?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  zip?: string | null;
+  city?: string | null;
+  country?: string | null;
+  phone?: string | null;
+  email?: string | null;
+}
+
 export default function OrderDetailPage() {
   const { gangSheet, exports: exportFiles, previewDownloadUrl } =
     useLoaderData<typeof loader>();
+  const address = (gangSheet.shippingAddress as ShippingAddress | null) || null;
   const fetcher = useFetcher();
 
   const dpiRows = gangSheet.images.map((img) => [
@@ -164,6 +202,51 @@ export default function OrderDetailPage() {
           </Layout.Section>
 
           <Layout.Section variant="oneThird">
+            {/* Who and where to send it — the page had neither, so a sheet
+                could be printed but not posted without leaving the app. */}
+            <Card>
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingMd">
+                  Mottagare
+                </Text>
+                {address ? (
+                  <BlockStack gap="050">
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">
+                      {address.name || gangSheet.customerName || "-"}
+                    </Text>
+                    {address.company && (
+                      <Text as="p" variant="bodySm">{address.company}</Text>
+                    )}
+                    <Text as="p" variant="bodySm">{address.address1}</Text>
+                    {address.address2 && (
+                      <Text as="p" variant="bodySm">{address.address2}</Text>
+                    )}
+                    <Text as="p" variant="bodySm">
+                      {[address.zip, address.city].filter(Boolean).join(" ")}
+                    </Text>
+                    <Text as="p" variant="bodySm">{address.country}</Text>
+                    {address.phone && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {address.phone}
+                      </Text>
+                    )}
+                    {address.email && (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {address.email}
+                      </Text>
+                    )}
+                  </BlockStack>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Ingen leveransadress — ordern är inte betald ännu.
+                  </Text>
+                )}
+                {gangSheet.orderName && (
+                  <DetailRow label="Order" value={gangSheet.orderName} />
+                )}
+              </BlockStack>
+            </Card>
+
             {/* Info */}
             <Card>
               <BlockStack gap="200">
@@ -284,6 +367,7 @@ function StatusBadge({ status }: { status: string }) {
     exported: { tone: "success", label: "Exporterad" },
     downloaded: { tone: "info", label: "Nedladdad" },
     printed: { tone: undefined, label: "Utskriven" },
+    shipped: { tone: "success", label: "Skickad" },
   };
   const { tone, label } = map[status] || { tone: undefined, label: status };
   return <Badge tone={tone}>{label}</Badge>;

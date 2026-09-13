@@ -47,11 +47,21 @@ model GangSheet {
   totalAreaUsed     Float?   @map("total_area_used")
   imagesCount       Int      @default(0) @map("images_count")
   priceSEK          Int?     @map("price_sek")
+  /// Human order number, e.g. "#1002" — the print shop cannot work from a
+  /// numeric Shopify id, and the list used to show exactly that.
+  orderName         String?  @map("order_name")
+  /// Recipient details copied from the order, so the sheet can be posted
+  /// without leaving the app to look them up.
+  customerName      String?  @map("customer_name")
+  shippingAddress   Json?    @map("shipping_address")
+  trackingNumber    String?  @map("tracking_number")
+  shippedAt         DateTime? @map("shipped_at")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   images  GangSheetImage[]
   exports GangSheetExport[]
+  notes   GangSheetNote[]
 
   @@index([shopifyOrderId])
   @@index([shopDomain])
@@ -128,4 +138,19 @@ model AppConfig {
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("gangsheet_app_config")
+}
+
+
+/// A note left on an order, so the print shop and the store can talk to each
+/// other about a job without leaving the app.
+model GangSheetNote {
+  id          String    @id @default(cuid())
+  gangSheetId String    @map("gang_sheet_id")
+  gangSheet   GangSheet @relation(fields: [gangSheetId], references: [id], onDelete: Cascade)
+  author      String
+  body        String
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([gangSheetId])
+  @@map("gangsheet_gang_sheet_note")
 }
