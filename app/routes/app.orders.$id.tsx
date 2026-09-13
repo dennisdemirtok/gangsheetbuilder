@@ -21,6 +21,21 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getPresignedDownloadUrl } from "../lib/r2.server";
 import { orderLabel, statusInfo } from "../lib/order-status";
+import {
+  getPickupAddress,
+  isBwsTestEnvironment,
+  missingPickupConfig,
+  PACKAGE_CM,
+  PICKUP_TIME,
+  isSimulationEnabled,
+  SIMULATED_PREFIX,
+} from "../lib/bws-shipping.server";
+import {
+  bookOrderShipment,
+  sendTrackingToCustomer,
+  summarizeOrderShipment,
+} from "../lib/order-shipment.server";
+import { BwsShippingCard } from "../components/BwsShippingCard";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -51,10 +66,33 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     ? await getPresignedDownloadUrl(gangSheet.previewUrl)
     : null;
 
+  const labelUrl = gangSheet.shippingLabelKey
+    ? await getPresignedDownloadUrl(gangSheet.shippingLabelKey)
+    : null;
+
+  // BWS booking is per Shopify order, so only sheets that belong to one get it.
+  const shipping = gangSheet.shopifyOrderId
+    ? {
+        summary: await summarizeOrderShipment(
+          session.shop,
+          gangSheet.shopifyOrderId,
+        ),
+        pickup: getPickupAddress(),
+        pickupFrom: PICKUP_TIME,
+        packageCm: { ...PACKAGE_CM },
+        missingConfig: missingPickupConfig(),
+        isTest: isBwsTestEnvironment(),
+        simulation: isSimulationEnabled(),
+        simulated: Boolean(gangSheet.bwsBookingId?.startsWith(SIMULATED_PREFIX)),
+      }
+    : null;
+
   return json({
     gangSheet,
     exports: exportsWithUrls,
     previewDownloadUrl,
+    labelUrl,
+    shipping,
   });
 };
 
@@ -93,6 +131,25 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         trackingNumber: tracking || null,
       },
     });
+  } else if (action === "book_bws") {
+    if (!gangSheet.shopifyOrderId) {
+      return json({ errors: ["This sheet is not part of an order."] }, { status: 400 });
+    }
+    const weight = parseFloat(String(formData.get("weightKg") || ""));
+    const pickupDate = String(formData.get("pickupDate") || "");
+    const result = await bookOrderShipment({
+      shopDomain: session.shop,
+      shopifyOrderId: gangSheet.shopifyOrderId,
+      pickupDate: /^\d{4}-\d{2}-\d{2}$/.test(pickupDate) ? pickupDate : undefined,
+      weightKg: weight > 0 && weight <= 30 ? weight : undefined,
+    });
+    return json(result.ok ? { success: true } : { errors: result.errors });
+  } else if (action === "send_tracking") {
+    if (!gangSheet.shopifyOrderId) {
+      return json({ errors: ["This sheet is not part of an order."] }, { status: 400 });
+    }
+    const result = await sendTrackingToCustomer(session.shop, gangSheet.shopifyOrderId);
+    return json(result.ok ? { success: true } : { errors: [result.error] });
   } else if (action === "add_note") {
     const body = String(formData.get("body") || "").trim();
     if (body) {
@@ -122,8 +179,13 @@ interface ShippingAddress {
 }
 
 export default function OrderDetailPage() {
-  const { gangSheet, exports: exportFiles, previewDownloadUrl } =
-    useLoaderData<typeof loader>();
+  const {
+    gangSheet,
+    exports: exportFiles,
+    previewDownloadUrl,
+    labelUrl,
+    shipping,
+  } = useLoaderData<typeof loader>();
   const address = (gangSheet.shippingAddress as ShippingAddress | null) || null;
   const fetcher = useFetcher();
   const busy = fetcher.state !== "idle";
@@ -300,6 +362,14 @@ export default function OrderDetailPage() {
                 )}
               </BlockStack>
             </Card>
+
+            {shipping && (
+              <BwsShippingCard
+                sheet={gangSheet}
+                shipping={shipping}
+                labelUrl={labelUrl}
+              />
+            )}
 
             <Card>
               <BlockStack gap="300">

@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import { getExportQueue, type ExportJobData } from "../lib/queue.server";
 import { Prisma } from "@prisma/client";
 import prisma from "../db.server";
+import { bookOrderShipment } from "../lib/order-shipment.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, payload } = await authenticate.webhook(request);
@@ -29,9 +30,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     billing_address?: WebhookAddress | null;
     line_items: Array<{
       id: number;
+      title?: string;
+      variant_title?: string | null;
+      quantity?: number;
+      requires_shipping?: boolean;
       properties: Array<{ name: string; value: string }>;
     }>;
   };
+
+  /*
+   * The BWS pickup in Poland is for DTF transfers only. Transfer presses and
+   * blanks on the same order ship some other way, so remember them: the
+   * admin warns about them and auto-booking leaves mixed orders alone.
+   */
+  const otherLineItems = (order.line_items || [])
+    .filter(
+      (li) =>
+        li.requires_shipping !== false &&
+        !li.properties?.some((p) => p.name === "_gang_sheet_id"),
+    )
+    .map((li) => ({
+      title: [li.title, li.variant_title].filter(Boolean).join(" – "),
+      quantity: li.quantity ?? 1,
+    }));
 
   // Find line items with gang sheet metadata. Each line item is handled
   // independently so one bad ID can't 500 the whole webhook (Shopify would
@@ -88,6 +109,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           shopifyOrderId: String(order.id),
           shopifyLineItemId: String(lineItem.id),
           orderName: order.name ? String(order.name) : null,
+          otherLineItems: otherLineItems.length > 0 ? otherLineItems : Prisma.DbNull,
           customerName,
           shippingAddress: ship
             ? {
@@ -121,6 +143,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       console.error(
         `[orders-paid] Failed to process line item ${lineItem?.id} of order ${order.id}:`,
         error,
+      );
+    }
+  }
+
+  /*
+   * Optional: book the BWS pickup and label the moment the order is paid.
+   * Off unless BWS_AUTO_BOOK=true — every booking sends a real courier to
+   * the print shop. Not awaited, so Shopify gets its 200 within its timeout;
+   * bookOrderShipment claims the order first, so a redelivery cannot book
+   * twice. Orders that also hold presses or blanks are booked by hand.
+   */
+  if (process.env.BWS_AUTO_BOOK === "true" && otherLineItems.length === 0) {
+    const linked = await prisma.gangSheet.count({
+      where: { shopDomain: shop, shopifyOrderId: String(order.id) },
+    });
+    if (linked > 0) {
+      void bookOrderShipment({
+        shopDomain: shop,
+        shopifyOrderId: String(order.id),
+      }).catch((error) =>
+        console.error(`[orders-paid] BWS auto-booking failed for ${order.id}:`, error),
       );
     }
   }

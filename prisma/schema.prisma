@@ -56,6 +56,25 @@ model GangSheet {
   shippingAddress   Json?    @map("shipping_address")
   trackingNumber    String?  @map("tracking_number")
   shippedAt         DateTime? @map("shipped_at")
+  /// BWS booking for the whole Shopify order — every sheet of the order
+  /// carries the same values. null | "booking" | "booked" | "failed".
+  /// "booking" doubles as the claim that stops a webhook redelivery from
+  /// booking a second pickup.
+  shippingStatus    String?  @map("shipping_status")
+  bwsBookingId      String?  @map("bws_booking_id")
+  trackingUrl       String?  @map("tracking_url")
+  /// R2 key of the label BWS returned (PDF, or ZPL for thermal printers).
+  shippingLabelKey  String?  @map("shipping_label_key")
+  pickupDate        String?  @map("pickup_date")
+  shippingError     String?  @map("shipping_error")
+  shippingBookedAt  DateTime? @map("shipping_booked_at")
+  /// Shopify fulfillment carrying the tracking to the customer, or why it failed.
+  shopifyFulfillmentId String? @map("shopify_fulfillment_id")
+  fulfillmentError  String?  @map("fulfillment_error")
+  /// Physical items on the same order that are NOT DTF transfers (presses,
+  /// blanks): [{ "title": "...", "quantity": 1 }]. They do not ship from the
+  /// print shop, so the BWS booking must not cover them.
+  otherLineItems    Json?    @map("other_line_items")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
