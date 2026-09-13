@@ -181,16 +181,12 @@ export default function Dashboard() {
                     >
                       <InlineStack align="space-between" blockAlign="center" wrap={false} gap="400">
                         <BlockStack gap="050">
-                          <InlineStack gap="200" blockAlign="center">
-                            <Text as="span" variant="bodyMd" fontWeight="semibold">
+                          <Text as="span" variant="bodyMd">
+                            <Text as="span" fontWeight="semibold">
                               {order.label}
                             </Text>
-                            {order.customerName && (
-                              <Text as="span" variant="bodyMd" tone="subdued">
-                                {order.customerName}
-                              </Text>
-                            )}
-                          </InlineStack>
+                            {order.customerName ? ` · ${order.customerName}` : ""}
+                          </Text>
                           <Text as="span" variant="bodySm" tone="subdued">
                             {[
                               order.size,

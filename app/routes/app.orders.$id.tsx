@@ -24,6 +24,7 @@ import {
   getPresignedDownloadUrl,
 } from "../lib/r2.server";
 import {
+  formatDateTime,
   orderLabel,
   printFileName,
   sheetSize,
@@ -87,13 +88,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 
   return json({
     gangSheet,
-    orderedAt: new Date(gangSheet.createdAt).toLocaleString("en-GB", {
-      day: "numeric",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    }),
+    orderedAt: formatDateTime(gangSheet.createdAt),
     previewUrl,
     hasLabel: Boolean(gangSheet.shippingLabelKey),
     shipping,
@@ -375,7 +370,7 @@ export default function OrderDetailPage() {
                   <BlockStack gap="100">
                     {gangSheet.shippedAt && (
                       <Text as="p" variant="bodySm" tone="subdued">
-                        Shipped {new Date(gangSheet.shippedAt).toLocaleString("en-GB")}
+                        Shipped {formatDateTime(gangSheet.shippedAt)}
                       </Text>
                     )}
                     {gangSheet.trackingNumber && (
@@ -527,7 +522,7 @@ export default function OrderDetailPage() {
                             {n.body}
                           </Text>
                           <Text as="p" variant="bodyXs" tone="subdued">
-                            {new Date(n.createdAt).toLocaleString("en-GB")}
+                            {formatDateTime(n.createdAt)}
                           </Text>
                         </BlockStack>
                       </Box>

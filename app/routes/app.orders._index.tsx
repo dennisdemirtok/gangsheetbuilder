@@ -22,6 +22,7 @@ import prisma from "../db.server";
 import {
   OPEN_STATUSES,
   STATUS_FILTERS,
+  formatDate,
   orderLabel,
   sheetSize,
   statusInfo,
@@ -83,10 +84,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       id: o.id,
       label: orderLabel(o),
       customerName: o.customerName,
-      date: new Date(o.createdAt).toLocaleDateString("en-GB", {
-        day: "numeric",
-        month: "short",
-      }),
+      date: formatDate(o.createdAt),
       age: timeAgo(o.createdAt, now),
       size: sheetSize(o),
       filmType: o.filmType,
@@ -214,7 +212,7 @@ export default function OrdersPage() {
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
-    <Page title="Orders" fullWidth={false}>
+    <Page>
       <TitleBar title="Orders" />
       <Card padding="0">
         <IndexFilters

@@ -80,13 +80,36 @@ export const OPEN_STATUSES: OrderStatus[] = [
 /** Filter options for the order list, in workflow order. */
 export const STATUS_FILTERS: { label: string; value: string }[] = [
   { label: "To do", value: "open" },
-  { label: "All", value: "all" },
   { label: "Preparing file", value: "pending" },
   { label: "Ready to print", value: "exported" },
   { label: "Downloaded", value: "downloaded" },
   { label: "Printed", value: "printed" },
   { label: "Shipped", value: "shipped" },
+  { label: "All", value: "all" },
 ];
+
+/**
+ * Dates as the print shop reads them. Rendered on the server, which runs in
+ * UTC — an order paid at 08:09 in Sweden showed as 06:09.
+ */
+export function formatDateTime(date: Date | string): string {
+  return new Date(date).toLocaleString("en-GB", {
+    timeZone: "Europe/Warsaw",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function formatDate(date: Date | string): string {
+  return new Date(date).toLocaleDateString("en-GB", {
+    timeZone: "Europe/Warsaw",
+    day: "numeric",
+    month: "short",
+  });
+}
 
 /** "1 order", "3 orders". */
 export function plural(count: number, word: string): string {
