@@ -24,19 +24,19 @@ export const theme = {
   textDim: "rgba(0, 0, 0, 0.35)",
   textWhite: "#ffffff",
 
-  // Primary — TransferCraft Red
-  accent: "#e63946",
-  accentHover: "#d32f3f",
-  accentBg: "rgba(230, 57, 70, 0.06)",
-  accentGradient: "linear-gradient(135deg, #e63946, #ff4757)",
+  // Primary — TransferCraft red, shared with the storefront theme (#DC2F3C / hover #B8232F)
+  accent: "#dc2f3c",
+  accentHover: "#b8232f",
+  accentBg: "rgba(220, 47, 60, 0.06)",
+  accentGradient: "#dc2f3c",
 
   // Secondary — Dark
   secondary: "#1a1a1a",
   secondaryBg: "rgba(0, 0, 0, 0.04)",
 
   // Semantic
-  danger: "#e63946",
-  dangerBg: "rgba(230, 57, 70, 0.06)",
+  danger: "#dc2f3c",
+  dangerBg: "rgba(220, 47, 60, 0.06)",
   success: "#2e7d32",
   successBg: "rgba(46, 125, 50, 0.06)",
   warning: "#e65100",

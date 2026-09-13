@@ -142,7 +142,7 @@ function GroupItem({
         padding: 10,
         borderRadius: theme.radiusSm,
         border: `1px solid ${borderColor}`,
-        background: isSelected ? "rgba(230,57,70,0.03)" : theme.bgCard,
+        background: isSelected ? "rgba(220,47,60,0.03)" : theme.bgCard,
         cursor: "pointer",
         transition: "all 0.15s",
         boxShadow: isSelected ? `0 0 0 1px ${theme.accent}` : "none",
