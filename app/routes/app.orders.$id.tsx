@@ -347,7 +347,7 @@ export default function OrderDetailPage() {
                       onClick={() => download("file")}
                       loading={downloading === "file"}
                     >
-                      Download print file
+                      {isCut ? "Download motif" : "Download print file"}
                     </Button>
                     <statusFetcher.Form method="post">
                       <input type="hidden" name="action" value="mark_printed" />
