@@ -69,6 +69,30 @@ export async function getPresignedDownloadUrl(
   );
 }
 
+/**
+ * A short-lived link that makes the browser save the file instead of
+ * displaying it. The admin runs inside Shopify's iframe, where opening a
+ * plain link in a new tab gave the print shop an empty page instead of the
+ * print file; an attachment downloads in place.
+ */
+export async function getPresignedAttachmentUrl(
+  key: string,
+  filename: string,
+  expiresIn: number = 300,
+): Promise<string> {
+  const client = getS3Client();
+  const safeName = filename.replace(/[^\w.\-]+/g, "_");
+  return getSignedUrl(
+    client,
+    new GetObjectCommand({
+      Bucket: BUCKET(),
+      Key: key,
+      ResponseContentDisposition: `attachment; filename="${safeName}"`,
+    }),
+    { expiresIn },
+  );
+}
+
 export async function downloadFile(key: string): Promise<Buffer> {
   const client = getS3Client();
   const response = await client.send(

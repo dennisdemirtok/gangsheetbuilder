@@ -23,10 +23,10 @@ export default function App() {
         <Link to="/app" rel="home">
           Dashboard
         </Link>
-        <Link to="/app/orders">Ordrar</Link>
+        <Link to="/app/orders">Orders</Link>
         <Link to="/app/designs">Designs</Link>
-        <Link to="/app/settings">Inställningar</Link>
-        <Link to="/app/statistics">Statistik</Link>
+        <Link to="/app/settings">Settings</Link>
+        <Link to="/app/statistics">Statistics</Link>
       </NavMenu>
       <Outlet />
     </AppProvider>

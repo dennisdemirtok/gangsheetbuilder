@@ -88,6 +88,30 @@ export const STATUS_FILTERS: { label: string; value: string }[] = [
   { label: "Shipped", value: "shipped" },
 ];
 
+/** "1 order", "3 orders". */
+export function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * "just now", "5 min ago", "3 h ago", "2 days ago". Computed in the loader
+ * and sent as text, so server and browser render the same string.
+ */
+export function timeAgo(date: Date | string, now: Date = new Date()): string {
+  const minutes = Math.floor((now.getTime() - new Date(date).getTime()) / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} h ago`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+/** Sheet size as the shop talks about it: "58 × 50 cm". */
+export function sheetSize(sheet: { widthMm: number; heightMm: number }): string {
+  return `${sheet.widthMm / 10} × ${sheet.heightMm / 10} cm`;
+}
+
 /** "#1002" when we have it, else the raw Shopify id for older records. */
 export function orderLabel(sheet: {
   orderName?: string | null;
@@ -96,4 +120,15 @@ export function orderLabel(sheet: {
   if (sheet.orderName) return sheet.orderName;
   if (sheet.shopifyOrderId) return `#${sheet.shopifyOrderId}`;
   return "—";
+}
+
+/** "1002_58x50cm.png" — what the print shop sees in their downloads folder. */
+export function printFileName(
+  sheet: { orderName?: string | null; shopifyOrderId?: string | null; id: string; widthMm: number; heightMm: number },
+  ext: string,
+): string {
+  const order = (sheet.orderName || sheet.shopifyOrderId || sheet.id.slice(0, 8))
+    .replace(/^#/, "")
+    .replace(/[^\w.\-]+/g, "_");
+  return `${order}_${sheet.widthMm / 10}x${sheet.heightMm / 10}cm.${ext}`;
 }

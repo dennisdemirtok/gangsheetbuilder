@@ -55,11 +55,16 @@ interface SheetShippingFields {
 export function BwsShippingCard({
   sheet,
   shipping,
-  labelUrl,
+  hasLabel,
+  onDownloadLabel,
+  downloadingLabel,
 }: {
   sheet: SheetShippingFields;
   shipping: BwsShippingData;
-  labelUrl: string | null;
+  hasLabel: boolean;
+  /** Saves the label in place; a new-tab link from the admin iframe opened blank. */
+  onDownloadLabel: () => void;
+  downloadingLabel?: boolean;
 }) {
   const fetcher = useFetcher<{ success?: boolean; errors?: string[] }>();
   const [pickupDate, setPickupDate] = useState(shipping.summary.pickupDate);
@@ -109,8 +114,8 @@ export function BwsShippingCard({
           )}
           {sheet.bwsBookingId && <Row label="Booking" value={sheet.bwsBookingId} />}
           {sheet.trackingNumber && <Row label="Tracking" value={sheet.trackingNumber} />}
-          {labelUrl ? (
-            <Button url={labelUrl} external variant="primary" fullWidth>
+          {hasLabel ? (
+            <Button onClick={onDownloadLabel} loading={downloadingLabel} variant="primary" fullWidth>
               Download shipping label
             </Button>
           ) : (
@@ -213,7 +218,9 @@ export function BwsShippingCard({
           )}
           <Button
             submit
-            variant="primary"
+            // Primary only once the sheet is printed: before that, printing
+            // is the next step and two dark buttons competed for it.
+            variant={sheet.status === "printed" ? "primary" : undefined}
             loading={booking}
             disabled={booking || shipping.missingConfig.length > 0}
             fullWidth

@@ -2,6 +2,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { downloadFile } from "../lib/r2.server";
+import { printFileName } from "../lib/order-status";
 import archiver from "archiver";
 import { PassThrough } from "stream";
 
@@ -39,16 +40,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     for (const exp of gs.exports) {
       try {
         const buffer = await downloadFile(exp.url);
-        const filename = `order-${gs.shopifyOrderId || gs.id.slice(0, 8)}_${gs.widthMm / 10}x${gs.heightMm / 10}cm.${exp.format}`;
+        const filename = printFileName(gs, exp.format);
         archive.append(buffer, { name: filename });
       } catch (err) {
         console.error(`Failed to download ${exp.url}:`, err);
       }
     }
 
-    // Mark as downloaded
-    await prisma.gangSheet.update({
-      where: { id: gs.id },
+    // Only a sheet still waiting to be printed moves on. This used to set
+    // every selected sheet to "downloaded", pulling printed and shipped
+    // orders back into the queue.
+    await prisma.gangSheet.updateMany({
+      where: { id: gs.id, status: "exported" },
       data: { status: "downloaded" },
     });
   }

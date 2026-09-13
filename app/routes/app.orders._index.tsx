@@ -1,110 +1,169 @@
-import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import { useEffect, useState } from "react";
+import type { LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSearchParams } from "@remix-run/react";
+import { useLoaderData, useRevalidator, useSearchParams } from "@remix-run/react";
 import {
   Page,
   Card,
   IndexTable,
+  IndexFilters,
   Badge,
   Text,
-  Filters,
-  ChoiceList,
-  Button,
   InlineStack,
-  useIndexResourceState,
-  Link as PolarisLink,
   BlockStack,
+  EmptySearchResult,
+  useIndexResourceState,
+  useSetIndexFiltersMode,
+  Link as PolarisLink,
 } from "@shopify/polaris";
-import { TitleBar } from "@shopify/app-bridge-react";
+import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import {
   OPEN_STATUSES,
   STATUS_FILTERS,
   orderLabel,
+  sheetSize,
   statusInfo,
+  timeAgo,
 } from "../lib/order-status";
+import { withOrderDetails } from "../lib/order-details.server";
+import { saveBlob } from "../lib/save-file";
+
+const PAGE_SIZE = 20;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const url = new URL(request.url);
   // The shop opens this to see what still needs doing, not the archive.
   const statusFilter = url.searchParams.get("status") || "open";
-  const page = parseInt(url.searchParams.get("page") || "1");
-  const pageSize = 20;
+  const query = (url.searchParams.get("q") || "").trim();
+  const page = Math.max(1, parseInt(url.searchParams.get("page") || "1") || 1);
 
-  const where: any = {
-    shopDomain: session.shop,
-    shopifyOrderId: { not: null },
-  };
+  const base = { shopDomain: session.shop, shopifyOrderId: { not: null } };
+  const where: any = { ...base };
   if (statusFilter === "open") {
     where.status = { in: OPEN_STATUSES };
   } else if (statusFilter !== "all") {
     where.status = statusFilter;
   }
+  if (query) {
+    const digits = query.replace(/^#/, "");
+    where.OR = [
+      { orderName: { contains: digits, mode: "insensitive" } },
+      { customerName: { contains: query, mode: "insensitive" } },
+      { shopifyOrderId: digits },
+    ];
+  }
 
-  const [orders, totalCount] = await Promise.all([
+  const [orders, totalCount, byStatus] = await Promise.all([
     prisma.gangSheet.findMany({
       where,
       orderBy: { createdAt: statusFilter === "open" ? "asc" : "desc" },
-      take: pageSize,
-      skip: (page - 1) * pageSize,
-      include: {
-        _count: { select: { images: true } },
-        exports: { take: 1 },
-      },
+      take: PAGE_SIZE,
+      skip: (page - 1) * PAGE_SIZE,
+      include: { _count: { select: { images: true } } },
     }),
     prisma.gangSheet.count({ where }),
+    prisma.gangSheet.groupBy({ by: ["status"], where: base, _count: { _all: true } }),
   ]);
 
+  const counts: Record<string, number> = { all: 0, open: 0 };
+  for (const row of byStatus) {
+    counts[row.status] = row._count._all;
+    counts.all += row._count._all;
+    if ((OPEN_STATUSES as string[]).includes(row.status)) counts.open += row._count._all;
+  }
+
+  const now = new Date();
+  const named = await withOrderDetails(admin, session.shop, orders);
+
   return json({
-    orders,
+    orders: named.map((o) => ({
+      id: o.id,
+      label: orderLabel(o),
+      customerName: o.customerName,
+      date: new Date(o.createdAt).toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "short",
+      }),
+      age: timeAgo(o.createdAt, now),
+      size: sheetSize(o),
+      filmType: o.filmType,
+      designs: o._count.images,
+      status: o.status,
+    })),
     totalCount,
+    counts,
     page,
-    pageSize,
     statusFilter,
+    query,
   });
 };
 
 export default function OrdersPage() {
-  const { orders, totalCount, page, pageSize, statusFilter } =
+  const { orders, totalCount, counts, page, statusFilter, query } =
     useLoaderData<typeof loader>();
   const [searchParams, setSearchParams] = useSearchParams();
+  const shopify = useAppBridge();
+  const revalidator = useRevalidator();
+  const { mode, setMode } = useSetIndexFiltersMode();
+  const [queryValue, setQueryValue] = useState(query);
+  const [downloading, setDownloading] = useState(false);
 
-  const resourceName = {
-    singular: "order",
-    plural: "orders",
+  const setParam = (key: string, value: string | null) => {
+    const params = new URLSearchParams(searchParams);
+    if (value) params.set(key, value);
+    else params.delete(key);
+    if (key !== "page") params.delete("page");
+    setSearchParams(params);
   };
 
-  // Selection drives the bulk download, which is how the print shop pulls a
-  // batch of sheets in one go — worth keeping. The order number is a link
-  // rather than a row click because a selectable row uses the click itself.
-  const { selectedResources, allResourcesSelected, handleSelectionChange } =
-    useIndexResourceState(orders.map((o) => ({ id: o.id })));
+  // Search as the shop types, without a request per keystroke.
+  useEffect(() => {
+    if (queryValue.trim() === query) return;
+    const t = setTimeout(() => setParam("q", queryValue.trim() || null), 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryValue]);
 
-  const statusOptions = STATUS_FILTERS;
+  // Tabs instead of a status filter hidden behind a button: the queue
+  // stages are what the shop switches between all day.
+  const tabs = STATUS_FILTERS.map((f) => ({
+    id: f.value,
+    content: f.label,
+    badge: counts[f.value] ? String(counts[f.value]) : undefined,
+    onAction: () => {},
+  }));
+  const selectedTab = Math.max(
+    0,
+    STATUS_FILTERS.findIndex((f) => f.value === statusFilter),
+  );
 
-  const filters = [
-    {
-      key: "status",
-      label: "Status",
-      filter: (
-        <ChoiceList
-          title="Status"
-          titleHidden
-          choices={statusOptions}
-          selected={[statusFilter]}
-          onChange={(val) => {
-            const params = new URLSearchParams(searchParams);
-            params.set("status", val[0]);
-            params.set("page", "1");
-            setSearchParams(params);
-          }}
-        />
-      ),
-      shortcut: true,
-    },
-  ];
+  const { selectedResources, allResourcesSelected, handleSelectionChange, clearSelection } =
+    useIndexResourceState(orders);
+
+  /*
+   * Bulk download used to be a link to the ZIP route. Inside the embedded
+   * admin that navigation carried no session token, so nothing came back.
+   * App Bridge's fetch adds the token; the ZIP is saved from memory.
+   */
+  const downloadSelected = async () => {
+    setDownloading(true);
+    shopify.toast.show("Preparing print files…");
+    try {
+      const res = await fetch(`/app/orders/download?ids=${selectedResources.join(",")}`);
+      if (!res.ok) throw new Error(await res.text());
+      saveBlob(await res.blob(), `print-files-${new Date().toISOString().slice(0, 10)}.zip`);
+      clearSelection();
+      revalidator.revalidate();
+    } catch (err) {
+      console.error(err);
+      shopify.toast.show("Could not download the print files", { isError: true });
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const rowMarkup = orders.map((order, index) => (
     <IndexTable.Row
@@ -114,118 +173,121 @@ export default function OrdersPage() {
       selected={selectedResources.includes(order.id)}
     >
       <IndexTable.Cell>
-        {/* A link, not a row click: selectable rows consume the click for
-            their checkbox, so nothing opened when the row was pressed. */}
-        {/* Polaris' primary link: the whole row navigates to it, and the
-            checkbox still works for bulk download. A plain <Link> inside a
-            selectable row never received the click. */}
-        <PolarisLink
-          dataPrimaryLink
-          url={`/app/orders/${order.id}`}
-          removeUnderline
-        >
-          <Text as="span" variant="bodyMd" fontWeight="bold">
-            {orderLabel(order)}
+        {/* Polaris' primary link: the whole row opens the order, and the
+            checkbox still works for bulk download. */}
+        <PolarisLink dataPrimaryLink url={`/app/orders/${order.id}`} removeUnderline monochrome>
+          <Text as="span" variant="bodyMd" fontWeight="semibold">
+            {order.label}
           </Text>
         </PolarisLink>
       </IndexTable.Cell>
       <IndexTable.Cell>{order.customerName || "—"}</IndexTable.Cell>
       <IndexTable.Cell>
-        {new Date(order.createdAt).toLocaleDateString("en-GB")}
+        <BlockStack gap="0">
+          <Text as="span" variant="bodyMd">
+            {order.date}
+          </Text>
+          <Text as="span" variant="bodySm" tone="subdued">
+            {order.age}
+          </Text>
+        </BlockStack>
       </IndexTable.Cell>
       <IndexTable.Cell>
-        {order.widthMm / 10} × {order.heightMm / 10} cm
+        <InlineStack gap="200" blockAlign="center" wrap={false}>
+          <Text as="span" variant="bodyMd">
+            {order.size}
+          </Text>
+          {order.filmType !== "standard" && <Badge>{order.filmType}</Badge>}
+        </InlineStack>
       </IndexTable.Cell>
-      <IndexTable.Cell>{order.filmType}</IndexTable.Cell>
-      <IndexTable.Cell>{order._count.images}</IndexTable.Cell>
+      <IndexTable.Cell>
+        <Text as="span" variant="bodyMd" alignment="end" numeric>
+          {order.designs}
+        </Text>
+      </IndexTable.Cell>
       <IndexTable.Cell>
         <StatusBadge status={order.status} />
       </IndexTable.Cell>
     </IndexTable.Row>
   ));
 
-  const totalPages = Math.ceil(totalCount / pageSize);
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
-    <Page>
+    <Page title="Orders" fullWidth={false}>
       <TitleBar title="Orders" />
-      <BlockStack gap="400">
-        {selectedResources.length > 0 && (
-          <InlineStack gap="200">
-            <Button
-              url={`/app/orders/download?ids=${selectedResources.join(",")}`}
-            >
-              Download selected ({selectedResources.length})
-            </Button>
-          </InlineStack>
-        )}
-        <Card padding="0">
-          <IndexTable
-            resourceName={resourceName}
-            itemCount={orders.length}
-            selectedItemsCount={
-              allResourcesSelected ? "All" : selectedResources.length
-            }
-            onSelectionChange={handleSelectionChange}
-            headings={[
-              { title: "Order" },
-              { title: "Customer" },
-              { title: "Date" },
-              { title: "Size" },
-              { title: "Film" },
-              { title: "Designs" },
-              { title: "Status" },
-            ]}
-            filters={filters}
-            appliedFilters={
-              statusFilter !== "all" && statusFilter !== "open"
-                ? [
-                    {
-                      key: "status",
-                      label: statusOptions.find((o) => o.value === statusFilter)
-                        ?.label || statusFilter,
-                      onRemove: () => {
-                        const params = new URLSearchParams(searchParams);
-                        params.delete("status");
-                        setSearchParams(params);
-                      },
-                    },
-                  ]
-                : []
-            }
-          >
-            {rowMarkup}
-          </IndexTable>
-        </Card>
-
-        {totalPages > 1 && (
-          <InlineStack align="center" gap="200">
-            <Button
-              disabled={page <= 1}
-              onClick={() => {
-                const params = new URLSearchParams(searchParams);
-                params.set("page", String(page - 1));
-                setSearchParams(params);
-              }}
-            >
-              Previous
-            </Button>
-            <Text as="span" variant="bodySm">
-              Page {page} of {totalPages}
-            </Text>
-            <Button
-              disabled={page >= totalPages}
-              onClick={() => {
-                const params = new URLSearchParams(searchParams);
-                params.set("page", String(page + 1));
-                setSearchParams(params);
-              }}
-            >
-              Next
-            </Button>
-          </InlineStack>
-        )}
-      </BlockStack>
+      <Card padding="0">
+        <IndexFilters
+          tabs={tabs}
+          selected={selectedTab}
+          onSelect={(i) => setParam("status", STATUS_FILTERS[i].value)}
+          queryValue={queryValue}
+          queryPlaceholder="Search order number or customer"
+          onQueryChange={setQueryValue}
+          onQueryClear={() => setQueryValue("")}
+          filters={[]}
+          appliedFilters={[]}
+          onClearAll={() => setQueryValue("")}
+          hideFilters
+          canCreateNewView={false}
+          mode={mode}
+          setMode={setMode}
+          cancelAction={{ onAction: () => setQueryValue(""), disabled: false, loading: false }}
+        />
+        <IndexTable
+          resourceName={{ singular: "order", plural: "orders" }}
+          itemCount={orders.length}
+          selectedItemsCount={allResourcesSelected ? "All" : selectedResources.length}
+          onSelectionChange={handleSelectionChange}
+          promotedBulkActions={[
+            {
+              content: downloading ? "Preparing…" : "Download print files",
+              onAction: downloadSelected,
+              disabled: downloading,
+            },
+          ]}
+          headings={[
+            { title: "Order" },
+            { title: "Customer" },
+            { title: "Ordered" },
+            { title: "Size" },
+            { title: "Designs", alignment: "end" },
+            { title: "Status" },
+          ]}
+          emptyState={
+            <EmptySearchResult
+              title={
+                query
+                  ? "No matching orders"
+                  : statusFilter === "open"
+                    ? "All caught up"
+                    : "No orders here"
+              }
+              description={
+                query
+                  ? "Try another order number or name."
+                  : statusFilter === "open"
+                    ? "New orders appear here as soon as they are paid."
+                    : undefined
+              }
+              withIllustration
+            />
+          }
+          pagination={
+            totalPages > 1
+              ? {
+                  hasPrevious: page > 1,
+                  hasNext: page < totalPages,
+                  onPrevious: () => setParam("page", String(page - 1)),
+                  onNext: () => setParam("page", String(page + 1)),
+                  label: `Page ${page} of ${totalPages}`,
+                }
+              : undefined
+          }
+        >
+          {rowMarkup}
+        </IndexTable>
+      </Card>
     </Page>
   );
 }
