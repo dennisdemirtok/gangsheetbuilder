@@ -238,7 +238,7 @@ export default function OrderDetailPage() {
                   </BlockStack>
                 ) : (
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Ingen leveransadress — ordern är inte betald ännu.
+                    Ingen leveransadress sparad för den här ordern.
                   </Text>
                 )}
                 {gangSheet.orderName && (
@@ -338,6 +338,93 @@ export default function OrderDetailPage() {
                     </Button>
                   </fetcher.Form>
                 </InlineStack>
+              </BlockStack>
+            </Card>
+
+            {/* Shipping. The status ladder used to stop at "printed", so a
+                sheet waiting to go out looked the same as one on its way. */}
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Frakt
+                </Text>
+                {gangSheet.status === "shipped" ? (
+                  <BlockStack gap="100">
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">
+                      Skickad
+                      {gangSheet.shippedAt
+                        ? ` ${new Date(gangSheet.shippedAt).toLocaleDateString("sv-SE")}`
+                        : ""}
+                    </Text>
+                    {gangSheet.trackingNumber && (
+                      <Text as="p" variant="bodySm">
+                        Spårning: {gangSheet.trackingNumber}
+                      </Text>
+                    )}
+                  </BlockStack>
+                ) : (
+                  <fetcher.Form method="post">
+                    <input type="hidden" name="action" value="mark_shipped" />
+                    <BlockStack gap="200">
+                      <TextField
+                        label="Spårningsnummer"
+                        name="trackingNumber"
+                        autoComplete="off"
+                      />
+                      <Button submit variant="primary">
+                        Markera som skickad
+                      </Button>
+                    </BlockStack>
+                  </fetcher.Form>
+                )}
+              </BlockStack>
+            </Card>
+
+            {/* Notes — somewhere for the print shop and the store to talk
+                about a job without leaving the app. */}
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Kommentarer
+                </Text>
+                <fetcher.Form method="post">
+                  <input type="hidden" name="action" value="add_note" />
+                  <BlockStack gap="200">
+                    <TextField
+                      label="Ny kommentar"
+                      labelHidden
+                      name="body"
+                      multiline={3}
+                      autoComplete="off"
+                      placeholder="T.ex. omtryckt pga färgavvikelse"
+                    />
+                    <Button submit>Spara kommentar</Button>
+                  </BlockStack>
+                </fetcher.Form>
+
+                {gangSheet.notes.length === 0 ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Inga kommentarer ännu.
+                  </Text>
+                ) : (
+                  <BlockStack gap="200">
+                    {gangSheet.notes.map((note) => (
+                      <Box
+                        key={note.id}
+                        padding="300"
+                        background="bg-surface-secondary"
+                        borderRadius="200"
+                      >
+                        <Text as="p" variant="bodySm">
+                          {note.body}
+                        </Text>
+                        <Text as="p" variant="bodyXs" tone="subdued">
+                          {new Date(note.createdAt).toLocaleString("sv-SE")}
+                        </Text>
+                      </Box>
+                    ))}
+                  </BlockStack>
+                )}
               </BlockStack>
             </Card>
           </Layout.Section>

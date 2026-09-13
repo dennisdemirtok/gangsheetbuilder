@@ -1,6 +1,6 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { Link, useLoaderData, useSearchParams } from "@remix-run/react";
+import { useLoaderData, useSearchParams } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -12,6 +12,7 @@ import {
   Button,
   InlineStack,
   useIndexResourceState,
+  Link as PolarisLink,
   BlockStack,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -113,11 +114,18 @@ export default function OrdersPage() {
       <IndexTable.Cell>
         {/* A link, not a row click: selectable rows consume the click for
             their checkbox, so nothing opened when the row was pressed. */}
-        <Link to={`/app/orders/${order.id}`}>
+        {/* Polaris' primary link: the whole row navigates to it, and the
+            checkbox still works for bulk download. A plain <Link> inside a
+            selectable row never received the click. */}
+        <PolarisLink
+          dataPrimaryLink
+          url={`/app/orders/${order.id}`}
+          removeUnderline
+        >
           <Text as="span" variant="bodyMd" fontWeight="bold">
             {order.orderName || `#${order.shopifyOrderId}`}
           </Text>
-        </Link>
+        </PolarisLink>
       </IndexTable.Cell>
       <IndexTable.Cell>
         {new Date(order.createdAt).toLocaleDateString("sv-SE")}
