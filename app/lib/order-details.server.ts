@@ -103,6 +103,18 @@ export async function withOrderDetails<T extends SheetRef>(
       found.set(orderId, details);
 
       const existing = sheets.find((s) => s.shopifyOrderId === orderId);
+      if (!existing?.shippingAddress && details.shippingAddress) {
+        // A booking refused for lack of an address can be tried again now.
+        await prisma.gangSheet.updateMany({
+          where: {
+            shopDomain,
+            shopifyOrderId: orderId,
+            shippingStatus: "failed",
+            shippingError: { contains: "no shipping address" },
+          },
+          data: { shippingStatus: null, shippingError: null },
+        });
+      }
       await prisma.gangSheet.updateMany({
         where: { shopDomain, shopifyOrderId: orderId, orderName: null },
         data: {

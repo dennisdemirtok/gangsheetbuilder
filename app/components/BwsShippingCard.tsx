@@ -196,7 +196,9 @@ export function BwsShippingCard({
               value={weightKg}
               onChange={setWeightKg}
               min={0.1}
-              step={0.5}
+              // The browser only accepts min + n × step: 0.5 made 1 kg invalid
+              // (0.1, 0.6, 1.1 …).
+              step={0.1}
               autoComplete="off"
             />
           </InlineStack>
