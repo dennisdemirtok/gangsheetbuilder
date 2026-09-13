@@ -16,6 +16,21 @@ function getConnection(): IORedis {
   return connection;
 }
 
+/** True when Redis answers within a second — for the settings status list. */
+export async function pingRedis(): Promise<boolean> {
+  try {
+    const reply = await Promise.race([
+      getConnection().ping(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), 1000),
+      ),
+    ]);
+    return reply === "PONG";
+  } catch {
+    return false;
+  }
+}
+
 // Queue for generating final 300 DPI export files
 export function getExportQueue(): Queue {
   return new Queue("gangsheet-export", {

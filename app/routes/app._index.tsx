@@ -11,7 +11,6 @@ import {
   Badge,
   Box,
   InlineGrid,
-  Divider,
   Button,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
@@ -41,7 +40,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
    */
   const real = { shopDomain, shopifyOrderId: { not: null } };
 
-  const [byStatus, month, shippedThisMonth, sizeCounts, upNext] =
+  const [byStatus, month, shippedThisMonth, upNext] =
     await Promise.all([
       prisma.gangSheet.groupBy({
         by: ["status"],
@@ -55,13 +54,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }),
       prisma.gangSheet.count({
         where: { ...real, status: "shipped", shippedAt: { gte: thirtyDaysAgo } },
-      }),
-      prisma.gangSheet.groupBy({
-        by: ["widthMm", "heightMm"],
-        where: real,
-        _count: true,
-        orderBy: { _count: { id: "desc" } },
-        take: 5,
       }),
       // What to work on, oldest first — the dashboard used to list the
       // newest orders, which is the opposite of the order they get printed.
@@ -91,10 +83,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       metres: (month._sum.heightMm ?? 0) / 1000,
       shipped: shippedThisMonth,
     },
-    sizeCounts: sizeCounts.map((s) => ({
-      size: sheetSize(s),
-      count: s._count as number,
-    })),
     upNext: named.map((sheet) => ({
       id: sheet.id,
       label: orderLabel(sheet),
@@ -117,7 +105,7 @@ const STEPS = [
 ] as const;
 
 export default function Dashboard() {
-  const { queue, month, sizeCounts, upNext } = useLoaderData<typeof loader>();
+  const { queue, month, upNext } = useLoaderData<typeof loader>();
   const toDo = queue.pending + queue.exported + queue.downloaded + queue.printed;
 
   return (
@@ -221,19 +209,11 @@ export default function Dashboard() {
                   />
                   <Metric label="Shipped" value={String(month.shipped)} />
                 </BlockStack>
-                {sizeCounts.length > 0 && (
-                  <>
-                    <Divider />
-                    <Text as="h3" variant="headingSm">
-                      Popular sizes
-                    </Text>
-                    <BlockStack gap="200">
-                      {sizeCounts.map((s) => (
-                        <Metric key={s.size} label={s.size} value={String(s.count)} />
-                      ))}
-                    </BlockStack>
-                  </>
-                )}
+                <InlineStack>
+                  <Button variant="plain" url="/app/statistics">
+                    View statistics
+                  </Button>
+                </InlineStack>
               </BlockStack>
             </Card>
           </Layout.Section>

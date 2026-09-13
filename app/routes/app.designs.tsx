@@ -80,7 +80,7 @@ export default function DesignsPage() {
       <BlockStack gap="500">
         <InlineStack align="space-between">
           <Text as="h2" variant="headingMd">
-            {total} designs totalt
+            {`${total.toLocaleString("en-GB")} designs uploaded`}
           </Text>
         </InlineStack>
 
@@ -89,7 +89,7 @@ export default function DesignsPage() {
             <Card>
               {images.length === 0 ? (
                 <Text as="p" variant="bodyMd" tone="subdued">
-                  Inga designs uppladdade.
+                  No designs uploaded yet.
                 </Text>
               ) : (
                 <BlockStack gap="300">
@@ -110,7 +110,7 @@ export default function DesignsPage() {
                         onNext={() =>
                           setSearchParams({ page: String(page + 1) })
                         }
-                        label={`Sida ${page} av ${totalPages}`}
+                        label={`Page ${page} of ${totalPages}`}
                       />
                     </InlineStack>
                   )}
@@ -163,7 +163,7 @@ function DesignCard({ image }: { image: any }) {
             />
           ) : (
             <Text as="span" variant="bodySm" tone="subdued">
-              Ingen bild
+              No preview
             </Text>
           )}
         </div>
@@ -178,11 +178,11 @@ function DesignCard({ image }: { image: any }) {
             {image.originalFilename}
           </Text>
           <InlineStack gap="200">
-            <Badge tone={dpiColor}>{image.dpiX || 72} DPI</Badge>
-            {image.bgRemoved && <Badge tone="info">BG borttagen</Badge>}
+            <Badge tone={dpiColor}>{`${image.dpiX || 72} DPI`}</Badge>
+            {image.bgRemoved && <Badge tone="info">Background removed</Badge>}
           </InlineStack>
           <Text as="p" variant="bodySm" tone="subdued">
-            {image.widthPx}x{image.heightPx} px | {image.quantity} st
+            {`${image.widthPx} × ${image.heightPx} px · ${image.quantity} ${image.quantity === 1 ? "copy" : "copies"}`}
           </Text>
         </BlockStack>
       </BlockStack>
