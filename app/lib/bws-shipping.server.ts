@@ -18,9 +18,32 @@
 const BWS_BASE_URL =
   process.env.BWS_API_URL || "https://api-test.bws.net/shipping/api/v2";
 const BWS_API_KEY = process.env.BWS_API_KEY || "";
-const BWS_CLIENT_ID = process.env.BWS_CLIENT_ID || "181751";
+const IS_TEST_API = BWS_BASE_URL.includes("api-test");
+
+/*
+ * BWS's test (integration) environment is not a copy of production. Their
+ * integration team, 2026-09-14: on TEST use customer id "TESTINT", book from
+ * Denmark, and only UPS and TNT exist there. With our real customer number
+ * every test booking failed with "Customer is not active"; with a Polish
+ * pickup the test system routes to FedEx and fails. So the test API always
+ * gets the test identity, and production gets ours — no variables to swap.
+ */
+const TEST_CLIENT_ID = "TESTINT";
+/** The one service that books and returns a UPS label on TEST (EXP routes to FedEx, 401). */
+const TEST_SERVICE = "ECO";
+const TEST_PICKUP: BwsAddress = {
+  name: "TransferCraft (BWS test)",
+  address1: "Kanalen 1",
+  zip: "6700",
+  city: "Esbjerg",
+  countryCode: "DK",
+};
+
+const BWS_CLIENT_ID = IS_TEST_API
+  ? TEST_CLIENT_ID
+  : process.env.BWS_CLIENT_ID || "181751";
 /** Optional ServiceType code (EXP, ECO, …). Unset = BWS picks from the customer's booking settings. */
-const BWS_SERVICE = process.env.BWS_SERVICE || "";
+const BWS_SERVICE = IS_TEST_API ? TEST_SERVICE : process.env.BWS_SERVICE || "";
 
 /**
  * Test-only stand-in for a successful booking, so the label download and the
@@ -169,7 +192,7 @@ export function missingPickupConfig(): string[] {
 }
 
 export function isBwsTestEnvironment(): boolean {
-  return BWS_BASE_URL.includes("api-test");
+  return IS_TEST_API;
 }
 
 export function isSimulationEnabled(): boolean {
@@ -192,7 +215,9 @@ function toBwsAddress(a: BwsAddress) {
 }
 
 export function buildShippingOrder(input: BwsShipmentInput) {
-  const pickup = getPickupAddress();
+  // The admin still shows the real print shop; only the booking sent to the
+  // test API is picked up in Denmark.
+  const pickup = IS_TEST_API ? { ...getPickupAddress(), ...TEST_PICKUP } : getPickupAddress();
   const from = zonedToUtc(input.pickupDate, PICKUP_FROM, PICKUP_TIMEZONE);
   const until = zonedToUtc(input.pickupDate, PICKUP_UNTIL, PICKUP_TIMEZONE);
   const value = { Value: input.valueSEK, Currency: "Sek" };
