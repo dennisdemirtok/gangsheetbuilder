@@ -33,6 +33,7 @@ import { withOrderDetails } from "../lib/order-details.server";
 import { jobSize, printLabel, type LineProperty } from "../lib/print-jobs";
 import { saveUrl } from "../lib/save-file";
 import {
+  BWS_SERVICES,
   getPickupAddress,
   isBwsTestEnvironment,
   missingPickupConfig,
@@ -80,6 +81,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         pickupFrom: PICKUP_TIME,
         packageCm: { ...PACKAGE_CM },
         missingConfig: missingPickupConfig(),
+        services: BWS_SERVICES,
         isTest: isBwsTestEnvironment(),
         simulation: isSimulationEnabled(),
         simulated: Boolean(gangSheet.bwsBookingId?.startsWith(SIMULATED_PREFIX)),
@@ -168,11 +170,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
     const weight = parseFloat(String(formData.get("weightKg") || ""));
     const pickupDate = String(formData.get("pickupDate") || "");
+    const service = String(formData.get("service") || "").trim();
     const result = await bookOrderShipment({
       shopDomain: session.shop,
       shopifyOrderId: gangSheet.shopifyOrderId,
       pickupDate: /^\d{4}-\d{2}-\d{2}$/.test(pickupDate) ? pickupDate : undefined,
       weightKg: weight > 0 && weight <= 30 ? weight : undefined,
+      service: BWS_SERVICES.some((s) => s.code === service) ? service : undefined,
     });
     return json(result.ok ? { success: true } : { errors: result.errors });
   } else if (action === "send_tracking") {

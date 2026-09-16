@@ -79,6 +79,8 @@ export async function bookOrderShipment(options: {
   shopifyOrderId: string;
   pickupDate?: string;
   weightKg?: number;
+  /** ServiceType code the shop picked: EXP (Blue Express) or ECO (Blue Economy). */
+  service?: string;
 }): Promise<BookOrderResult> {
   const { shopDomain, shopifyOrderId } = options;
   const where = { shopDomain, shopifyOrderId };
@@ -134,6 +136,7 @@ export async function bookOrderShipment(options: {
       pickupDate,
       weightKg: options.weightKg || summary.weightKg,
       valueSEK: summary.valueSEK,
+      service: options.service,
     });
 
     if (!result.success) {
@@ -172,6 +175,10 @@ export async function bookOrderShipment(options: {
         trackingNumber: trackingNumber || null,
         trackingUrl: result.trackingUrl || null,
         shippingLabelKey: labelKey,
+        shippingService: options.service || null,
+        // What BWS charged. Their rate is only returned with the booking.
+        shippingPrice: result.price?.amount ?? null,
+        shippingCurrency: result.price?.currency ?? null,
         pickupDate,
         shippingBookedAt: new Date(),
         shippingError: null,

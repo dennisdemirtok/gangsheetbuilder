@@ -67,6 +67,12 @@ model GangSheet {
   shippingLabelKey  String?  @map("shipping_label_key")
   pickupDate        String?  @map("pickup_date")
   shippingError     String?  @map("shipping_error")
+  /// Which BWS service was booked ("EXP" Blue Express, "ECO" Blue Economy)
+  /// and what BWS charged for it — their rate only comes back with the
+  /// booking, so this is the record of what the pickup cost.
+  shippingService   String?  @map("shipping_service")
+  shippingPrice     Float?   @map("shipping_price")
+  shippingCurrency  String?  @map("shipping_currency")
   shippingBookedAt  DateTime? @map("shipping_booked_at")
   /// Shopify fulfillment carrying the tracking to the customer, or why it failed.
   shopifyFulfillmentId String? @map("shopify_fulfillment_id")

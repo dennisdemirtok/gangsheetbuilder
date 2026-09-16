@@ -7,6 +7,7 @@ import {
   Button,
   Card,
   InlineStack,
+  Select,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -33,6 +34,8 @@ export interface BwsShippingData {
   pickupFrom: string;
   packageCm: { length: number; width: number; height: number };
   missingConfig: string[];
+  /** The services the shop can book, from the server. */
+  services: { code: string; label: string; hint: string }[];
   isTest: boolean;
   /** BWS_SIMULATE is on: a rejected test booking is faked instead. */
   simulation: boolean;
@@ -48,6 +51,9 @@ interface SheetShippingFields {
   trackingNumber: string | null;
   trackingUrl: string | null;
   pickupDate: string | null;
+  shippingService: string | null;
+  shippingPrice: number | null;
+  shippingCurrency: string | null;
   shopifyFulfillmentId: string | null;
   fulfillmentError: string | null;
 }
@@ -69,6 +75,8 @@ export function BwsShippingCard({
   const fetcher = useFetcher<{ success?: boolean; errors?: string[] }>();
   const [pickupDate, setPickupDate] = useState(shipping.summary.pickupDate);
   const [weightKg, setWeightKg] = useState(String(shipping.summary.weightKg));
+  // Blue Economy is the everyday choice; Express when it has to be there sooner.
+  const [service, setService] = useState(sheet.shippingService || "ECO");
 
   const booking = fetcher.state !== "idle" || sheet.shippingStatus === "booking";
   const errors =
@@ -113,6 +121,20 @@ export function BwsShippingCard({
             <Row label="Pickup" value={`${sheet.pickupDate}, ${shipping.pickupFrom}`} />
           )}
           {sheet.bwsBookingId && <Row label="Booking" value={sheet.bwsBookingId} />}
+          <Row
+            label="Service"
+            value={
+              shipping.services.find((s) => s.code === sheet.shippingService)?.label ||
+              sheet.shippingService ||
+              "BWS default"
+            }
+          />
+          {sheet.shippingPrice != null && (
+            <Row
+              label="BWS charge"
+              value={`${sheet.shippingPrice.toLocaleString("en-GB", { maximumFractionDigits: 2 })} ${sheet.shippingCurrency || ""}`.trim()}
+            />
+          )}
           {sheet.trackingNumber && <Row label="Tracking" value={sheet.trackingNumber} />}
           {hasLabel ? (
             <Button onClick={onDownloadLabel} loading={downloadingLabel} variant="primary" fullWidth>
@@ -180,6 +202,17 @@ export function BwsShippingCard({
               ? ` (${shipping.summary.sheetCount} print jobs in this order)`
               : ""}
           </Text>
+          <Select
+            label="Service"
+            name="service"
+            value={service}
+            onChange={setService}
+            options={shipping.services.map((s) => ({
+              label: `${s.label} — ${s.hint}`,
+              value: s.code,
+            }))}
+            helpText="BWS returns the price with the booking; it is shown here once booked."
+          />
           <InlineStack gap="200" wrap={false}>
             <TextField
               label="Pickup date"

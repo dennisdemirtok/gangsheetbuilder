@@ -97,6 +97,23 @@ export interface BwsShipmentInput {
   weightKg: number;
   valueSEK: number;
   description?: string;
+  /** ServiceType code, e.g. EXP (Blue Express) or ECO (Blue Economy). */
+  service?: string;
+}
+
+/**
+ * The two services the shop books. BWS prices them differently and only
+ * tells us the price once the booking is made — their rate API
+ * (CalculationInquiry) exists on the test portal but not on ours.
+ */
+export const BWS_SERVICES: { code: string; label: string; hint: string }[] = [
+  { code: "EXP", label: "Blue Express", hint: "Faster, costs more" },
+  { code: "ECO", label: "Blue Economy", hint: "Standard" },
+];
+
+export function serviceLabel(code: string | null | undefined): string {
+  if (!code) return "BWS default";
+  return BWS_SERVICES.find((s) => s.code === code)?.label ?? code;
 }
 
 export interface BwsLabel {
@@ -113,6 +130,8 @@ export interface BwsShipmentResult {
   trackingNumbers: string[];
   trackingUrl?: string;
   label?: BwsLabel;
+  /** What BWS charges for this booking — only known once it is booked. */
+  price?: { amount: number; currency: string };
   errors: string[];
   requestBody: unknown;
   rawResponse?: unknown;
@@ -218,6 +237,8 @@ export function buildShippingOrder(input: BwsShipmentInput) {
   // The admin still shows the real print shop; only the booking sent to the
   // test API is picked up in Denmark.
   const pickup = IS_TEST_API ? { ...getPickupAddress(), ...TEST_PICKUP } : getPickupAddress();
+  // On TEST only ECO books; in production the shop picks per booking.
+  const serviceCode = IS_TEST_API ? TEST_SERVICE : input.service || BWS_SERVICE;
   const from = zonedToUtc(input.pickupDate, PICKUP_FROM, PICKUP_TIMEZONE);
   const until = zonedToUtc(input.pickupDate, PICKUP_UNTIL, PICKUP_TIMEZONE);
   const value = { Value: input.valueSEK, Currency: "Sek" };
@@ -245,7 +266,7 @@ export function buildShippingOrder(input: BwsShipmentInput) {
           AgentReferenceNumber: null,
         },
         ConsignmentNumber: 1,
-        ...(BWS_SERVICE ? { Service: BWS_SERVICE } : {}),
+        ...(serviceCode ? { Service: serviceCode } : {}),
         TotalValue: value,
         Pickup: {
           Mode: "WithinDateTimeInterval",
@@ -335,6 +356,13 @@ export function parseShippingOrderResponse(
     trackingNumbers,
     trackingUrl: body?.TrackingUrl || units[0]?.TrackingURL || undefined,
     label: labelBase64 ? decodeLabel(labelBase64) : undefined,
+    price:
+      typeof body?.BookingPrice?.Value === "number"
+        ? {
+            amount: body.BookingPrice.Value,
+            currency: String(body.BookingPrice.Currency || "").toUpperCase(),
+          }
+        : undefined,
     errors,
     rawResponse: body,
   };
