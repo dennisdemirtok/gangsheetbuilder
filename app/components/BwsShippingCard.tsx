@@ -220,6 +220,8 @@ export function BwsShippingCard({
               name="pickupDate"
               value={pickupDate}
               onChange={setPickupDate}
+              min={shipping.summary.pickupDate}
+              helpText={`Courier at ${shipping.pickupFrom}`}
               autoComplete="off"
             />
             <TextField

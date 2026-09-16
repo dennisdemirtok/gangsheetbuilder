@@ -5,6 +5,7 @@ import { fulfillLineItemsWithTracking } from "./shopify-fulfillment.server";
 import {
   createBwsShipment,
   defaultPickupDate,
+  PICKUP_TIME,
   weightForMeters,
   type BwsAddress,
 } from "./bws-shipping.server";
@@ -129,7 +130,19 @@ export async function bookOrderShipment(options: {
     };
 
     const reference = first.orderName || `#${shopifyOrderId}`;
+    /*
+     * The courier comes at 11:30 in Łódź. Past that, the same day is gone —
+     * summary.pickupDate is the earliest slot left (and skips weekends), so a
+     * date picked by hand can only be later than it, never earlier.
+     */
     const pickupDate = options.pickupDate || summary.pickupDate;
+    if (pickupDate < summary.pickupDate) {
+      const errors = [
+        `The ${PICKUP_TIME} pickup on ${pickupDate} has passed. The earliest pickup is ${summary.pickupDate}.`,
+      ];
+      await fail(where, errors);
+      return { ok: false, errors };
+    }
     const result = await createBwsShipment({
       reference,
       recipient,
