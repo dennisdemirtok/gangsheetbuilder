@@ -75,8 +75,8 @@ export function BwsShippingCard({
   const fetcher = useFetcher<{ success?: boolean; errors?: string[] }>();
   const [pickupDate, setPickupDate] = useState(shipping.summary.pickupDate);
   const [weightKg, setWeightKg] = useState(String(shipping.summary.weightKg));
-  // Blue Economy is the everyday choice; Express when it has to be there sooner.
-  const [service, setService] = useState(sheet.shippingService || "ECO");
+  // Blue Express is what most customers get; Economy when speed does not matter.
+  const [service, setService] = useState(sheet.shippingService || "EXP");
 
   const booking = fetcher.state !== "idle" || sheet.shippingStatus === "booking";
   const errors =

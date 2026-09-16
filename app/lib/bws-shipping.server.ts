@@ -107,8 +107,8 @@ export interface BwsShipmentInput {
  * (CalculationInquiry) exists on the test portal but not on ours.
  */
 export const BWS_SERVICES: { code: string; label: string; hint: string }[] = [
-  { code: "EXP", label: "Blue Express", hint: "Faster, costs more" },
-  { code: "ECO", label: "Blue Economy", hint: "Standard" },
+  { code: "EXP", label: "Blue Express", hint: "Usual choice" },
+  { code: "ECO", label: "Blue Economy", hint: "Slower, cheaper" },
 ];
 
 export function serviceLabel(code: string | null | undefined): string {
