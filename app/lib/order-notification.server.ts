@@ -67,60 +67,68 @@ export async function sendOrderNotification(
   }
 }
 
-function buildEmailBody(data: OrderNotificationData): string {
+// Samma formspråk som butikens Shopify-notiser: Inter, röd #e63946, mörk #111, varm grå #f4f3f1.
+const FONT = "'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
+
+function escapeHtml(value: string | number): string {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function row(label: string, value: string): string {
   return `
-    <div style="font-family: 'Plus Jakarta Sans', system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px;">
-      <div style="background: linear-gradient(135deg, #bb0018, #e8002a); padding: 20px 24px; border-radius: 8px 8px 0 0;">
-        <h1 style="color: #fff; margin: 0; font-size: 20px; font-weight: 600;">Ny Gang Sheet Beställning</h1>
-      </div>
+            <tr>
+              <td style="padding:10px 0;border-top:1px solid #ececec;font-family:${FONT};font-size:14px;color:#666666;">${label}</td>
+              <td align="right" style="padding:10px 0;border-top:1px solid #ececec;font-family:${FONT};font-size:14px;font-weight:700;color:#111111;">${value}</td>
+            </tr>`;
+}
 
-      <div style="background: #fff; border: 1px solid #e6e8ea; border-top: none; padding: 24px; border-radius: 0 0 8px 8px;">
-        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-          <tr>
-            <td style="padding: 8px 0; color: #4f6071; font-weight: 500;">Order-ID:</td>
-            <td style="padding: 8px 0; font-weight: 600;">${data.orderId}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #4f6071; font-weight: 500;">Arkstorlek:</td>
-            <td style="padding: 8px 0; font-weight: 600;">${data.sheetSize}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #4f6071; font-weight: 500;">Filmtyp:</td>
-            <td style="padding: 8px 0; font-weight: 600;">${data.filmType}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #4f6071; font-weight: 500;">Antal designs:</td>
-            <td style="padding: 8px 0; font-weight: 600;">${data.designCount}</td>
-          </tr>
-          <tr>
-            <td style="padding: 8px 0; color: #4f6071; font-weight: 500;">Pris:</td>
-            <td style="padding: 8px 0; font-weight: 600;">${data.totalPrice} kr</td>
-          </tr>
-          ${data.customerEmail ? `
-          <tr>
-            <td style="padding: 8px 0; color: #4f6071; font-weight: 500;">Kund:</td>
-            <td style="padding: 8px 0;">${data.customerEmail}</td>
-          </tr>
-          ` : ""}
+function buildEmailBody(data: OrderNotificationData): string {
+  const fileBlock = data.exportUrl
+    ? `
+          <tr><td style="padding:28px 40px 0;">
+            <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+              <td bgcolor="#e63946" style="border-radius:14px;">
+                <a href="${escapeHtml(data.exportUrl)}" style="display:inline-block;padding:15px 28px;font-family:${FONT};font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:14px;">Ladda ned tryckfil</a>
+              </td>
+            </tr></table>
+            <div style="padding-top:8px;font-family:${FONT};font-size:12px;color:#8a8a8a;">300 DPI PNG</div>
+          </td></tr>`
+    : `
+          <tr><td style="padding:28px 40px 0;">
+            <div style="background:#f4f3f1;border-radius:14px;padding:16px 20px;font-family:${FONT};font-size:14px;line-height:1.6;color:#333333;">Tryckfilen exporteras — du får ett nytt mejl när den är klar.</div>
+          </td></tr>`;
+
+  return `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#f4f3f1" style="background:#f4f3f1;">
+  <tr><td align="center" style="padding:32px 12px;">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;">
+      <tr><td style="padding:0 8px 20px;font-family:${FONT};font-size:26px;font-weight:800;letter-spacing:-0.5px;color:#111111;">Transfer<span style="color:#e63946;">craft</span></td></tr>
+      <tr><td bgcolor="#ffffff" style="background:#ffffff;border-radius:14px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr><td style="padding:40px 40px 0;">
+            <span style="display:inline-block;background:#fdecee;color:#c5303c;font-family:${FONT};font-size:12px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;padding:6px 12px;border-radius:100px;">Ny beställning</span>
+          </td></tr>
+          <tr><td style="padding:16px 40px 0;font-family:${FONT};font-size:30px;line-height:1.12;font-weight:700;letter-spacing:-0.8px;color:#000000;">Gang sheet ${escapeHtml(data.sheetSize)}</td></tr>
+          <tr><td style="padding:12px 40px 0;font-family:${FONT};font-size:15px;line-height:1.6;color:#333333;">${escapeHtml(data.filmType)} · ${escapeHtml(data.designCount)} designs</td></tr>
+          ${fileBlock}
+          <tr><td style="padding:28px 40px 40px;">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              ${row("Order-ID", escapeHtml(data.orderId))}
+              ${row("Arkstorlek", escapeHtml(data.sheetSize))}
+              ${row("Filmtyp", escapeHtml(data.filmType))}
+              ${row("Antal designs", escapeHtml(data.designCount))}
+              ${row("Pris", `${escapeHtml(data.totalPrice)} kr`)}
+              ${data.customerEmail ? row("Kund", `<a href="mailto:${escapeHtml(data.customerEmail)}" style="color:#e63946;">${escapeHtml(data.customerEmail)}</a>`) : ""}
+            </table>
+          </td></tr>
         </table>
-
-        ${data.exportUrl ? `
-        <div style="margin-top: 20px; padding: 16px; background: #f2f4f6; border-radius: 6px;">
-          <p style="margin: 0 0 8px; font-size: 13px; color: #4f6071;">Ladda ned tryckfil (300 DPI PNG):</p>
-          <a href="${data.exportUrl}" style="color: #bb0018; font-weight: 600; font-size: 14px; text-decoration: none;">
-            ↓ Ladda ned tryckfil
-          </a>
-        </div>
-        ` : `
-        <div style="margin-top: 20px; padding: 16px; background: #fff3cd; border-radius: 6px;">
-          <p style="margin: 0; font-size: 13px; color: #856404;">Tryckfilen exporteras — du meddelas när den är klar.</p>
-        </div>
-        `}
-
-        <p style="margin: 24px 0 0; font-size: 12px; color: #8a9199; text-align: center;">
-          Skickat från TransferCraft Gang Sheet Builder
-        </p>
-      </div>
-    </div>
-  `;
+      </td></tr>
+      <tr><td align="center" style="padding:20px 8px 0;font-family:${FONT};font-size:12px;color:#8a8a8a;">Skickat från Transfercraft Gang Sheet Builder</td></tr>
+    </table>
+  </td></tr>
+</table>`;
 }

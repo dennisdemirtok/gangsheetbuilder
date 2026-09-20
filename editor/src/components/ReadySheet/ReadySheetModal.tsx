@@ -5,6 +5,7 @@ import {
   uploadReadySheetToStorage,
   type ReadySheetAnalysis,
 } from "../../services/api";
+import { getEditTargets, removeCartLinesForSheets } from "../../services/cart";
 import { getPerDecimeterVariant } from "../../services/storefrontPrices";
 import { getDpiColor } from "../../utils/units";
 import { theme } from "../../styles/theme";
@@ -175,6 +176,12 @@ export function ReadySheetModal({ onClose }: { onClose: () => void }) {
           },
         };
       });
+
+      // A sheet the customer came back to change replaces its old cart line.
+      await removeCartLinesForSheets([
+        ...getEditTargets(),
+        ...sheets.map((s) => s.analysis.sheetId),
+      ]);
 
       const root = (window as any).Shopify?.routes?.root || "/";
       const res = await fetch(`${root}cart/add.js`, {

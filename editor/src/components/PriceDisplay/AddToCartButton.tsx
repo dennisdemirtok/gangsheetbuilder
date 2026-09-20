@@ -8,6 +8,10 @@ import {
   ensureGangSheet,
   buildPlacementsPayload,
 } from "../../services/api";
+import {
+  getEditTargets,
+  removeCartLinesForSheets,
+} from "../../services/cart";
 import { theme } from "../../styles/theme";
 
 export function AddToCartButton() {
@@ -117,7 +121,15 @@ export function AddToCartButton() {
         }
       }
 
-      // Step 4: Add ALL sheets to the Shopify cart in one batched call
+      // Step 4: if these sheets are already in the cart, drop the old lines first,
+      // so editing replaces the design instead of adding a second copy of it.
+      const replacedIds = [
+        ...getEditTargets(),
+        ...items.map((item) => item.properties?._gang_sheet_id).filter(Boolean),
+      ];
+      await removeCartLinesForSheets(replacedIds);
+
+      // Step 5: Add ALL sheets to the Shopify cart in one batched call
       const shopifyRoot = (window as any).Shopify?.routes?.root || "/";
       const response = await fetch(`${shopifyRoot}cart/add.js`, {
         method: "POST",
