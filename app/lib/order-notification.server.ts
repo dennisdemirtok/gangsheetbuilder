@@ -67,7 +67,7 @@ export async function sendOrderNotification(
   }
 }
 
-// Samma formspråk som butikens Shopify-notiser: Inter, röd #e63946, mörk #111, varm grå #f4f3f1.
+// Samma formspråk som butikens Shopify-notiser: Inter, röd #DC2F3C, mörk #111, varm grå #f4f3f1.
 const FONT = "'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
 
 function escapeHtml(value: string | number): string {
@@ -91,7 +91,7 @@ function buildEmailBody(data: OrderNotificationData): string {
     ? `
           <tr><td style="padding:28px 40px 0;">
             <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-              <td bgcolor="#e63946" style="border-radius:14px;">
+              <td bgcolor="#DC2F3C" style="border-radius:14px;">
                 <a href="${escapeHtml(data.exportUrl)}" style="display:inline-block;padding:15px 28px;font-family:${FONT};font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:14px;">Ladda ned tryckfil</a>
               </td>
             </tr></table>
@@ -106,7 +106,7 @@ function buildEmailBody(data: OrderNotificationData): string {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#f4f3f1" style="background:#f4f3f1;">
   <tr><td align="center" style="padding:32px 12px;">
     <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;">
-      <tr><td style="padding:0 8px 20px;font-family:${FONT};font-size:26px;font-weight:800;letter-spacing:-0.5px;color:#111111;">Transfer<span style="color:#e63946;">craft</span></td></tr>
+      <tr><td style="padding:0 8px 20px;font-family:${FONT};font-size:26px;font-weight:800;letter-spacing:-0.5px;color:#111111;">Transfer<span style="color:#DC2F3C;">craft</span></td></tr>
       <tr><td bgcolor="#ffffff" style="background:#ffffff;border-radius:14px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           <tr><td style="padding:40px 40px 0;">
@@ -122,7 +122,7 @@ function buildEmailBody(data: OrderNotificationData): string {
               ${row("Filmtyp", escapeHtml(data.filmType))}
               ${row("Antal designs", escapeHtml(data.designCount))}
               ${row("Pris", `${escapeHtml(data.totalPrice)} kr`)}
-              ${data.customerEmail ? row("Kund", `<a href="mailto:${escapeHtml(data.customerEmail)}" style="color:#e63946;">${escapeHtml(data.customerEmail)}</a>`) : ""}
+              ${data.customerEmail ? row("Kund", `<a href="mailto:${escapeHtml(data.customerEmail)}" style="color:#DC2F3C;">${escapeHtml(data.customerEmail)}</a>`) : ""}
             </table>
           </td></tr>
         </table>
