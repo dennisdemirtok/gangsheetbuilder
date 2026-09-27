@@ -74,6 +74,12 @@ model GangSheet {
   shippingPrice     Float?   @map("shipping_price")
   shippingCurrency  String?  @map("shipping_currency")
   shippingBookedAt  DateTime? @map("shipping_booked_at")
+  /// When the order's files, label and details were emailed to the print
+  /// shop, and to which address. Same on every sheet of the order.
+  sentToPrintShopAt DateTime? @map("sent_to_print_shop_at")
+  sentToPrintShopTo String?   @map("sent_to_print_shop_to")
+  /// When the customer was told production has started — sent once.
+  productionMailSentAt DateTime? @map("production_mail_sent_at")
   /// Shopify fulfillment carrying the tracking to the customer, or why it failed.
   shopifyFulfillmentId String? @map("shopify_fulfillment_id")
   fulfillmentError  String?  @map("fulfillment_error")

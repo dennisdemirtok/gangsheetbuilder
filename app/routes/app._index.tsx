@@ -99,8 +99,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 /** The steps a paid sheet moves through, in the order the shop works them. */
 const STEPS = [
   { status: "pending", title: "Preparing file", hint: "Generated automatically" },
-  { status: "exported", title: "Ready to print", hint: "Download and print" },
-  { status: "downloaded", title: "Downloaded", hint: "Mark as printed when done" },
+  { status: "exported", title: "Ready to print", hint: "Send to the print shop" },
+  { status: "downloaded", title: "With print shop", hint: "Mark as printed when done" },
   { status: "printed", title: "Printed", hint: "Book pickup and ship" },
 ] as const;
 

@@ -3,6 +3,7 @@ import IORedis from "ioredis";
 import { exportGangSheetJob } from "./jobs/export-gang-sheet";
 import { removeBackgroundJob } from "./jobs/remove-background";
 import { cleanupExpiredJob } from "./jobs/cleanup-expired";
+import { fulfillDuePickups } from "../app/lib/order-shipment.server";
 
 const redisUrl = process.env.REDIS_URL;
 if (!redisUrl) {
@@ -76,11 +77,34 @@ cleanupWorker.on("failed", (job, err) => {
   console.error(`[cleanup] Job ${job?.id} failed:`, err);
 });
 
+/*
+ * Shipping confirmations: every 5 minutes, fulfil in Shopify the orders
+ * whose BWS courier has come (pickup time passed), which sends the customer
+ * Shopify's shipping email with the tracking link.
+ */
+const TRACKING_SWEEP_MS = 5 * 60 * 1000;
+let sweeping = false;
+async function sweepTracking() {
+  if (sweeping) return;
+  sweeping = true;
+  try {
+    const sent = await fulfillDuePickups();
+    if (sent > 0) console.log(`[tracking] Sent shipping confirmation for ${sent} order(s)`);
+  } catch (err) {
+    console.error("[tracking] Sweep failed:", err);
+  } finally {
+    sweeping = false;
+  }
+}
+const trackingTimer = setInterval(sweepTracking, TRACKING_SWEEP_MS);
+setTimeout(sweepTracking, 30_000);
+
 console.log("Workers started successfully.");
 
 // Graceful shutdown
 process.on("SIGTERM", async () => {
   console.log("Shutting down workers...");
+  clearInterval(trackingTimer);
   await Promise.all([
     exportWorker.close(),
     bgRemovalWorker.close(),

@@ -188,6 +188,11 @@ function addDays(date: string, days: number): string {
  * Today in Poland if it is a weekday and still before the pickup time,
  * otherwise the next weekday. The admin can override it per booking.
  */
+/** When the courier comes on a pickup date: 11:30 in Łódź, as a UTC instant. */
+export function pickupDateTime(date: string): Date {
+  return zonedToUtc(date, PICKUP_FROM, PICKUP_TIMEZONE);
+}
+
 export function defaultPickupDate(now: Date = new Date()): string {
   const local = localParts(now, PICKUP_TIMEZONE);
   let date = local.date;

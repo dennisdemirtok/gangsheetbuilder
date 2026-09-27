@@ -40,12 +40,13 @@ export const ORDER_STATUS: Record<OrderStatus, StatusInfo> = {
   exported: {
     label: "Ready to print",
     tone: "success",
-    hint: "Download the print file and print it.",
+    hint: "Send it to the print shop (right), or download the file and print it.",
   },
   downloaded: {
-    label: "Downloaded",
+    // Reached by downloading the file or by emailing it to the print shop.
+    label: "With print shop",
     tone: "info",
-    hint: "File downloaded. Mark as printed when done.",
+    hint: "The files are with the print shop. Mark as printed when done.",
   },
   printed: {
     label: "Printed",
@@ -82,7 +83,7 @@ export const STATUS_FILTERS: { label: string; value: string }[] = [
   { label: "To do", value: "open" },
   { label: "Preparing file", value: "pending" },
   { label: "Ready to print", value: "exported" },
-  { label: "Downloaded", value: "downloaded" },
+  { label: "With print shop", value: "downloaded" },
   { label: "Printed", value: "printed" },
   { label: "Shipped", value: "shipped" },
   { label: "All", value: "all" },

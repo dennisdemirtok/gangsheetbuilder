@@ -48,6 +48,8 @@ import {
   summarizeOrderShipment,
 } from "../lib/order-shipment.server";
 import { BwsShippingCard } from "../components/BwsShippingCard";
+import { missingMailConfig } from "../lib/mailer.server";
+import { sendOrderToPrintShop } from "../lib/print-shop-email.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -82,6 +84,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         packageCm: { ...PACKAGE_CM },
         missingConfig: missingPickupConfig(),
         services: BWS_SERVICES,
+        printShop: {
+          defaultTo: process.env.PRINT_SHOP_EMAIL || "biuro@fancywork.pl",
+          missingMail: missingMailConfig(),
+          customerEmail:
+            ((gangSheet.shippingAddress as { email?: string | null } | null)?.email) || null,
+        },
         isTest: isBwsTestEnvironment(),
         simulation: isSimulationEnabled(),
         simulated: Boolean(gangSheet.bwsBookingId?.startsWith(SIMULATED_PREFIX)),
@@ -179,6 +187,43 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       service: BWS_SERVICES.some((s) => s.code === service) ? service : undefined,
     });
     return json(result.ok ? { success: true } : { errors: result.errors });
+  } else if (action === "send_print_shop") {
+    if (!gangSheet.shopifyOrderId) {
+      return json({ errors: ["This sheet is not part of an order."] }, { status: 400 });
+    }
+    const to = String(formData.get("to") || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return json({ errors: ["Enter a valid email address for the print shop."] });
+    }
+    // Book first when asked, so the label goes in the same email.
+    if (formData.get("book") === "1" && gangSheet.shippingStatus !== "booked") {
+      const weight = parseFloat(String(formData.get("weightKg") || ""));
+      const pickupDate = String(formData.get("pickupDate") || "");
+      const service = String(formData.get("service") || "").trim();
+      const booking = await bookOrderShipment({
+        shopDomain: session.shop,
+        shopifyOrderId: gangSheet.shopifyOrderId,
+        pickupDate: /^\d{4}-\d{2}-\d{2}$/.test(pickupDate) ? pickupDate : undefined,
+        weightKg: weight > 0 && weight <= 30 ? weight : undefined,
+        service: BWS_SERVICES.some((s) => s.code === service) ? service : undefined,
+      });
+      if (!booking.ok) {
+        return json({ errors: ["BWS booking failed, nothing was sent.", ...booking.errors] });
+      }
+    }
+    const sent = await sendOrderToPrintShop({
+      shopDomain: session.shop,
+      shopifyOrderId: gangSheet.shopifyOrderId,
+      to,
+      message: String(formData.get("message") || ""),
+      notifyCustomer: formData.get("notifyCustomer") === "1",
+    });
+    if (!sent.ok) return json({ errors: sent.errors });
+    return json({
+      success: true,
+      errors: sent.errors,
+      notice: `Sent to ${to}${sent.attachedFiles ? " with the files attached" : " with download links"}${sent.customerNotified ? " · customer told production has started" : ""}.`,
+    });
   } else if (action === "send_tracking") {
     if (!gangSheet.shopifyOrderId) {
       return json({ errors: ["This sheet is not part of an order."] }, { status: 400 });

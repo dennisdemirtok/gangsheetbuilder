@@ -5,6 +5,7 @@ import { fulfillLineItemsWithTracking } from "./shopify-fulfillment.server";
 import {
   createBwsShipment,
   defaultPickupDate,
+  pickupDateTime,
   PICKUP_TIME,
   weightForMeters,
   type BwsAddress,
@@ -163,26 +164,20 @@ export async function bookOrderShipment(options: {
       await uploadFile(labelKey, result.label.data, result.label.contentType);
     }
 
-    // Tell the customer: fulfil the DTF line items with the tracking, which
-    // makes Shopify send its shipping confirmation. Presses and blanks on the
-    // same order are left untouched.
+    /*
+     * The customer is NOT told yet. Booking happens when the files go to the
+     * print shop, often the day before the courier comes; a "your order has
+     * shipped" email then would be a day early and the tracking link empty.
+     * fulfillDuePickups() fulfils the order in Shopify at the pickup time,
+     * which is what sends the customer Shopify's shipping confirmation.
+     */
     const trackingNumber = result.trackingNumbers.join(", ") || undefined;
-    const fulfillment = await fulfillLineItemsWithTracking({
-      shopDomain,
-      shopifyOrderId,
-      lineItemIds: sheets
-        .map((s) => s.shopifyLineItemId)
-        .filter((id): id is string => Boolean(id)),
-      trackingNumber: result.trackingNumbers[0],
-      trackingUrl: result.trackingUrl,
-    });
 
     await prisma.gangSheet.updateMany({
       where,
       data: {
-        shopifyFulfillmentId: fulfillment.ok ? fulfillment.fulfillmentIds.join(",") : null,
-        fulfillmentError: fulfillment.ok ? null : fulfillment.error,
-        ...(fulfillment.ok ? { status: "shipped", shippedAt: new Date() } : {}),
+        shopifyFulfillmentId: null,
+        fulfillmentError: null,
         shippingStatus: "booked",
         bwsBookingId: result.bookingId || null,
         trackingNumber: trackingNumber || null,
@@ -202,7 +197,6 @@ export async function bookOrderShipment(options: {
       ok: true,
       bookingId: result.bookingId,
       trackingNumbers: result.trackingNumbers,
-      fulfillmentError: fulfillment.ok ? undefined : fulfillment.error,
     };
   } catch (error) {
     const errors = [`Booking aborted: ${(error as Error).message}`];
@@ -252,4 +246,36 @@ async function fail(
     where,
     data: { shippingStatus: "failed", shippingError: errors.join(" · ").slice(0, 2000) },
   });
+}
+
+/**
+ * Tell customers their order is on its way once the courier has collected it.
+ *
+ * Runs every few minutes in the worker. Any booked order whose pickup time
+ * has passed and that is not yet fulfilled in Shopify gets fulfilled with the
+ * BWS tracking, which sends the customer Shopify's shipping confirmation.
+ * Kept as a sweep over the database rather than a delayed job, so nothing is
+ * lost if the queue restarts.
+ */
+export async function fulfillDuePickups(now: Date = new Date()): Promise<number> {
+  const due = await prisma.gangSheet.findMany({
+    where: {
+      shippingStatus: "booked",
+      shopifyFulfillmentId: null,
+      fulfillmentError: null,
+      pickupDate: { not: null },
+      shopifyOrderId: { not: null },
+    },
+    select: { shopDomain: true, shopifyOrderId: true, pickupDate: true },
+    distinct: ["shopDomain", "shopifyOrderId"],
+  });
+
+  let sent = 0;
+  for (const order of due) {
+    if (pickupDateTime(order.pickupDate!) > now) continue;
+    const result = await sendTrackingToCustomer(order.shopDomain, order.shopifyOrderId!);
+    if (result.ok) sent++;
+    else console.error(`[tracking] ${order.shopifyOrderId}: ${result.error}`);
+  }
+  return sent;
 }
