@@ -23,6 +23,16 @@ const MAX_ATTACH_BYTES = 17 * 1024 * 1024;
 const FONT = "'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif";
 const RED = "#DC2F3C";
 
+/*
+ * The storefront's wordmark as a PNG — email clients drop SVG. Served from
+ * the app's public folder (public/brand); the text "Transfercraft" in bold
+ * that the emails used did not match the site.
+ */
+function brandImg(): string {
+  const base = (process.env.SHOPIFY_APP_URL || "").replace(/\/$/, "");
+  return `<img src="${base}/brand/tc-wordmark.png" width="150" height="19" alt="Transfercraft" style="display:block;border:0;width:150px;height:auto;">`;
+}
+
 type Sheet = Awaited<ReturnType<typeof loadOrder>>[number];
 
 function loadOrder(shopDomain: string, shopifyOrderId: string) {
@@ -165,7 +175,7 @@ function printShopHtml({ sheets, files, attachFiles, hasLabel, message }: PrintS
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#f4f3f1" style="background:#f4f3f1;">
   <tr><td align="center" style="padding:24px 12px;">
     <table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:100%;max-width:640px;">
-      <tr><td style="padding:0 8px 14px;font-family:${FONT};font-size:18px;font-weight:800;color:#111;">Transfer<span style="color:${RED};">craft</span></td></tr>
+      <tr><td style="padding:0 8px 16px;">${brandImg()}</td></tr>
       <tr><td bgcolor="#ffffff" style="background:#fff;border-radius:14px;padding-bottom:28px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           <tr><td style="padding:28px 32px 0;font-family:${FONT};">
@@ -302,7 +312,7 @@ function productionMail(sheets: Sheet[]) {
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="#f4f3f1" style="background:#f4f3f1;">
   <tr><td align="center" style="padding:32px 12px;">
     <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;">
-      <tr><td style="padding:0 8px 16px;font-family:${FONT};font-size:18px;font-weight:800;color:#111;">Transfer<span style="color:${RED};">craft</span></td></tr>
+      <tr><td style="padding:0 8px 18px;">${brandImg()}</td></tr>
       <tr><td bgcolor="#ffffff" style="background:#fff;border-radius:14px;padding:32px;font-family:${FONT};color:#333;font-size:15px;line-height:1.6;">
         <div style="font-size:12px;font-weight:700;color:${RED};text-transform:uppercase;letter-spacing:.5px;">Order ${esc(order)}</div>
         <div style="padding-top:6px;font-size:22px;font-weight:700;color:#111;">Vi har börjat tillverka din order</div>

@@ -109,13 +109,6 @@ export interface BwsShipmentInput {
 export const BWS_SERVICES: { code: string; label: string; hint: string }[] = [
   { code: "EXP", label: "Blue Express", hint: "" },
   { code: "ECO", label: "Blue Economy", hint: "" },
-  /*
-   * No Service code at all. BWS rejected both named services on our first
-   * production booking with "No service found matching the given service
-   * group", which is their account-side list of allowed services — leaving
-   * the code out lets their booking settings decide.
-   */
-  { code: "", label: "BWS default", hint: "Let BWS choose from our agreement" },
 ];
 
 export function serviceLabel(code: string | null | undefined): string {

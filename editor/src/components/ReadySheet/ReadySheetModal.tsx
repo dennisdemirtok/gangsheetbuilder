@@ -1,3 +1,4 @@
+import { Wordmark } from "../Brand/Wordmark";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   analyzeReadySheet,
@@ -200,9 +201,7 @@ export function ReadySheetModal({ onClose }: { onClose: () => void }) {
   return (
     <div style={S.shell}>
       <header style={S.header}>
-        <span style={S.wordmark}>
-          Transfer<span style={{ color: theme.accent }}>craft</span>
-        </span>
+        <Wordmark />
         <span style={S.headerSub}>Färdigt ark</span>
         <div style={{ flex: 1 }} />
         <button onClick={onClose} style={S.headerBtn}>
@@ -422,12 +421,6 @@ const S: Record<string, React.CSSProperties> = {
     gap: 12,
     padding: "0 20px",
     background: theme.headerBg,
-  },
-  wordmark: {
-    fontSize: theme.fontSize.titleLg,
-    fontWeight: theme.fontWeight.bold,
-    color: "#fff",
-    letterSpacing: theme.letterSpacing.tight,
   },
   headerSub: { fontSize: theme.fontSize.bodySm, color: "rgba(255,255,255,0.55)" },
   headerBtn: {

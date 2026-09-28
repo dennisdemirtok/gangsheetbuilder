@@ -1,3 +1,4 @@
+import { Wordmark } from "./components/Brand/Wordmark";
 import { useEffect, useState } from "react";
 import { GangSheetCanvas } from "./components/Canvas/GangSheetCanvas";
 import { LeftSidebar, TabContent, TABS, type TabKey } from "./components/LeftSidebar/LeftSidebar";
@@ -492,22 +493,6 @@ const canvasStyle: React.CSSProperties = {
   minWidth: 0,
   minHeight: 0,
 };
-
-function Wordmark() {
-  return (
-    <span
-      style={{
-        fontSize: theme.fontSize.titleLg,
-        fontWeight: theme.fontWeight.bold,
-        color: theme.textWhite,
-        letterSpacing: theme.letterSpacing.tight,
-        whiteSpace: "nowrap",
-      }}
-    >
-      Transfer<span style={{ color: theme.accent }}>craft</span>
-    </span>
-  );
-}
 
 function PriceBadge() {
   const { sheets, prices, sheetSize, filmType, activeSheetIndex, images } =
