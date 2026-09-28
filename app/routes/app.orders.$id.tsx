@@ -46,6 +46,7 @@ import {
   SIMULATED_PREFIX,
 } from "../lib/bws-shipping.server";
 import {
+  registerManualBooking,
   bookOrderShipment,
   sendTrackingToCustomer,
   summarizeOrderShipment,
@@ -201,6 +202,30 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({
       downloadUrl: await getPresignedAttachmentUrl(file.url, printFileName(job, file.format)),
     });
+  }
+
+  if (action === "register_booking") {
+    if (!gangSheet.shopifyOrderId) {
+      return json({ errors: ["This sheet is not part of an order."] }, { status: 400 });
+    }
+    const label = formData.get("label");
+    const hasLabel = label instanceof Blob && label.size > 0;
+    if (hasLabel && label.size > 20 * 1024 * 1024) {
+      return json({ errors: ["The label file is larger than 20 MB."] });
+    }
+    const service = String(formData.get("service") || "");
+    const result = await registerManualBooking({
+      shopDomain: session.shop,
+      shopifyOrderId: gangSheet.shopifyOrderId,
+      bookingId: String(formData.get("bookingId") || ""),
+      trackingNumber: String(formData.get("trackingNumber") || ""),
+      pickupDate: String(formData.get("pickupDate") || ""),
+      service: BWS_SERVICES.some((s) => s.code === service) ? service : undefined,
+      label: hasLabel
+        ? { buffer: Buffer.from(await label.arrayBuffer()), filename: (label as File).name || "label.pdf" }
+        : undefined,
+    });
+    return json(result.ok ? { success: true, notice: "Booking saved. You can send the order to the print shop now." } : { errors: result.errors });
   }
 
   if (action === "replace_file") {

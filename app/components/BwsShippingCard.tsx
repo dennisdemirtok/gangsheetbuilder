@@ -98,6 +98,22 @@ export function BwsShippingCard({
   const [message, setMessage] = useState("");
   const [notify, setNotify] = useState(!sheet.productionMailSentAt);
   const [showResend, setShowResend] = useState(false);
+  // A pickup booked by hand in the BWS portal, registered with its label.
+  const [manual, setManual] = useState(false);
+  const [manualBooking, setManualBooking] = useState("");
+  const [manualTracking, setManualTracking] = useState("");
+  const [manualDate, setManualDate] = useState(shipping.summary.pickupDate);
+  const [manualLabel, setManualLabel] = useState<File | null>(null);
+  const registerManual = () => {
+    const data = new FormData();
+    data.append("action", "register_booking");
+    data.append("bookingId", manualBooking);
+    data.append("trackingNumber", manualTracking);
+    data.append("pickupDate", manualDate);
+    data.append("service", service);
+    if (manualLabel) data.append("label", manualLabel);
+    fetcher.submit(data, { method: "post", encType: "multipart/form-data" });
+  };
 
   const busy = fetcher.state !== "idle" || sheet.shippingStatus === "booking";
   useEffect(() => {
@@ -230,6 +246,45 @@ export function BwsShippingCard({
             </InlineStack>
             {bwsMissing.length > 0 && (
               <Banner tone="warning">Missing server settings: {bwsMissing.join(", ")}</Banner>
+            )}
+            {!manual ? (
+              <InlineStack>
+                <Button variant="plain" onClick={() => setManual(true)}>
+                  Booked in the BWS portal? Add it here
+                </Button>
+              </InlineStack>
+            ) : (
+              <BlockStack gap="200">
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Enter the booking and upload the label PDF from the BWS portal. It is then
+                  sent to the print shop, and the customer gets the tracking at pickup.
+                </Text>
+                <InlineStack gap="200" wrap={false}>
+                  <TextField label="BWS booking no." value={manualBooking} onChange={setManualBooking} autoComplete="off" placeholder="BWC…" />
+                  <TextField label="Tracking no." value={manualTracking} onChange={setManualTracking} autoComplete="off" />
+                </InlineStack>
+                <TextField label="Pickup date" type="date" value={manualDate} onChange={setManualDate} autoComplete="off" />
+                <div>
+                  <Text as="p" variant="bodyMd">Label (PDF)</Text>
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.zpl"
+                    onChange={(e) => setManualLabel(e.currentTarget.files?.[0] ?? null)}
+                  />
+                </div>
+                <InlineStack gap="200">
+                  <Button
+                    onClick={registerManual}
+                    loading={busy}
+                    disabled={busy || (!manualBooking.trim() && !manualTracking.trim())}
+                  >
+                    Save booking
+                  </Button>
+                  <Button variant="plain" onClick={() => setManual(false)}>
+                    Cancel
+                  </Button>
+                </InlineStack>
+              </BlockStack>
             )}
           </BlockStack>
         )}

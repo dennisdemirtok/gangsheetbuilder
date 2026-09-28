@@ -281,3 +281,66 @@ export async function fulfillDuePickups(now: Date = new Date()): Promise<number>
   }
   return sent;
 }
+
+/** A carrier tracking link from the number on the label. */
+export function trackingUrlFor(trackingNumber: string): string | null {
+  const n = trackingNumber.replace(/\s+/g, "");
+  if (/^1Z[0-9A-Z]{16}$/i.test(n)) return `https://www.ups.com/track?tracknum=${n}`;
+  if (/^\d{12}$|^\d{15}$|^\d{20,22}$/.test(n)) return `https://www.fedex.com/fedextrack/?trknbr=${n}`;
+  if (/^\d{10}$/.test(n)) return `https://www.dhl.com/se-sv/home/tracking.html?tracking-id=${n}`;
+  return null;
+}
+
+/**
+ * Record a pickup booked by hand in the BWS portal, with its label.
+ *
+ * The API can create bookings but not fetch one made elsewhere, so the shop
+ * uploads the label PDF. From here the order behaves exactly like an app
+ * booking: the label goes to the print shop, and the customer gets the
+ * tracking email at the pickup time.
+ */
+export async function registerManualBooking(options: {
+  shopDomain: string;
+  shopifyOrderId: string;
+  bookingId: string;
+  trackingNumber: string;
+  pickupDate: string;
+  service?: string;
+  label?: { buffer: Buffer; filename: string };
+}): Promise<{ ok: true } | { ok: false; errors: string[] }> {
+  const where = { shopDomain: options.shopDomain, shopifyOrderId: options.shopifyOrderId };
+  const tracking = options.trackingNumber.replace(/\s+/g, "");
+  if (!options.bookingId.trim() && !tracking) {
+    return { ok: false, errors: ["Enter the BWS booking number or the tracking number."] };
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(options.pickupDate)) {
+    return { ok: false, errors: ["Enter the pickup date."] };
+  }
+
+  let labelKey: string | null = null;
+  if (options.label) {
+    const ext = (options.label.filename.split(".").pop() || "pdf").toLowerCase().slice(0, 4);
+    labelKey = `labels/${options.shopifyOrderId}/bws-label-${Date.now().toString(36)}.${ext}`;
+    await uploadFile(labelKey, options.label.buffer, ext === "pdf" ? "application/pdf" : "application/octet-stream");
+  }
+
+  await prisma.gangSheet.updateMany({
+    where,
+    data: {
+      shippingStatus: "booked",
+      shippingError: null,
+      bwsBookingId: options.bookingId.trim() || null,
+      trackingNumber: tracking || null,
+      trackingUrl: tracking ? trackingUrlFor(tracking) : null,
+      pickupDate: options.pickupDate,
+      shippingService: options.service || null,
+      shippingPrice: null,
+      shippingCurrency: null,
+      shippingBookedAt: new Date(),
+      shopifyFulfillmentId: null,
+      fulfillmentError: null,
+      ...(labelKey ? { shippingLabelKey: labelKey } : {}),
+    },
+  });
+  return { ok: true };
+}
