@@ -17,6 +17,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { pingRedis } from "../lib/queue.server";
+import { verifyMail } from "../lib/mailer.server";
 import { EDGE_MARGIN_MM } from "../lib/placement";
 import { SHEET_WIDTH_MM } from "../lib/constants";
 import { orderLabel, timeAgo } from "../lib/order-status";
@@ -47,7 +48,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shopDomain = session.shop;
 
-  const [redisOk, latestOrder, designCount, fileCount, pricingProduct] =
+  const [redisOk, latestOrder, designCount, fileCount, pricingProduct, mail] =
     await Promise.all([
       pingRedis(),
       prisma.gangSheet.findFirst({
@@ -68,6 +69,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         .then((r) => r.json())
         .then((b) => b.data?.productByHandle ?? null)
         .catch(() => null),
+      verifyMail(),
     ]);
 
   const pickup = getPickupAddress();
@@ -81,6 +83,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           process.env.R2_ACCESS_KEY_ID &&
           process.env.R2_SECRET_ACCESS_KEY,
       ),
+      mail,
+      mailFrom: process.env.SMTP_USER || null,
+      printShopEmail: process.env.PRINT_SHOP_EMAIL || "biuro@fancywork.pl",
       latestOrder: latestOrder
         ? `${orderLabel(latestOrder)} · ${timeAgo(latestOrder.createdAt)}`
         : null,
@@ -144,6 +149,17 @@ export default function SettingsPage() {
                 ok={status.storage}
                 problem="Not configured"
               />
+              <StatusRow
+                label={`Email${status.mailFrom ? ` (${status.mailFrom})` : ""}`}
+                ok={status.mail.ok}
+                problem="Cannot log in"
+              />
+              {!status.mail.ok && status.mail.error && (
+                <Text as="p" variant="bodySm" tone="critical">
+                  {status.mail.error}
+                </Text>
+              )}
+              <Row label="Print shop email" value={status.printShopEmail} />
               <Divider />
               <Row
                 label="Latest paid order"

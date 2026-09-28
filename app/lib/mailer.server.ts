@@ -49,7 +49,8 @@ function getTransport() {
       host: process.env.SMTP_HOST || "smtp.gmail.com",
       port,
       secure: port === 465,
-      auth: { user: SMTP_USER(), pass: process.env.SMTP_PASS || "" },
+      // Google shows app passwords in groups of four ("abcd efgh …").
+      auth: { user: SMTP_USER(), pass: (process.env.SMTP_PASS || "").replace(/\s+/g, "") },
     });
   }
   return transport;
@@ -70,4 +71,19 @@ export async function sendMail(mail: OutgoingMail): Promise<{ messageId: string 
     attachments: mail.attachments,
   });
   return { messageId: info.messageId };
+}
+
+/** Logs in to the mail server without sending anything — for the settings page. */
+export async function verifyMail(): Promise<{ ok: boolean; error?: string }> {
+  const missing = missingMailConfig();
+  if (missing.length > 0) return { ok: false, error: `Missing ${missing.join(", ")}` };
+  try {
+    await Promise.race([
+      getTransport().verify(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("timed out")), 8000)),
+    ]);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: (error as Error).message.slice(0, 200) };
+  }
 }
