@@ -32,6 +32,7 @@ import {
 import { withOrderDetails } from "../lib/order-details.server";
 import { jobSize, printLabel, type LineProperty } from "../lib/print-jobs";
 import { orderStatusOf } from "../lib/order-list.server";
+import { isVectorFormat, storeJobFile } from "../lib/job-file.server";
 import { saveBlob } from "../lib/save-file";
 import { saveUrl } from "../lib/save-file";
 import {
@@ -73,7 +74,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     orderBy: { createdAt: "asc" },
     include: {
       exports: { orderBy: { createdAt: "desc" }, take: 1 },
-      images: { select: { dpiX: true }, take: 1 },
+      images: { select: { dpiX: true, originalFilename: true }, take: 1 },
       _count: { select: { images: true } },
     },
   });
@@ -118,7 +119,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     shipping,
     jobs: jobs.map((job, i) => {
       const file = job.exports[0];
-      const dpi = job.kind === "cut" ? job.images[0]?.dpiX ?? null : null;
+      const vector = job.kind === "cut" && isVectorFormat(file?.format);
+      const dpi = job.kind === "cut" && !vector ? job.images[0]?.dpiX ?? null : null;
       return {
         id: job.id,
         label: printLabel(job),
@@ -133,6 +135,9 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         ),
         previewUrl: previews[i],
         hasFile: Boolean(file),
+        vector,
+        cutJob: job.kind === "cut",
+        filename: job.kind === "cut" ? job.images[0]?.originalFilename ?? null : null,
         missingFile: job.kind === "cut" && !job.sourceFileUrl,
         fileMeta: file
           ? `${file.format.toUpperCase()}${file.fileSizeBytes ? ` ${(file.fileSizeBytes / 1024 / 1024).toFixed(1)} MB` : ""}`
@@ -195,6 +200,49 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     }
     return json({
       downloadUrl: await getPresignedAttachmentUrl(file.url, printFileName(job, file.format)),
+    });
+  }
+
+  if (action === "replace_file") {
+    /*
+     * Swap a customer's file for a corrected one before it goes to the print
+     * shop — e.g. a logo that came in as an unusable EPS. The old file stays
+     * in storage; a note on the order records the swap.
+     */
+    const jobId = String(formData.get("jobId") || "");
+    const job = await prisma.gangSheet.findFirst({
+      where: {
+        id: jobId,
+        shopDomain: session.shop,
+        ...(gangSheet.shopifyOrderId ? { shopifyOrderId: gangSheet.shopifyOrderId } : { id: gangSheet.id }),
+      },
+      include: { images: { select: { originalFilename: true }, take: 1 } },
+    });
+    const upload = formData.get("file");
+    if (!job) return json({ errors: ["Print job not found."] }, { status: 404 });
+    if (!(upload instanceof Blob) || upload.size === 0) {
+      return json({ errors: ["Choose a file to upload."] });
+    }
+    if (upload.size > 150 * 1024 * 1024) {
+      return json({ errors: ["The file is larger than 150 MB."] });
+    }
+    const name = (upload as File).name || "motif";
+    const result = await storeJobFile({
+      jobId: job.id,
+      buffer: Buffer.from(await upload.arrayBuffer()),
+      filename: name,
+      contentType: upload.type,
+    });
+    await prisma.gangSheetNote.create({
+      data: {
+        gangSheetId: job.id,
+        author: session.shop,
+        body: `File replaced: ${name} (was ${job.images[0]?.originalFilename ?? "no file"})`,
+      },
+    });
+    return json({
+      replaced: true,
+      notice: `${name} uploaded${result.vector ? " · vector" : result.dpi ? ` · ${result.dpi} DPI at print size` : ""}${result.hasPreview ? "" : " · no preview for this format"}`,
     });
   }
 
@@ -491,7 +539,8 @@ export default function OrderDetailPage() {
                         flexShrink: 0,
                         borderRadius: 8,
                         border: "1px solid #e1e3e5",
-                        background: "repeating-conic-gradient(#f1f1f1 0% 25%, #fff 0% 50%) 50%/12px 12px",
+                        // Mid-grey checks: white logos vanish on a white one.
+                        background: "repeating-conic-gradient(#9e9e9e 0% 25%, #bdbdbd 0% 50%) 50%/12px 12px",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -522,7 +571,8 @@ export default function OrderDetailPage() {
                         <Text as="p" variant="bodySm" tone="subdued">
                           {[
                             job.cut ? "Print and cut out each copy" : `Print as is · ${job.designs} design${job.designs === 1 ? "" : "s"}`,
-                            job.dpi != null ? `${job.dpi} DPI at print size` : null,
+                            job.vector ? "Vector file" : job.dpi != null ? `${job.dpi} DPI at print size` : null,
+                            job.filename,
                             job.fileMeta,
                           ]
                             .filter(Boolean)
@@ -546,11 +596,14 @@ export default function OrderDetailPage() {
                         ))}
                       </BlockStack>
                     </div>
-                    {job.hasFile && (
-                      <Button onClick={() => download("file", job.id)} loading={downloading === job.id}>
-                        Download
-                      </Button>
-                    )}
+                    <BlockStack gap="200" inlineAlign="end">
+                      {job.hasFile && (
+                        <Button onClick={() => download("file", job.id)} loading={downloading === job.id}>
+                          Download
+                        </Button>
+                      )}
+                      {job.cutJob && <ReplaceFileButton jobId={job.id} />}
+                    </BlockStack>
                   </InlineStack>
                 </Box>
               ))}
@@ -660,5 +713,49 @@ export default function OrderDetailPage() {
         </Layout.Section>
       </Layout>
     </Page>
+  );
+}
+
+/**
+ * Upload a corrected file for one print job. The file input is hidden; the
+ * button opens it, and the upload starts as soon as a file is picked.
+ */
+function ReplaceFileButton({ jobId }: { jobId: string }) {
+  const fetcher = useFetcher<{ replaced?: boolean; notice?: string; errors?: string[] }>();
+  const shopify = useAppBridge();
+  const inputId = `replace-${jobId}`;
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    if (fetcher.data.replaced) shopify.toast.show(fetcher.data.notice || "File replaced");
+    else if (fetcher.data.errors) shopify.toast.show(fetcher.data.errors.join(" "), { isError: true });
+  }, [fetcher.state, fetcher.data, shopify]);
+
+  return (
+    <>
+      <input
+        id={inputId}
+        type="file"
+        accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,.eps,.ai,.pdf,.svg"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.currentTarget.files?.[0];
+          if (!file) return;
+          const data = new FormData();
+          data.append("action", "replace_file");
+          data.append("jobId", jobId);
+          data.append("file", file);
+          fetcher.submit(data, { method: "post", encType: "multipart/form-data" });
+          e.currentTarget.value = "";
+        }}
+      />
+      <Button
+        variant="plain"
+        loading={fetcher.state !== "idle"}
+        onClick={() => document.getElementById(inputId)?.click()}
+      >
+        Replace file
+      </Button>
+    </>
   );
 }

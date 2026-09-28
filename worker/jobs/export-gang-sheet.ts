@@ -10,6 +10,7 @@ import {
   parseStoredPlacements,
   resolveRasterKey,
 } from "../../app/lib/placement";
+import { storeJobFile } from "../../app/lib/job-file.server";
 
 const prisma = new PrismaClient();
 
@@ -139,72 +140,11 @@ async function importCutMotif(
   if (buffer.length > MAX_MOTIF_BYTES) throw new Error("Motif is larger than 200 MB");
 
   const originalName = decodeURIComponent(source.pathname.split("/").pop() || "motif");
-  const ext = (originalName.split(".").pop() || "bin").toLowerCase().slice(0, 5);
-  const contentType = res.headers.get("content-type") || "application/octet-stream";
-  const fileKey = `exports/${gangSheet.id}/motif.${ext}`;
-  await uploadToR2(fileKey, buffer, contentType);
-
-  let widthPx = 0;
-  let heightPx = 0;
-  let previewKey: string | null = null;
-  try {
-    const meta = await sharp(buffer, { limitInputPixels: false }).metadata();
-    widthPx = meta.width || 0;
-    heightPx = meta.height || 0;
-    const preview = await sharp(buffer, { limitInputPixels: false })
-      .resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true })
-      .webp({ quality: 85 })
-      .toBuffer();
-    previewKey = `exports/${gangSheet.id}/preview.webp`;
-    await uploadToR2(previewKey, preview, "image/webp");
-  } catch {
-    // PDF, AI and the like: the file still downloads, just without a preview.
-  }
-
-  // Resolution at the ordered print width, so a low-res logo is visible.
-  const effectiveDpi =
-    widthPx > 0 && gangSheet.widthMm > 0
-      ? Math.round(widthPx / (gangSheet.widthMm / 25.4))
-      : null;
-
-  await prisma.gangSheetImage.deleteMany({ where: { gangSheetId: gangSheet.id } });
-  await prisma.gangSheetImage.create({
-    data: {
-      gangSheetId: gangSheet.id,
-      originalUrl: fileKey,
-      thumbnailUrl: previewKey,
-      originalFilename: originalName,
-      mimeType: contentType,
-      fileSizeBytes: buffer.length,
-      widthPx,
-      heightPx,
-      dpiX: effectiveDpi,
-      dpiY: effectiveDpi,
-      displayWidth: gangSheet.widthMm || null,
-      displayHeight: gangSheet.heightMm || null,
-      quantity: gangSheet.lineQuantity || 1,
-    },
-  });
-
-  await prisma.gangSheetExport.deleteMany({ where: { gangSheetId: gangSheet.id } });
-  await prisma.gangSheetExport.create({
-    data: {
-      gangSheetId: gangSheet.id,
-      format: ext,
-      url: fileKey,
-      fileSizeBytes: buffer.length,
-      dpi: effectiveDpi ?? EXPORT_DPI,
-    },
-  });
-
-  await prisma.gangSheet.update({
-    where: { id: gangSheet.id },
-    data: {
-      status: "exported",
-      exportUrl: fileKey,
-      previewUrl: previewKey,
-      imagesCount: 1,
-    },
+  await storeJobFile({
+    jobId: gangSheet.id,
+    buffer,
+    filename: originalName,
+    contentType: res.headers.get("content-type"),
   });
 }
 
