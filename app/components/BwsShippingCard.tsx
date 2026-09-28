@@ -255,11 +255,10 @@ export function BwsShippingCard({
           <BlockStack gap="300">
             <TextField
               label="Send to print shop"
-              type="email"
               value={to}
               onChange={setTo}
-              autoComplete="email"
-              helpText="Files, label and order details, in Polish and English."
+              autoComplete="off"
+              helpText="Files, label and order details, in Polish and English. Several addresses: separate with commas."
             />
             <TextField
               label="Message (optional)"

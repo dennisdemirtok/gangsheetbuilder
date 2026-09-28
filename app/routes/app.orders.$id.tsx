@@ -285,10 +285,22 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     if (!gangSheet.shopifyOrderId) {
       return json({ errors: ["This sheet is not part of an order."] }, { status: 400 });
     }
-    const to = String(formData.get("to") || "").trim();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
-      return json({ errors: ["Enter a valid email address for the print shop."] });
+    // One or more addresses, e.g. the print shop and a copy to ourselves.
+    const recipients = String(formData.get("to") || "")
+      .split(/[,;\s]+/)
+      .map((a) => a.trim())
+      .filter(Boolean);
+    const invalid = recipients.filter((a) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a));
+    if (recipients.length === 0 || invalid.length > 0 || recipients.length > 5) {
+      return json({
+        errors: [
+          invalid.length > 0
+            ? `Not a valid email address: ${invalid.join(", ")}`
+            : "Enter up to five email addresses, separated by commas.",
+        ],
+      });
     }
+    const to = [...new Set(recipients)].join(", ");
     // Book first when asked, so the label goes in the same email.
     if (formData.get("book") === "1" && gangSheet.shippingStatus !== "booked") {
       const weight = parseFloat(String(formData.get("weightKg") || ""));
