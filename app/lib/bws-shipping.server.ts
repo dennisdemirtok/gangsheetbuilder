@@ -251,6 +251,14 @@ export function buildShippingOrder(input: BwsShipmentInput) {
   const pickup = IS_TEST_API ? { ...getPickupAddress(), ...TEST_PICKUP } : getPickupAddress();
   // On TEST only ECO books; in production the shop picks per booking.
   const serviceCode = IS_TEST_API ? TEST_SERVICE : input.service || BWS_SERVICE;
+  /*
+   * Seen from our customer number (a Swedish company), parcels collected in
+   * Poland and delivered in Sweden are an IMPORT. Sending "Export" made BWS
+   * answer "No service found matching the given service group" — their
+   * integration team pointed it out. The TEST identity books from Denmark,
+   * which is an export there.
+   */
+  const quoteType = IS_TEST_API ? "Export" : process.env.BWS_QUOTE_TYPE || "Import";
   const from = zonedToUtc(input.pickupDate, PICKUP_FROM, PICKUP_TIMEZONE);
   const until = zonedToUtc(input.pickupDate, PICKUP_UNTIL, PICKUP_TIMEZONE);
   const value = { Value: input.valueSEK, Currency: "Sek" };
@@ -285,7 +293,7 @@ export function buildShippingOrder(input: BwsShipmentInput) {
           FromDateTime: from.toISOString(),
           ToDateTime: until.toISOString(),
         },
-        TransportDetails: { Mode: "Courier", QuoteType: "Export" },
+        TransportDetails: { Mode: "Courier", QuoteType: quoteType },
         Addresses: {
           ConsignorAddress: pickupAddress,
           DespatchPartyAddress: pickupAddress,
