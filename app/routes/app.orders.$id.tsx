@@ -31,6 +31,8 @@ import {
 } from "../lib/order-status";
 import { withOrderDetails } from "../lib/order-details.server";
 import { jobSize, printLabel, type LineProperty } from "../lib/print-jobs";
+import { orderStatusOf } from "../lib/order-list.server";
+import { saveBlob } from "../lib/save-file";
 import { saveUrl } from "../lib/save-file";
 import {
   BWS_SERVICES,
@@ -54,27 +56,39 @@ import { sendOrderToPrintShop } from "../lib/print-shop-email.server";
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
 
-  const found = await prisma.gangSheet.findUnique({
-    where: { id: params.id },
-    include: {
-      images: true,
-      exports: { orderBy: { createdAt: "desc" } },
-      notes: { orderBy: { createdAt: "desc" } },
-    },
-  });
-
+  const found = await prisma.gangSheet.findUnique({ where: { id: params.id } });
   if (!found || found.shopDomain !== session.shop) {
     throw new Response("Not found", { status: 404 });
   }
 
-  const [[gangSheet], previewUrl, summary] = await Promise.all([
+  /*
+   * The page is the whole Shopify order. Every printed line is its own job
+   * in the database, and the page used to show just one of them: an order
+   * with four cut motifs meant four pages to go through.
+   */
+  const jobs = await prisma.gangSheet.findMany({
+    where: found.shopifyOrderId
+      ? { shopDomain: session.shop, shopifyOrderId: found.shopifyOrderId }
+      : { id: found.id },
+    orderBy: { createdAt: "asc" },
+    include: {
+      exports: { orderBy: { createdAt: "desc" }, take: 1 },
+      images: { select: { dpiX: true }, take: 1 },
+      _count: { select: { images: true } },
+    },
+  });
+
+  const [[gangSheet], notes, previews, summary] = await Promise.all([
     withOrderDetails(admin, session.shop, [found]),
-    found.previewUrl ? getPresignedDownloadUrl(found.previewUrl) : null,
-    // BWS booking is per Shopify order, so only sheets that belong to one get it.
-    found.shopifyOrderId
-      ? summarizeOrderShipment(session.shop, found.shopifyOrderId)
-      : null,
+    prisma.gangSheetNote.findMany({
+      where: { gangSheetId: { in: jobs.map((j) => j.id) } },
+      orderBy: { createdAt: "desc" },
+    }),
+    Promise.all(jobs.map((j) => (j.previewUrl ? getPresignedDownloadUrl(j.previewUrl) : null))),
+    found.shopifyOrderId ? summarizeOrderShipment(session.shop, found.shopifyOrderId) : null,
   ]);
+
+  const orderStatus = orderStatusOf(jobs);
 
   const shipping = summary
     ? {
@@ -97,11 +111,34 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     : null;
 
   return json({
-    gangSheet,
+    gangSheet: { ...gangSheet, status: orderStatus, notes },
+    orderStatus,
     orderedAt: formatDateTime(gangSheet.createdAt),
-    previewUrl,
     hasLabel: Boolean(gangSheet.shippingLabelKey),
     shipping,
+    jobs: jobs.map((job, i) => {
+      const file = job.exports[0];
+      const dpi = job.kind === "cut" ? job.images[0]?.dpiX ?? null : null;
+      return {
+        id: job.id,
+        label: printLabel(job),
+        cut: job.kind === "cut",
+        size: jobSize(job),
+        status: job.status,
+        filmType: job.filmType,
+        designs: job._count.images,
+        dpi,
+        props: ((job.lineProperties as LineProperty[] | null) || []).filter(
+          (p) => !/bredd|höjd|hojd|width|height/i.test(p.name),
+        ),
+        previewUrl: previews[i],
+        hasFile: Boolean(file),
+        missingFile: job.kind === "cut" && !job.sourceFileUrl,
+        fileMeta: file
+          ? `${file.format.toUpperCase()}${file.fileSizeBytes ? ` ${(file.fileSizeBytes / 1024 / 1024).toFixed(1)} MB` : ""}`
+          : null,
+      };
+    }),
   });
 };
 
@@ -135,37 +172,46 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
 
-    const exportId = String(formData.get("exportId") || "");
-    const file = await prisma.gangSheetExport.findFirst({
-      where: { gangSheetId: gangSheet.id, ...(exportId ? { id: exportId } : {}) },
-      orderBy: { createdAt: "desc" },
+    // Any job of this order; the page lists them all.
+    const jobId = String(formData.get("jobId") || gangSheet.id);
+    const job = await prisma.gangSheet.findFirst({
+      where: {
+        id: jobId,
+        shopDomain: session.shop,
+        ...(gangSheet.shopifyOrderId ? { shopifyOrderId: gangSheet.shopifyOrderId } : { id: gangSheet.id }),
+      },
     });
-    if (!file) return json({ error: "No print file yet" }, { status: 404 });
+    const file = job
+      ? await prisma.gangSheetExport.findFirst({
+          where: { gangSheetId: job.id },
+          orderBy: { createdAt: "desc" },
+        })
+      : null;
+    if (!job || !file) return json({ error: "No print file yet" }, { status: 404 });
 
     // Downloading is the step itself — the shop should not have to report it.
-    if (gangSheet.status === "exported") {
-      await prisma.gangSheet.update({
-        where: { id: gangSheet.id },
-        data: { status: "downloaded" },
-      });
+    if (job.status === "exported") {
+      await prisma.gangSheet.update({ where: { id: job.id }, data: { status: "downloaded" } });
     }
     return json({
-      downloadUrl: await getPresignedAttachmentUrl(
-        file.url,
-        printFileName(gangSheet, file.format),
-      ),
+      downloadUrl: await getPresignedAttachmentUrl(file.url, printFileName(job, file.format)),
     });
   }
 
+  // Status buttons act on the whole order: every job is printed together.
+  const wholeOrder = gangSheet.shopifyOrderId
+    ? { shopDomain: session.shop, shopifyOrderId: gangSheet.shopifyOrderId }
+    : { id: gangSheet.id };
+
   if (action === "mark_printed") {
-    await prisma.gangSheet.update({
-      where: { id: params.id },
+    await prisma.gangSheet.updateMany({
+      where: { ...wholeOrder, status: { not: "shipped" } },
       data: { status: "printed" },
     });
   } else if (action === "mark_shipped") {
     const tracking = String(formData.get("trackingNumber") || "").trim();
-    await prisma.gangSheet.update({
-      where: { id: params.id },
+    await prisma.gangSheet.updateMany({
+      where: wholeOrder,
       data: {
         status: "shipped",
         shippedAt: new Date(),
@@ -259,47 +305,56 @@ interface ShippingAddress {
 }
 
 export default function OrderDetailPage() {
-  const { gangSheet, orderedAt, previewUrl, hasLabel, shipping } =
+  const { gangSheet, orderStatus, orderedAt, hasLabel, shipping, jobs } =
     useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const address = (gangSheet.shippingAddress as ShippingAddress | null) || null;
-  const status = statusInfo(gangSheet.status);
-  const latestFile = gangSheet.exports[0];
-  const isCut = gangSheet.kind === "cut";
-  const customerProps = (gangSheet.lineProperties as LineProperty[] | null) || [];
-  const motif = isCut ? gangSheet.images[0] : undefined;
-  const missingFile = isCut && !gangSheet.sourceFileUrl;
+  const status = statusInfo(orderStatus);
+  const hasFiles = jobs.some((j) => j.hasFile);
+  const missing = jobs.filter((j) => j.missingFile).length;
+  const lowRes = jobs.filter((j) => j.dpi != null && j.dpi < 200).length;
 
-  /*
-   * What to do, in the job's own terms. A cut job is not a sheet to print as
-   * it is: the motif goes onto the shop's own layout the ordered number of
-   * times and each copy is cut out.
-   */
   const nextStep =
-    isCut && gangSheet.status === "pending"
-      ? "Paid. Fetching the customer's file."
-      : isCut && gangSheet.status === "exported"
-        ? missingFile
-          ? "No file came with this order. Contact the customer before printing."
-          : `Download the motif, print it ${gangSheet.lineQuantity ?? 1} × at ${jobSize({ ...gangSheet, lineQuantity: null })} and cut each one out.`
-        : isCut && gangSheet.status === "downloaded"
-          ? "Motif downloaded. Mark as printed once every copy is cut out."
-          : status.hint;
+    orderStatus === "pending"
+      ? "Paid. The files are being prepared."
+      : orderStatus === "exported"
+        ? missing > 0
+          ? `${missing} of the print jobs has no file. Contact the customer before printing.`
+          : `Send the order to the print shop (right), or download ${jobs.length > 1 ? "all files" : "the file"} and print.`
+        : status.hint;
 
   // Separate fetchers, so downloading does not spin the status buttons.
   const statusFetcher = useFetcher();
   const noteFetcher = useFetcher<{ success?: boolean }>();
   const downloadFetcher = useFetcher<{ downloadUrl?: string; error?: string }>();
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [zipping, setZipping] = useState(false);
   const [note, setNote] = useState("");
   const revalidator = useRevalidator();
 
-  const download = (kind: "file" | "label", exportId?: string) => {
-    setDownloading(kind);
+  const download = (kind: "file" | "label", jobId?: string) => {
+    setDownloading(jobId ?? kind);
     downloadFetcher.submit(
-      { action: "download", kind, ...(exportId ? { exportId } : {}) },
+      { action: "download", kind, ...(jobId ? { jobId } : {}) },
       { method: "post" },
     );
+  };
+
+  /** Every file of the order in one ZIP, like the bulk download in the list. */
+  const downloadAll = async () => {
+    if (jobs.length === 1) return download("file", jobs[0].id);
+    setZipping(true);
+    try {
+      const res = await fetch(`/app/orders/download?orders=${gangSheet.shopifyOrderId}`);
+      if (!res.ok) throw new Error(await res.text());
+      saveBlob(await res.blob(), `${orderLabel(gangSheet).replace(/^#/, "")}_print-files.zip`);
+      revalidator.revalidate();
+    } catch (err) {
+      console.error(err);
+      shopify.toast.show("Could not download the files", { isError: true });
+    } finally {
+      setZipping(false);
+    }
   };
 
   useEffect(() => {
@@ -316,56 +371,26 @@ export default function OrderDetailPage() {
     if (noteFetcher.state === "idle" && noteFetcher.data?.success) setNote("");
   }, [noteFetcher.state, noteFetcher.data]);
 
-  // While the file is generated, check back so the page moves on by itself.
+  // While files are prepared, check back so the page moves on by itself.
   useEffect(() => {
-    if (gangSheet.status !== "pending") return;
+    if (orderStatus !== "pending") return;
     const t = setInterval(() => revalidator.revalidate(), 10_000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gangSheet.status]);
+  }, [orderStatus]);
 
   const statusBusy = statusFetcher.state !== "idle";
-  const fileMeta = [
-    jobSize(gangSheet),
-    isCut
-      ? motif?.dpiX
-        ? `${motif.dpiX} DPI at print size`
-        : null
-      : "300 DPI",
-    gangSheet.filmType === "standard" ? null : gangSheet.filmType,
-    latestFile?.fileSizeBytes
-      ? `${latestFile.format.toUpperCase()} ${(latestFile.fileSizeBytes / 1024 / 1024).toFixed(1)} MB`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  const designRows = gangSheet.images.map((img) => [
-    img.originalFilename,
-    `${img.widthPx} × ${img.heightPx}`,
-    img.dpiX ? String(img.dpiX) : "—",
-    img.displayWidth
-      ? `${(img.displayWidth / 10).toFixed(1)} × ${((img.displayHeight ?? 0) / 10).toFixed(1)} cm`
-      : "—",
-    img.quantity,
-  ]);
+  const downloadAllLabel = jobs.length > 1 ? `Download all files (${jobs.length})` : "Download file";
 
   return (
     <Page
       backAction={{ content: "Orders", url: "/app/orders" }}
       title={orderLabel(gangSheet)}
       titleMetadata={<Badge tone={status.tone}>{status.label}</Badge>}
-      subtitle={[gangSheet.customerName, `Ordered ${orderedAt}`]
-        .filter(Boolean)
-        .join(" · ")}
+      subtitle={[gangSheet.customerName, `Ordered ${orderedAt}`].filter(Boolean).join(" · ")}
       secondaryActions={
         gangSheet.shopifyOrderId
-          ? [
-              {
-                content: "Open in Shopify",
-                url: `shopify://admin/orders/${gangSheet.shopifyOrderId}`,
-              },
-            ]
+          ? [{ content: "Open in Shopify", url: `shopify://admin/orders/${gangSheet.shopifyOrderId}` }]
           : undefined
       }
     >
@@ -373,60 +398,42 @@ export default function OrderDetailPage() {
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
-            {/* The single thing to do next, with the button for it. */}
+            {/* The single thing to do next, for the whole order. */}
             <Card>
               <BlockStack gap="300">
                 <Text as="h2" variant="headingMd">
                   Next step
                 </Text>
-                <InlineStack gap="200" blockAlign="center">
-                  <Badge tone={isCut ? "info" : undefined}>{printLabel(gangSheet)}</Badge>
-                  <Text as="span" variant="bodySm" tone="subdued">
-                    {jobSize(gangSheet)}
-                  </Text>
-                </InlineStack>
                 <Text as="p" variant="bodyMd">
                   {nextStep}
                 </Text>
-
-                {gangSheet.status === "exported" && latestFile && (
-                  <InlineStack gap="200">
-                    <Button
-                      variant="primary"
-                      onClick={() => download("file")}
-                      loading={downloading === "file"}
-                    >
-                      {isCut ? "Download motif" : "Download print file"}
-                    </Button>
-                    <statusFetcher.Form method="post">
-                      <input type="hidden" name="action" value="mark_printed" />
-                      <Button submit loading={statusBusy}>
-                        Mark as printed
-                      </Button>
-                    </statusFetcher.Form>
-                  </InlineStack>
+                {lowRes > 0 && (
+                  <Banner tone="warning">
+                    {`${lowRes} motif${lowRes > 1 ? "s have" : " has"} under 200 DPI at the ordered size and may print blurry.`}
+                  </Banner>
                 )}
 
-                {gangSheet.status === "downloaded" && (
+                {(orderStatus === "exported" || orderStatus === "downloaded") && (
                   <InlineStack gap="200">
-                    <statusFetcher.Form method="post">
-                      <input type="hidden" name="action" value="mark_printed" />
-                      <Button submit variant="primary" loading={statusBusy}>
-                        Mark as printed
-                      </Button>
-                    </statusFetcher.Form>
-                    {latestFile && (
+                    {hasFiles && (
                       <Button
-                        onClick={() => download("file")}
-                        loading={downloading === "file"}
+                        variant={orderStatus === "exported" ? "primary" : undefined}
+                        onClick={downloadAll}
+                        loading={zipping || (jobs.length === 1 && downloading === jobs[0].id)}
                       >
-                        Download again
+                        {orderStatus === "downloaded" ? "Download again" : downloadAllLabel}
                       </Button>
                     )}
+                    <statusFetcher.Form method="post">
+                      <input type="hidden" name="action" value="mark_printed" />
+                      <Button submit variant={orderStatus === "downloaded" ? "primary" : undefined} loading={statusBusy}>
+                        Mark as printed
+                      </Button>
+                    </statusFetcher.Form>
                   </InlineStack>
                 )}
 
-                {gangSheet.status === "printed" && (
+                {orderStatus === "printed" && (
                   <statusFetcher.Form method="post">
                     <input type="hidden" name="action" value="mark_shipped" />
                     <BlockStack gap="200">
@@ -445,7 +452,7 @@ export default function OrderDetailPage() {
                   </statusFetcher.Form>
                 )}
 
-                {gangSheet.status === "shipped" && (
+                {orderStatus === "shipped" && (
                   <BlockStack gap="100">
                     {gangSheet.shippedAt && (
                       <Text as="p" variant="bodySm" tone="subdued">
@@ -462,113 +469,92 @@ export default function OrderDetailPage() {
               </BlockStack>
             </Card>
 
-            {/* The file and what it looks like, together. The preview used to
-                fill the whole screen with a separate card for the download
-                and another for the size. */}
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between" blockAlign="center" gap="200">
-                  <BlockStack gap="050">
-                    <Text as="h2" variant="headingMd">
-                      {isCut ? "Customer's motif" : "Print file"}
-                    </Text>
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {fileMeta}
-                    </Text>
-                  </BlockStack>
-                  {latestFile && (
-                    <Button
-                      onClick={() => download("file")}
-                      loading={downloading === "file"}
-                    >
-                      Download
-                    </Button>
-                  )}
-                </InlineStack>
-                {previewUrl ? (
-                  <Box
-                    borderRadius="200"
-                    borderWidth="025"
-                    borderColor="border"
-                    padding="300"
-                  >
-                    <div
-                      style={{
-                        background:
-                          "repeating-conic-gradient(#f1f1f1 0% 25%, #fff 0% 50%) 50%/16px 16px",
-                        borderRadius: 6,
-                        display: "flex",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <img
-                        src={previewUrl}
-                        alt={`Preview of ${orderLabel(gangSheet)}`}
-                        style={{ maxWidth: "100%", maxHeight: 380, display: "block" }}
-                      />
-                    </div>
-                  </Box>
-                ) : missingFile ? (
-                  <Banner tone="warning">
-                    The customer did not upload a file with this order.
-                  </Banner>
-                ) : gangSheet.status === "pending" ? (
-                  <Banner tone="info">
-                    The file is being prepared. This page updates when it is
-                    ready.
-                  </Banner>
-                ) : (
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    No preview for this file type — download it to open it.
-                  </Text>
-                )}
-                {isCut && motif?.dpiX != null && motif.dpiX < 200 && (
-                  <Banner tone="warning" title="Low resolution">
-                    {`${motif.dpiX} DPI at ${jobSize({ ...gangSheet, lineQuantity: null })}. The print may look blurry — check with the customer.`}
-                  </Banner>
-                )}
-              </BlockStack>
-            </Card>
-
-            {customerProps.length > 0 && (
-              <Card>
-                <BlockStack gap="200">
-                  <Text as="h2" variant="headingMd">
-                    From the customer
-                  </Text>
-                  {customerProps.map((p) => (
-                    <InlineStack key={p.name} align="space-between" gap="400" wrap={false}>
-                      <Text as="span" variant="bodyMd" tone="subdued">
-                        {p.name}
-                      </Text>
-                      <Text as="span" variant="bodyMd" alignment="end">
-                        {p.value}
-                      </Text>
-                    </InlineStack>
-                  ))}
-                  {gangSheet.productTitle && (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      {[gangSheet.productTitle, gangSheet.variantTitle].filter(Boolean).join(" – ")}
-                    </Text>
-                  )}
-                </BlockStack>
-              </Card>
-            )}
-
-            {!isCut && (
+            {/* Every print job of the order, each with its file. */}
             <Card padding="0">
               <Box padding="400" paddingBlockEnd="200">
                 <Text as="h2" variant="headingMd">
-                  Designs on this sheet
+                  {jobs.length > 1 ? `Print jobs (${jobs.length})` : "Print job"}
                 </Text>
               </Box>
-              <DataTable
-                columnContentTypes={["text", "text", "numeric", "text", "numeric"]}
-                headings={["File", "Pixels", "DPI", "Printed size", "Copies"]}
-                rows={designRows}
-              />
+              {jobs.map((job) => (
+                <Box
+                  key={job.id}
+                  padding="400"
+                  borderBlockStartWidth="025"
+                  borderColor="border-secondary"
+                >
+                  <InlineStack gap="400" wrap={false} blockAlign="start">
+                    <div
+                      style={{
+                        width: 96,
+                        height: 96,
+                        flexShrink: 0,
+                        borderRadius: 8,
+                        border: "1px solid #e1e3e5",
+                        background: "repeating-conic-gradient(#f1f1f1 0% 25%, #fff 0% 50%) 50%/12px 12px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {job.previewUrl ? (
+                        <img
+                          src={job.previewUrl}
+                          alt=""
+                          style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }}
+                        />
+                      ) : (
+                        <Text as="span" variant="bodyXs" tone="subdued">
+                          {job.status === "pending" ? "Preparing" : "No preview"}
+                        </Text>
+                      )}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <BlockStack gap="100">
+                        <InlineStack gap="200" blockAlign="center">
+                          <Badge tone={job.cut ? "info" : undefined}>{job.label}</Badge>
+                          {job.filmType !== "standard" && <Badge>{job.filmType}</Badge>}
+                        </InlineStack>
+                        <Text as="p" variant="bodyMd" fontWeight="semibold">
+                          {job.size}
+                        </Text>
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {[
+                            job.cut ? "Print and cut out each copy" : `Print as is · ${job.designs} design${job.designs === 1 ? "" : "s"}`,
+                            job.dpi != null ? `${job.dpi} DPI at print size` : null,
+                            job.fileMeta,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </Text>
+                        {job.dpi != null && job.dpi < 200 && (
+                          <Text as="p" variant="bodySm" tone="caution">
+                            Low resolution for this size.
+                          </Text>
+                        )}
+                        {job.missingFile && (
+                          <Text as="p" variant="bodySm" tone="critical">
+                            The customer did not upload a file.
+                          </Text>
+                        )}
+                        {job.props.map((p) => (
+                          <Text as="p" variant="bodySm" key={p.name}>
+                            <Text as="span" tone="subdued">{p.name}: </Text>
+                            {p.value}
+                          </Text>
+                        ))}
+                      </BlockStack>
+                    </div>
+                    {job.hasFile && (
+                      <Button onClick={() => download("file", job.id)} loading={downloading === job.id}>
+                        Download
+                      </Button>
+                    )}
+                  </InlineStack>
+                </Box>
+              ))}
             </Card>
-            )}
           </BlockStack>
         </Layout.Section>
 
@@ -612,7 +598,7 @@ export default function OrderDetailPage() {
 
             {shipping && (
               <BwsShippingCard
-                sheet={gangSheet}
+                sheet={{ ...gangSheet, status: orderStatus }}
                 shipping={shipping}
                 hasLabel={hasLabel}
                 onDownloadLabel={() => download("label")}

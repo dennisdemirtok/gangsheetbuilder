@@ -131,3 +131,16 @@ export function filmMetres(job: JobLike): number {
   }
   return job.heightMm / 1000;
 }
+
+/**
+ * One line per kind of job in an order: "DTF Transfer · Cut per design ×3".
+ * The order list shows this instead of a row per job.
+ */
+export function summarizeJobs(jobs: JobLike[]): string[] {
+  const groups = new Map<string, number>();
+  for (const job of jobs) {
+    const key = printLabel(job);
+    groups.set(key, (groups.get(key) ?? 0) + 1);
+  }
+  return [...groups].map(([label, n]) => (n > 1 ? `${label} ×${n}` : label));
+}

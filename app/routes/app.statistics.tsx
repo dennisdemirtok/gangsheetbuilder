@@ -44,7 +44,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // times side by side, so its area counts, not the height of one motif.
   const [totals, shipped, bySize, byType, monthly] = await Promise.all([
     prisma.$queryRaw<{ orders: number; mm: number; avg_designs: number | null }[]>`
-      SELECT count(*)::int AS orders,
+      SELECT count(DISTINCT shopify_order_id)::int AS orders,
              coalesce(sum(CASE WHEN kind = 'cut'
                THEN width_mm * height_mm * coalesce(line_quantity, 1) / 580.0
                ELSE height_mm END), 0)::float AS mm,
@@ -52,7 +52,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       FROM gangsheet_gang_sheet
       WHERE shop_domain = ${shopDomain} AND shopify_order_id IS NOT NULL
     `,
-    prisma.gangSheet.count({ where: { ...real, status: "shipped" } }),
+    prisma.gangSheet
+      .findMany({ where: { ...real, status: "shipped" }, select: { shopifyOrderId: true }, distinct: ["shopifyOrderId"] })
+      .then((rows) => rows.length),
     prisma.gangSheet.groupBy({
       by: ["widthMm", "heightMm"],
       where: { ...real, kind: "gang_sheet" },
@@ -68,7 +70,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }),
     prisma.$queryRaw<{ month: Date; orders: number; mm: number }[]>`
       SELECT date_trunc('month', created_at) AS month,
-             count(*)::int AS orders,
+             count(DISTINCT shopify_order_id)::int AS orders,
              coalesce(sum(CASE WHEN kind = 'cut'
                THEN width_mm * height_mm * coalesce(line_quantity, 1) / 580.0
                ELSE height_mm END), 0)::float AS mm

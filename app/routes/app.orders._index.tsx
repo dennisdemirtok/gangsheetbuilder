@@ -18,16 +18,15 @@ import {
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
 import {
-  OPEN_STATUSES,
   STATUS_FILTERS,
   formatDate,
   orderLabel,
   statusInfo,
   timeAgo,
 } from "../lib/order-status";
-import { KIND_LABEL, jobSize, type PrintKind } from "../lib/print-jobs";
+import { jobSize, summarizeJobs } from "../lib/print-jobs";
+import { jobsOfOrders, listOrders, orderStatusCounts } from "../lib/order-list.server";
 import { withOrderDetails } from "../lib/order-details.server";
 import { saveBlob } from "../lib/save-file";
 
@@ -41,59 +40,44 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const query = (url.searchParams.get("q") || "").trim();
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1") || 1);
 
-  const base = { shopDomain: session.shop, shopifyOrderId: { not: null } };
-  const where: any = { ...base };
-  if (statusFilter === "open") {
-    where.status = { in: OPEN_STATUSES };
-  } else if (statusFilter !== "all") {
-    where.status = statusFilter;
-  }
-  if (query) {
-    const digits = query.replace(/^#/, "");
-    where.OR = [
-      { orderName: { contains: digits, mode: "insensitive" } },
-      { customerName: { contains: query, mode: "insensitive" } },
-      { shopifyOrderId: digits },
-    ];
-  }
-
-  const [orders, totalCount, byStatus] = await Promise.all([
-    prisma.gangSheet.findMany({
-      where,
-      orderBy: { createdAt: statusFilter === "open" ? "asc" : "desc" },
-      take: PAGE_SIZE,
-      skip: (page - 1) * PAGE_SIZE,
-      include: { _count: { select: { images: true } } },
+  // One row per Shopify order; its print jobs are summarised in the row.
+  const [{ rows, total }, counts] = await Promise.all([
+    listOrders({
+      shopDomain: session.shop,
+      status: statusFilter,
+      query,
+      page,
+      pageSize: PAGE_SIZE,
+      oldestFirst: statusFilter === "open",
     }),
-    prisma.gangSheet.count({ where }),
-    prisma.gangSheet.groupBy({ by: ["status"], where: base, _count: { _all: true } }),
+    orderStatusCounts(session.shop),
   ]);
 
-  const counts: Record<string, number> = { all: 0, open: 0 };
-  for (const row of byStatus) {
-    counts[row.status] = row._count._all;
-    counts.all += row._count._all;
-    if ((OPEN_STATUSES as string[]).includes(row.status)) counts.open += row._count._all;
-  }
+  const jobs = await withOrderDetails(
+    admin,
+    session.shop,
+    await jobsOfOrders(session.shop, rows.map((r) => r.orderId)),
+  );
 
   const now = new Date();
-  const named = await withOrderDetails(admin, session.shop, orders);
-
   return json({
-    orders: named.map((o) => ({
-      id: o.id,
-      label: orderLabel(o),
-      customerName: o.customerName,
-      date: formatDate(o.createdAt),
-      age: timeAgo(o.createdAt, now),
-      printType: o.printType || "DTF Transfer",
-      format: KIND_LABEL[(o.kind as PrintKind) || "gang_sheet"] ?? o.kind,
-      cut: o.kind === "cut",
-      size: jobSize(o),
-      filmType: o.filmType,
-      status: o.status,
-    })),
-    totalCount,
+    orders: rows.map((row) => {
+      const own = jobs.filter((j) => j.shopifyOrderId === row.orderId);
+      const first = own[0];
+      return {
+        id: row.orderId,
+        firstId: row.firstId,
+        label: orderLabel({ orderName: first?.orderName ?? row.orderName, shopifyOrderId: row.orderId }),
+        customerName: first?.customerName ?? row.customerName,
+        date: formatDate(row.createdAt),
+        age: timeAgo(row.createdAt, now),
+        print: summarizeJobs(own),
+        hasCut: own.some((j) => j.kind === "cut"),
+        size: own.length === 1 ? jobSize(own[0]) : `${own.length} print jobs`,
+        status: row.status,
+      };
+    }),
+    totalCount: total,
     counts,
     page,
     statusFilter,
@@ -152,7 +136,7 @@ export default function OrdersPage() {
     setDownloading(true);
     shopify.toast.show("Preparing print files…");
     try {
-      const res = await fetch(`/app/orders/download?ids=${selectedResources.join(",")}`);
+      const res = await fetch(`/app/orders/download?orders=${selectedResources.join(",")}`);
       if (!res.ok) throw new Error(await res.text());
       saveBlob(await res.blob(), `print-files-${new Date().toISOString().slice(0, 10)}.zip`);
       clearSelection();
@@ -175,7 +159,7 @@ export default function OrdersPage() {
       <IndexTable.Cell>
         {/* Polaris' primary link: the whole row opens the order, and the
             checkbox still works for bulk download. */}
-        <PolarisLink dataPrimaryLink url={`/app/orders/${order.id}`} removeUnderline monochrome>
+        <PolarisLink dataPrimaryLink url={`/app/orders/${order.firstId}`} removeUnderline monochrome>
           <Text as="span" variant="bodyMd" fontWeight="semibold">
             {order.label}
           </Text>
@@ -193,18 +177,14 @@ export default function OrdersPage() {
         </BlockStack>
       </IndexTable.Cell>
       <IndexTable.Cell>
-        {/* What to make: the type, and whether it goes out on the roll or
-            cut per design — the two are produced differently. */}
+        {/* What to make, one line per kind of job: the type, and whether it
+            goes out on the roll or cut per design. */}
         <BlockStack gap="0">
-          <Text as="span" variant="bodyMd">
-            {order.printType}
-          </Text>
-          <InlineStack gap="100" blockAlign="center" wrap={false}>
-            <Text as="span" variant="bodySm" tone={order.cut ? undefined : "subdued"} fontWeight={order.cut ? "semibold" : undefined}>
-              {order.format}
+          {order.print.map((line) => (
+            <Text as="span" variant="bodyMd" key={line}>
+              {line}
             </Text>
-            {order.filmType !== "standard" && <Badge size="small">{order.filmType}</Badge>}
-          </InlineStack>
+          ))}
         </BlockStack>
       </IndexTable.Cell>
       <IndexTable.Cell>

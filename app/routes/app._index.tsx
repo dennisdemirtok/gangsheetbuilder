@@ -17,14 +17,14 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import {
-  OPEN_STATUSES,
   orderLabel,
   plural,
   statusInfo,
   timeAgo,
 } from "../lib/order-status";
 import { withOrderDetails } from "../lib/order-details.server";
-import { filmMetres, jobSize, printLabel } from "../lib/print-jobs";
+import { filmMetres, jobSize, summarizeJobs } from "../lib/print-jobs";
+import { jobsOfOrders, listOrders, orderStatusCounts } from "../lib/order-list.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -34,65 +34,59 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
   /*
-   * Every count is limited to sheets that reached a paid order. The status
-   * counters used to include abandoned carts too, so the dashboard showed
-   * "Total orders 0" beside "Waiting 4" and the waiting ones led nowhere.
+   * Counted per Shopify order, not per print job: an order with four cut
+   * motifs is one order to handle. Only orders that were paid count.
    */
   const real = { shopDomain, shopifyOrderId: { not: null } };
 
-  const [byStatus, month, shippedThisMonth, upNext] =
-    await Promise.all([
-      prisma.gangSheet.groupBy({
-        by: ["status"],
-        where: real,
-        _count: { _all: true },
-      }),
-      // Film is summed per job: a cut job's motifs use area, not height.
-      prisma.gangSheet.findMany({
-        where: { ...real, createdAt: { gte: thirtyDaysAgo } },
-        select: { kind: true, widthMm: true, heightMm: true, lineQuantity: true },
-      }),
-      prisma.gangSheet.count({
-        where: { ...real, status: "shipped", shippedAt: { gte: thirtyDaysAgo } },
-      }),
-      // What to work on, oldest first — the dashboard used to list the
-      // newest orders, which is the opposite of the order they get printed.
-      prisma.gangSheet.findMany({
-        where: { ...real, status: { in: OPEN_STATUSES } },
-        orderBy: { createdAt: "asc" },
-        take: 6,
-        include: { _count: { select: { images: true } } },
-      }),
-    ]);
+  const [counts, month, shippedThisMonth, upNext] = await Promise.all([
+    orderStatusCounts(shopDomain),
+    // Film is summed per job: a cut job's motifs use area, not height.
+    prisma.gangSheet.findMany({
+      where: { ...real, createdAt: { gte: thirtyDaysAgo } },
+      select: { shopifyOrderId: true, kind: true, widthMm: true, heightMm: true, lineQuantity: true },
+    }),
+    prisma.gangSheet.findMany({
+      where: { ...real, status: "shipped", shippedAt: { gte: thirtyDaysAgo } },
+      select: { shopifyOrderId: true },
+      distinct: ["shopifyOrderId"],
+    }),
+    // What to work on, oldest first: the order they get printed in.
+    listOrders({ shopDomain, status: "open", pageSize: 6, oldestFirst: true }),
+  ]);
 
-  const countOf = (status: string) =>
-    byStatus.find((row) => row.status === status)?._count._all ?? 0;
+  const jobs = await withOrderDetails(
+    admin,
+    shopDomain,
+    await jobsOfOrders(shopDomain, upNext.rows.map((r) => r.orderId)),
+  );
 
   const now = new Date();
-  const named = await withOrderDetails(admin, shopDomain, upNext);
-
   return json({
     queue: {
-      pending: countOf("pending"),
-      exported: countOf("exported"),
-      downloaded: countOf("downloaded"),
-      printed: countOf("printed"),
+      pending: counts.pending ?? 0,
+      exported: counts.exported ?? 0,
+      downloaded: counts.downloaded ?? 0,
+      printed: counts.printed ?? 0,
     },
     month: {
-      orders: month.length,
+      orders: new Set(month.map((j) => j.shopifyOrderId)).size,
       metres: month.reduce((sum, job) => sum + filmMetres(job), 0),
-      shipped: shippedThisMonth,
+      shipped: shippedThisMonth.length,
     },
-    upNext: named.map((sheet) => ({
-      id: sheet.id,
-      label: orderLabel(sheet),
-      customerName: sheet.customerName,
-      print: printLabel(sheet),
-      size: jobSize(sheet),
-      filmType: sheet.filmType,
-      status: sheet.status,
-      age: timeAgo(sheet.createdAt, now),
-    })),
+    upNext: upNext.rows.map((row) => {
+      const own = jobs.filter((j) => j.shopifyOrderId === row.orderId);
+      return {
+        id: row.firstId,
+        label: orderLabel({ orderName: own[0]?.orderName ?? row.orderName, shopifyOrderId: row.orderId }),
+        customerName: own[0]?.customerName ?? row.customerName,
+        print: summarizeJobs(own).join(", "),
+        size: own.length === 1 ? jobSize(own[0]) : `${own.length} print jobs`,
+        filmType: "standard",
+        status: row.status,
+        age: timeAgo(row.createdAt, now),
+      };
+    }),
   });
 };
 

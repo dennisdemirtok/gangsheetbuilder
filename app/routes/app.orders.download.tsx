@@ -12,18 +12,20 @@ import { PassThrough } from "stream";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const ids = url.searchParams.get("ids")?.split(",") || [];
+  const ids = url.searchParams.get("ids")?.split(",").filter(Boolean) || [];
+  // The order list selects whole orders: every print job of each.
+  const orders = url.searchParams.get("orders")?.split(",").filter(Boolean) || [];
 
-  if (ids.length === 0) {
+  if (ids.length === 0 && orders.length === 0) {
     return new Response("No IDs provided", { status: 400 });
   }
 
-  // Load gang sheets with exports
   const gangSheets = await prisma.gangSheet.findMany({
     where: {
-      id: { in: ids },
       shopDomain: session.shop,
+      ...(orders.length > 0 ? { shopifyOrderId: { in: orders } } : { id: { in: ids } }),
     },
+    orderBy: { createdAt: "asc" },
     include: { exports: true },
   });
 
@@ -36,11 +38,17 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const passthrough = new PassThrough();
   archive.pipe(passthrough);
 
+  const usedNames = new Set<string>();
   for (const gs of gangSheets) {
     for (const exp of gs.exports) {
       try {
         const buffer = await downloadFile(exp.url);
-        const filename = printFileName(gs, exp.format);
+        // Two jobs of the same size in one order would overwrite each other.
+        let filename = printFileName(gs, exp.format);
+        for (let i = 2; usedNames.has(filename); i++) {
+          filename = printFileName(gs, exp.format).replace(/(\.[^.]+)$/, `_${i}$1`);
+        }
+        usedNames.add(filename);
         archive.append(buffer, { name: filename });
       } catch (err) {
         console.error(`Failed to download ${exp.url}:`, err);
