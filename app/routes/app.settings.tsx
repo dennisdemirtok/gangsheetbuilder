@@ -22,6 +22,7 @@ import { EDGE_MARGIN_MM } from "../lib/placement";
 import { SHEET_WIDTH_MM } from "../lib/constants";
 import { orderLabel, timeAgo } from "../lib/order-status";
 import {
+  BWS_SERVICES,
   getPickupAddress,
   isBwsTestEnvironment,
   isSimulationEnabled,
@@ -114,6 +115,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         .join(", "),
       contact: [pickup.contact, pickup.phone].filter(Boolean).join(" · "),
       pickupFrom: PICKUP_TIME,
+      services: BWS_SERVICES.map((s) => s.label).join(", "),
       packageCm: `${PACKAGE_CM.length} × ${PACKAGE_CM.width} × ${PACKAGE_CM.height} cm tube`,
       missing: missingPickupConfig(),
     },
@@ -227,6 +229,7 @@ export default function SettingsPage() {
               </InlineStack>
               <Row label="Pickup address" value={shipping.pickup || "—"} />
               {shipping.contact && <Row label="Contact" value={shipping.contact} />}
+              <Row label="Services" value={shipping.services} />
               <Row label="Pickup from" value={shipping.pickupFrom} />
               <Row label="Package" value={shipping.packageCm} />
               {shipping.missing.length > 0 && (

@@ -107,8 +107,8 @@ export interface BwsShipmentInput {
  * (CalculationInquiry) exists on the test portal but not on ours.
  */
 export const BWS_SERVICES: { code: string; label: string; hint: string }[] = [
-  { code: "EXP", label: "Blue Express", hint: "Usual choice" },
-  { code: "ECO", label: "Blue Economy", hint: "Slower, cheaper" },
+  { code: "EXP", label: "Blue Express", hint: "" },
+  { code: "ECO", label: "Blue Economy", hint: "" },
   /*
    * No Service code at all. BWS rejected both named services on our first
    * production booking with "No service found matching the given service

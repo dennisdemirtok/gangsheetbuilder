@@ -205,8 +205,7 @@ export function BwsShippingCard({
               label="Service"
               value={service}
               onChange={setService}
-              options={shipping.services.map((s) => ({ label: `${s.label} — ${s.hint}`, value: s.code }))}
-              helpText="BWS gives the price with the booking; it shows here afterwards."
+              options={shipping.services.map((s) => ({ label: s.label, value: s.code }))}
             />
             <InlineStack gap="200" wrap={false}>
               <TextField
