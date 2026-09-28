@@ -109,6 +109,13 @@ export interface BwsShipmentInput {
 export const BWS_SERVICES: { code: string; label: string; hint: string }[] = [
   { code: "EXP", label: "Blue Express", hint: "Usual choice" },
   { code: "ECO", label: "Blue Economy", hint: "Slower, cheaper" },
+  /*
+   * No Service code at all. BWS rejected both named services on our first
+   * production booking with "No service found matching the given service
+   * group", which is their account-side list of allowed services — leaving
+   * the code out lets their booking settings decide.
+   */
+  { code: "", label: "BWS default", hint: "Let BWS choose from our agreement" },
 ];
 
 export function serviceLabel(code: string | null | undefined): string {
@@ -412,6 +419,13 @@ export async function createBwsShipment(
     if (!result.success && isSimulationEnabled()) {
       console.warn(`[BWS] Simulating ${input.reference}; BWS said:`, result.errors);
       return { ...simulateShipment(input, result.errors), requestBody };
+    }
+    if (!result.success) {
+      // The payload BWS rejected, so their support can see exactly what we send.
+      console.error(
+        `[BWS] Rejected payload for ${input.reference}:`,
+        JSON.stringify(requestBody),
+      );
     }
     if (result.success) {
       console.log(`[BWS] Booked ${input.reference}: ${result.bookingId}`);
