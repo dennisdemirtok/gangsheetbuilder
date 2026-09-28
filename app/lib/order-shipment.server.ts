@@ -126,7 +126,9 @@ export async function bookOrderShipment(options: {
       zip: address!.zip!,
       city: address!.city!,
       countryCode: address!.countryCode || "SE",
-      phone: address!.phone || undefined,
+      // Couriers want a phone number for delivery; orders placed without
+      // one fall back to the shop's own number so the booking still goes.
+      phone: address!.phone || process.env.BWS_FALLBACK_PHONE || undefined,
       email: address!.email || undefined,
     };
 
