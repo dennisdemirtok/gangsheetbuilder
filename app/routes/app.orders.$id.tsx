@@ -32,6 +32,7 @@ import {
 import { withOrderDetails } from "../lib/order-details.server";
 import { jobSize, printLabel, type LineProperty } from "../lib/print-jobs";
 import { orderStatusOf } from "../lib/order-list.server";
+import { normalizePhone } from "../lib/phone";
 import { isVectorFormat, storeJobFile } from "../lib/job-file.server";
 import { saveBlob } from "../lib/save-file";
 import { saveUrl } from "../lib/save-file";
@@ -202,6 +203,35 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     return json({
       downloadUrl: await getPresignedAttachmentUrl(file.url, printFileName(job, file.format)),
     });
+  }
+
+  if (action === "update_phone") {
+    // Couriers need a phone number; many orders come in without one.
+    const address = (gangSheet.shippingAddress as Record<string, unknown> | null) || {};
+    const phone = normalizePhone(String(formData.get("phone") || ""), address.countryCode as string | null);
+    if (phone && !/^\+\d{7,15}$/.test(phone)) {
+      return json({ errors: [`"${formData.get("phone")}" does not look like a phone number.`] });
+    }
+    const sheets = await prisma.gangSheet.findMany({
+      where: gangSheet.shopifyOrderId
+        ? { shopDomain: session.shop, shopifyOrderId: gangSheet.shopifyOrderId }
+        : { id: gangSheet.id },
+      select: { id: true, shippingAddress: true },
+    });
+    await prisma.$transaction(
+      sheets.map((sheet) =>
+        prisma.gangSheet.update({
+          where: { id: sheet.id },
+          data: {
+            shippingAddress: {
+              ...((sheet.shippingAddress as Record<string, unknown> | null) || {}),
+              phone: phone || null,
+            },
+          },
+        }),
+      ),
+    );
+    return json({ phoneSaved: phone || "removed" });
   }
 
   if (action === "register_booking") {
@@ -667,16 +697,12 @@ export default function OrderDetailPage() {
                       {[address.zip, address.city].filter(Boolean).join(" ")}
                     </Text>
                     <Text as="p" variant="bodyMd">{address.country}</Text>
-                    {(address.phone || address.email) && (
-                      <Box paddingBlockStart="100">
-                        {address.phone && (
-                          <Text as="p" variant="bodySm" tone="subdued">{address.phone}</Text>
-                        )}
-                        {address.email && (
-                          <Text as="p" variant="bodySm" tone="subdued">{address.email}</Text>
-                        )}
-                      </Box>
-                    )}
+                    <Box paddingBlockStart="100">
+                      <PhoneField phone={address.phone ?? null} />
+                      {address.email && (
+                        <Text as="p" variant="bodySm" tone="subdued">{address.email}</Text>
+                      )}
+                    </Box>
                   </BlockStack>
                 ) : (
                   <Text as="p" variant="bodySm" tone="subdued">
@@ -794,5 +820,55 @@ function ReplaceFileButton({ jobId }: { jobId: string }) {
         Replace file
       </Button>
     </>
+  );
+}
+
+/** The recipient's phone, editable: couriers need one and orders often lack it. */
+function PhoneField({ phone }: { phone: string | null }) {
+  const fetcher = useFetcher<{ phoneSaved?: string; errors?: string[] }>();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(phone ?? "");
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.phoneSaved) setEditing(false);
+  }, [fetcher.state, fetcher.data]);
+
+  if (!editing) {
+    return (
+      <InlineStack gap="200" blockAlign="center">
+        <Text as="p" variant="bodySm" tone={phone ? "subdued" : "caution"}>
+          {phone || "No phone number"}
+        </Text>
+        <Button variant="plain" onClick={() => { setValue(phone ?? ""); setEditing(true); }}>
+          {phone ? "Edit" : "Add"}
+        </Button>
+      </InlineStack>
+    );
+  }
+  return (
+    <BlockStack gap="100">
+      <TextField
+        label="Phone"
+        labelHidden
+        value={value}
+        onChange={setValue}
+        autoComplete="off"
+        placeholder="0730 25 55 76"
+        helpText="Saved as +46… for the courier."
+        error={fetcher.data?.errors?.join(" ")}
+      />
+      <InlineStack gap="200">
+        <Button
+          size="slim"
+          loading={fetcher.state !== "idle"}
+          onClick={() => fetcher.submit({ action: "update_phone", phone: value }, { method: "post" })}
+        >
+          Save
+        </Button>
+        <Button variant="plain" onClick={() => setEditing(false)}>
+          Cancel
+        </Button>
+      </InlineStack>
+    </BlockStack>
   );
 }
