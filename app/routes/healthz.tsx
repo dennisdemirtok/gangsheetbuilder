@@ -1,5 +1,15 @@
 import { json } from "@remix-run/node";
 import prisma from "../db.server";
+import { verifyMail } from "../lib/mailer.server";
+
+// Logging in to Gmail on every health check would be wasteful; once per 10 min.
+let mailCheck: { at: number; ok: boolean } | null = null;
+async function mailOk(): Promise<boolean> {
+  if (!mailCheck || Date.now() - mailCheck.at > 10 * 60 * 1000) {
+    mailCheck = { at: Date.now(), ok: (await verifyMail()).ok };
+  }
+  return mailCheck.ok;
+}
 
 /**
  * Deploy check.
@@ -37,6 +47,7 @@ export const loader = async () => {
       ok: db,
       commit: commit ? commit.slice(0, 7) : null,
       migrations: { placementsJson },
+      mail: await mailOk(),
     },
     {
       status: db ? 200 : 503,
