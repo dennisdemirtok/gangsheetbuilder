@@ -76,7 +76,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     orderBy: { createdAt: "asc" },
     include: {
       exports: { orderBy: { createdAt: "desc" }, take: 1 },
-      images: { select: { dpiX: true, originalFilename: true }, take: 1 },
+      images: { select: { dpiX: true, originalFilename: true, widthPx: true, displayWidth: true } },
       _count: { select: { images: true } },
     },
   });
@@ -123,6 +123,18 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       const file = job.exports[0];
       const vector = job.kind === "cut" && isVectorFormat(file?.format);
       const dpi = job.kind === "cut" && !vector ? job.images[0]?.dpiX ?? null : null;
+      /*
+       * A gang sheet's print file is made at 300 DPI, but what prints sharp is
+       * each design at the size the customer placed it. The lowest of those
+       * is what to check.
+       */
+      const designDpis =
+        job.kind === "gang_sheet"
+          ? job.images
+              .filter((img) => img.widthPx > 0 && (img.displayWidth ?? 0) > 0)
+              .map((img) => Math.round(img.widthPx / ((img.displayWidth as number) / 25.4)))
+          : [];
+      const minDesignDpi = designDpis.length > 0 ? Math.min(...designDpis) : null;
       return {
         id: job.id,
         label: printLabel(job),
@@ -132,6 +144,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         filmType: job.filmType,
         designs: job._count.images,
         dpi,
+        sheetDpi: job.kind === "gang_sheet" ? file?.dpi ?? null : null,
+        minDesignDpi,
         props: ((job.lineProperties as LineProperty[] | null) || []).filter(
           (p) => !/bredd|höjd|hojd|width|height/i.test(p.name),
         ),
@@ -292,7 +306,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       data: {
         gangSheetId: job.id,
         author: session.shop,
-        body: `File replaced: ${name} (was ${job.images[0]?.originalFilename ?? "no file"})`,
+        body: `File replaced: ${name} (was ${
+          job.kind === "gang_sheet" ? "the sheet generated from the builder" : job.images[0]?.originalFilename ?? "no file"
+        })`,
       },
     });
     return json({
@@ -444,6 +460,7 @@ export default function OrderDetailPage() {
   const downloadFetcher = useFetcher<{ downloadUrl?: string; error?: string }>();
   const [downloading, setDownloading] = useState<string | null>(null);
   const [zipping, setZipping] = useState(false);
+  const [zoom, setZoom] = useState<{ url: string; title: string } | null>(null);
   const [note, setNote] = useState("");
   const revalidator = useRevalidator();
 
@@ -510,6 +527,7 @@ export default function OrderDetailPage() {
       }
     >
       <TitleBar title={orderLabel(gangSheet)} />
+      {zoom && <Lightbox {...zoom} onClose={() => setZoom(null)} />}
       <Layout>
         <Layout.Section>
           <BlockStack gap="400">
@@ -615,11 +633,18 @@ export default function OrderDetailPage() {
                       }}
                     >
                       {job.previewUrl ? (
-                        <img
-                          src={job.previewUrl}
-                          alt=""
-                          style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }}
-                        />
+                        <button
+                          type="button"
+                          onClick={() => setZoom({ url: job.previewUrl!, title: `${job.label} · ${job.size}` })}
+                          title="Show larger"
+                          style={{ all: "unset", cursor: "zoom-in", display: "flex", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" }}
+                        >
+                          <img
+                            src={job.previewUrl}
+                            alt=""
+                            style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }}
+                          />
+                        </button>
                       ) : (
                         <Text as="span" variant="bodyXs" tone="subdued">
                           {job.status === "pending" ? "Preparing" : "No preview"}
@@ -638,13 +663,27 @@ export default function OrderDetailPage() {
                         <Text as="p" variant="bodySm" tone="subdued">
                           {[
                             job.cut ? "Print and cut out each copy" : `Print as is · ${job.designs} design${job.designs === 1 ? "" : "s"}`,
-                            job.vector ? "Vector file" : job.dpi != null ? `${job.dpi} DPI at print size` : null,
+                            job.vector
+                              ? "Vector file"
+                              : job.dpi != null
+                                ? `${job.dpi} DPI at print size`
+                                : job.sheetDpi != null
+                                  ? `${job.sheetDpi} DPI print file`
+                                  : null,
+                            job.minDesignDpi != null ? `designs from ${job.minDesignDpi} DPI` : null,
                             job.filename,
                             job.fileMeta,
                           ]
                             .filter(Boolean)
                             .join(" · ")}
                         </Text>
+                        {job.minDesignDpi != null && (
+                          <Text as="p" variant="bodySm" tone={job.minDesignDpi < 200 ? "caution" : "success"}>
+                            {job.minDesignDpi < 200
+                              ? "Some designs are low resolution at their placed size."
+                              : "Resolution OK for print."}
+                          </Text>
+                        )}
                         {job.dpi != null && job.dpi < 200 && (
                           <Text as="p" variant="bodySm" tone="caution">
                             Low resolution for this size.
@@ -669,7 +708,7 @@ export default function OrderDetailPage() {
                           Download
                         </Button>
                       )}
-                      {job.cutJob && <ReplaceFileButton jobId={job.id} />}
+                      <ReplaceFileButton jobId={job.id} />
                     </BlockStack>
                   </InlineStack>
                 </Box>
@@ -870,5 +909,73 @@ function PhoneField({ phone }: { phone: string | null }) {
         </Button>
       </InlineStack>
     </BlockStack>
+  );
+}
+
+/**
+ * The preview, large, on checks so transparency shows. Closes on click,
+ * Escape or the button.
+ */
+function Lightbox({ url, title, onClose }: { url: string; title: string; onClose: () => void }) {
+  const [dark, setDark] = useState(true);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div
+      role="dialog"
+      aria-label={title}
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(0,0,0,0.75)",
+        display: "flex",
+        flexDirection: "column",
+        padding: 24,
+        gap: 12,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ display: "flex", alignItems: "center", gap: 12, color: "#fff", fontSize: 14 }}
+      >
+        <span style={{ flex: 1 }}>{title}</span>
+        <button
+          type="button"
+          onClick={() => setDark((d) => !d)}
+          style={{ background: "rgba(255,255,255,0.15)", color: "#fff", border: 0, borderRadius: 8, padding: "6px 12px", cursor: "pointer" }}
+        >
+          {dark ? "Light background" : "Dark background"}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{ background: "#fff", color: "#111", border: 0, borderRadius: 8, padding: "6px 12px", cursor: "pointer" }}
+        >
+          Close
+        </button>
+      </div>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflow: "auto",
+          borderRadius: 10,
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "center",
+          background: dark
+            ? "repeating-conic-gradient(#6b6b6b 0% 25%, #7d7d7d 0% 50%) 50%/20px 20px"
+            : "repeating-conic-gradient(#e6e6e6 0% 25%, #fff 0% 50%) 50%/20px 20px",
+        }}
+      >
+        <img src={url} alt={title} style={{ maxWidth: "100%", height: "auto", display: "block" }} />
+      </div>
+    </div>
   );
 }

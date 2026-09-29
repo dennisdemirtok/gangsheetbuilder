@@ -57,8 +57,11 @@ export async function storeJobFile(options: {
   const { jobId, buffer } = options;
   const job = await prisma.gangSheet.findUniqueOrThrow({
     where: { id: jobId },
-    select: { widthMm: true, heightMm: true, lineQuantity: true, status: true },
+    select: { widthMm: true, heightMm: true, lineQuantity: true, status: true, kind: true },
   });
+  // A gang sheet's file is the whole composed sheet; its list of designs
+  // (what the customer placed) stays as it is when the file is swapped.
+  const keepDesigns = job.kind === "gang_sheet";
 
   const filename = options.filename.replace(/[/\\]/g, "_").slice(0, 200) || "motif";
   const ext = (filename.split(".").pop() || "bin").toLowerCase().slice(0, 5);
@@ -87,7 +90,9 @@ export async function storeJobFile(options: {
       ? Math.round(preview.widthPx / (job.widthMm / 25.4))
       : null;
 
-  await prisma.$transaction([
+  const designUpdates = keepDesigns
+    ? []
+    : [
     prisma.gangSheetImage.deleteMany({ where: { gangSheetId: jobId } }),
     prisma.gangSheetImage.create({
       data: {
@@ -106,6 +111,10 @@ export async function storeJobFile(options: {
         quantity: job.lineQuantity || 1,
       },
     }),
+      ];
+
+  await prisma.$transaction([
+    ...designUpdates,
     prisma.gangSheetExport.deleteMany({ where: { gangSheetId: jobId } }),
     prisma.gangSheetExport.create({
       data: {
@@ -121,7 +130,7 @@ export async function storeJobFile(options: {
       data: {
         exportUrl: fileKey,
         previewUrl: previewKey,
-        imagesCount: 1,
+        ...(keepDesigns ? {} : { imagesCount: 1 }),
         ...(job.status === "pending" || job.status === "draft" ? { status: "exported" } : {}),
       },
     }),
