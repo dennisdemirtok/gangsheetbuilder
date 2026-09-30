@@ -348,3 +348,51 @@ export async function registerManualBooking(options: {
   });
   return { ok: true };
 }
+
+/**
+ * Mark an order shipped by hand with a tracking number — for parcels booked
+ * outside the app. Fulfils the printed items in Shopify, which sends the
+ * customer Shopify's shipping confirmation with the tracking link.
+ */
+export async function markOrderShipped(options: {
+  shopDomain: string;
+  shopifyOrderId: string;
+  trackingNumber?: string;
+  notifyCustomer?: boolean;
+}): Promise<{ ok: boolean; error?: string; notified: boolean }> {
+  const where = { shopDomain: options.shopDomain, shopifyOrderId: options.shopifyOrderId };
+  const tracking = (options.trackingNumber || "").replace(/\s+/g, "");
+  const trackingUrl = tracking ? trackingUrlFor(tracking) : null;
+
+  await prisma.gangSheet.updateMany({
+    where,
+    data: {
+      status: "shipped",
+      shippedAt: new Date(),
+      ...(tracking ? { trackingNumber: tracking, trackingUrl } : {}),
+    },
+  });
+
+  if (!options.notifyCustomer) return { ok: true, notified: false };
+
+  const sheets = await loadOrderSheets(options.shopDomain, options.shopifyOrderId);
+  if (sheets.some((s) => s.shopifyFulfillmentId)) {
+    return { ok: true, notified: false, error: "Already fulfilled in Shopify — the customer was told before." };
+  }
+  const fulfillment = await fulfillLineItemsWithTracking({
+    shopDomain: options.shopDomain,
+    shopifyOrderId: options.shopifyOrderId,
+    lineItemIds: sheets.map((s) => s.shopifyLineItemId).filter((id): id is string => Boolean(id)),
+    trackingNumber: tracking || undefined,
+    trackingUrl: trackingUrl || undefined,
+  });
+  await prisma.gangSheet.updateMany({
+    where,
+    data: fulfillment.ok
+      ? { shopifyFulfillmentId: fulfillment.fulfillmentIds.join(","), fulfillmentError: null }
+      : { fulfillmentError: fulfillment.error },
+  });
+  return fulfillment.ok
+    ? { ok: true, notified: true }
+    : { ok: false, notified: false, error: fulfillment.error };
+}

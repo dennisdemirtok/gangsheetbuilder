@@ -15,6 +15,7 @@ import {
   TextField,
   DataTable,
   Banner,
+  Checkbox,
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -47,6 +48,7 @@ import {
   SIMULATED_PREFIX,
 } from "../lib/bws-shipping.server";
 import {
+  markOrderShipped,
   registerManualBooking,
   bookOrderShipment,
   sendTrackingToCustomer,
@@ -328,15 +330,25 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       data: { status: "printed" },
     });
   } else if (action === "mark_shipped") {
-    const tracking = String(formData.get("trackingNumber") || "").trim();
-    await prisma.gangSheet.updateMany({
-      where: wholeOrder,
-      data: {
-        status: "shipped",
-        shippedAt: new Date(),
-        trackingNumber: tracking || null,
-      },
+    const tracking = String(formData.get("trackingNumber") || "");
+    if (!gangSheet.shopifyOrderId) {
+      await prisma.gangSheet.update({
+        where: { id: gangSheet.id },
+        data: { status: "shipped", shippedAt: new Date(), trackingNumber: tracking.trim() || null },
+      });
+      return json({ success: true });
+    }
+    const result = await markOrderShipped({
+      shopDomain: session.shop,
+      shopifyOrderId: gangSheet.shopifyOrderId,
+      trackingNumber: tracking,
+      notifyCustomer: formData.get("notifyCustomer") === "1",
     });
+    return json(
+      result.ok
+        ? { success: true, notice: result.notified ? "Marked as shipped · customer emailed the tracking." : "Marked as shipped." }
+        : { errors: [`Marked as shipped, but Shopify was not updated: ${result.error}`] },
+    );
   } else if (action === "book_bws") {
     if (!gangSheet.shopifyOrderId) {
       return json({ errors: ["This sheet is not part of an order."] }, { status: 400 });
@@ -566,23 +578,13 @@ export default function OrderDetailPage() {
                   </InlineStack>
                 )}
 
-                {orderStatus === "printed" && (
-                  <statusFetcher.Form method="post">
-                    <input type="hidden" name="action" value="mark_shipped" />
-                    <BlockStack gap="200">
-                      <TextField
-                        label="Tracking number"
-                        name="trackingNumber"
-                        autoComplete="off"
-                        helpText="Not needed if the shipment was booked with BWS."
-                      />
-                      <InlineStack>
-                        <Button submit variant="primary" loading={statusBusy}>
-                          Mark as shipped
-                        </Button>
-                      </InlineStack>
-                    </BlockStack>
-                  </statusFetcher.Form>
+                {(orderStatus === "printed" ||
+                  orderStatus === "exported" ||
+                  orderStatus === "downloaded") && (
+                  <ShippedForm
+                    primary={orderStatus === "printed"}
+                    booked={gangSheet.shippingStatus === "booked"}
+                  />
                 )}
 
                 {orderStatus === "shipped" && (
@@ -977,5 +979,70 @@ function Lightbox({ url, title, onClose }: { url: string; title: string; onClose
         <img src={url} alt={title} style={{ maxWidth: "100%", height: "auto", display: "block" }} />
       </div>
     </div>
+  );
+}
+
+/**
+ * Mark the order shipped with a tracking number, for parcels booked outside
+ * the app. Printed orders show it open; earlier ones behind a link. The
+ * tracking field was uncontrolled before and could not be typed in.
+ */
+function ShippedForm({ primary, booked }: { primary: boolean; booked: boolean }) {
+  const fetcher = useFetcher<{ success?: boolean; notice?: string; errors?: string[] }>();
+  const shopify = useAppBridge();
+  const [open, setOpen] = useState(primary);
+  const [tracking, setTracking] = useState("");
+  const [notify, setNotify] = useState(true);
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    if (fetcher.data.notice) shopify.toast.show(fetcher.data.notice);
+  }, [fetcher.state, fetcher.data, shopify]);
+
+  if (!open) {
+    return (
+      <InlineStack>
+        <Button variant="plain" onClick={() => setOpen(true)}>
+          Already shipped? Add tracking
+        </Button>
+      </InlineStack>
+    );
+  }
+  return (
+    <BlockStack gap="200">
+      <TextField
+        label="Tracking number"
+        value={tracking}
+        onChange={setTracking}
+        autoComplete="off"
+        placeholder="e.g. 877962745044"
+        helpText={booked ? "Leave empty to use the BWS booking's tracking." : "From the BWS portal or the label."}
+      />
+      <Checkbox
+        label="Email the customer the tracking (Shopify shipping confirmation)"
+        checked={notify}
+        onChange={setNotify}
+      />
+      {fetcher.data?.errors && <Banner tone="critical">{fetcher.data.errors.join(" ")}</Banner>}
+      <InlineStack gap="200">
+        <Button
+          variant={primary ? "primary" : undefined}
+          loading={fetcher.state !== "idle"}
+          onClick={() =>
+            fetcher.submit(
+              { action: "mark_shipped", trackingNumber: tracking, notifyCustomer: notify ? "1" : "0" },
+              { method: "post" },
+            )
+          }
+        >
+          Mark as shipped
+        </Button>
+        {!primary && (
+          <Button variant="plain" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+        )}
+      </InlineStack>
+    </BlockStack>
   );
 }
