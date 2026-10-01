@@ -16,6 +16,8 @@ import {
   DataTable,
   Banner,
   Checkbox,
+  Popover,
+  FormLayout,
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -156,7 +158,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         vector,
         cutJob: job.kind === "cut",
         filename: job.kind === "cut" ? job.images[0]?.originalFilename ?? null : null,
-        missingFile: job.kind === "cut" && !job.sourceFileUrl,
+        // Orders typed in by hand have no file until one is uploaded here.
+        missingFile: !file && !job.sourceFileUrl && (job.kind === "cut" || job._count.images === 0),
+        widthCm: job.widthMm / 10,
+        heightCm: job.heightMm / 10,
+        pieces: job.lineQuantity ?? 1,
         fileMeta: file
           ? `${file.format.toUpperCase()}${file.fileSizeBytes ? ` ${(file.fileSizeBytes / 1024 / 1024).toFixed(1)} MB` : ""}`
           : null,
@@ -272,6 +278,60 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         : undefined,
     });
     return json(result.ok ? { success: true, notice: "Booking saved. You can send the order to the print shop now." } : { errors: result.errors });
+  }
+
+  if (action === "set_size") {
+    /*
+     * Orders typed in by hand carry no size: the customer sent the motif by
+     * email. A cut job is width × height × pieces; a roll is 58 cm wide and
+     * only its length is set.
+     */
+    const job = await prisma.gangSheet.findFirst({
+      where: {
+        id: String(formData.get("jobId") || ""),
+        shopDomain: session.shop,
+        ...(gangSheet.shopifyOrderId ? { shopifyOrderId: gangSheet.shopifyOrderId } : { id: gangSheet.id }),
+      },
+      include: { images: { select: { id: true, widthPx: true }, take: 1 } },
+    });
+    if (!job) return json({ errors: ["Print job not found."] }, { status: 404 });
+    if (job.status === "shipped") return json({ errors: ["This job has already shipped."] });
+
+    const cm = (name: string) => parseFloat(String(formData.get(name) || "").replace(",", "."));
+    const heightMm = Math.round(cm("heightCm") * 10);
+    const widthMm = job.kind === "cut" ? Math.round(cm("widthCm") * 10) : job.widthMm;
+    const pieces = job.kind === "cut" ? parseInt(String(formData.get("pieces") || ""), 10) : null;
+
+    const errors: string[] = [];
+    if (job.kind === "cut" && !(widthMm >= 10 && widthMm <= 580)) errors.push("Width must be 1–58 cm.");
+    if (!(heightMm >= 10 && heightMm <= (job.kind === "cut" ? 1000 : 100_000))) {
+      errors.push(job.kind === "cut" ? "Height must be 1–100 cm." : "Length must be 1 cm–1000 m.");
+    }
+    if (pieces !== null && !(pieces >= 1 && pieces <= 100_000)) errors.push("Pieces must be at least 1.");
+    if (errors.length) return json({ errors });
+
+    const image = job.images[0];
+    const dpi = job.kind === "cut" && image && image.widthPx > 0 ? Math.round(image.widthPx / (widthMm / 25.4)) : null;
+    await prisma.$transaction([
+      prisma.gangSheet.update({
+        where: { id: job.id },
+        data: { widthMm, heightMm, ...(pieces !== null ? { lineQuantity: pieces } : {}) },
+      }),
+      ...(job.kind === "cut" && image
+        ? [
+            prisma.gangSheetImage.update({
+              where: { id: image.id },
+              data: {
+                displayWidth: widthMm,
+                displayHeight: heightMm,
+                ...(pieces !== null ? { quantity: pieces } : {}),
+                ...(dpi ? { dpiX: dpi, dpiY: dpi } : {}),
+              },
+            }),
+          ]
+        : []),
+    ]);
+    return json({ sizeSaved: true });
   }
 
   if (action === "replace_file") {
@@ -664,7 +724,11 @@ export default function OrderDetailPage() {
                         </Text>
                         <Text as="p" variant="bodySm" tone="subdued">
                           {[
-                            job.cut ? "Print and cut out each copy" : `Print as is · ${job.designs} design${job.designs === 1 ? "" : "s"}`,
+                            job.cut
+                              ? "Print and cut out each copy"
+                              : job.designs > 0
+                                ? `Print as is · ${job.designs} design${job.designs === 1 ? "" : "s"}`
+                                : "Print as is",
                             job.vector
                               ? "Vector file"
                               : job.dpi != null
@@ -693,7 +757,7 @@ export default function OrderDetailPage() {
                         )}
                         {job.missingFile && (
                           <Text as="p" variant="bodySm" tone="critical">
-                            The customer did not upload a file.
+                            No print file yet. Upload it before sending to the print shop.
                           </Text>
                         )}
                         {job.props.map((p) => (
@@ -710,7 +774,8 @@ export default function OrderDetailPage() {
                           Download
                         </Button>
                       )}
-                      <ReplaceFileButton jobId={job.id} />
+                      <ReplaceFileButton jobId={job.id} label={job.hasFile ? "Replace file" : "Upload file"} />
+                      <EditSizeButton job={job} />
                     </BlockStack>
                   </InlineStack>
                 </Box>
@@ -824,7 +889,7 @@ export default function OrderDetailPage() {
  * Upload a corrected file for one print job. The file input is hidden; the
  * button opens it, and the upload starts as soon as a file is picked.
  */
-function ReplaceFileButton({ jobId }: { jobId: string }) {
+function ReplaceFileButton({ jobId, label }: { jobId: string; label: string }) {
   const fetcher = useFetcher<{ replaced?: boolean; notice?: string; errors?: string[] }>();
   const shopify = useAppBridge();
   const inputId = `replace-${jobId}`;
@@ -858,9 +923,92 @@ function ReplaceFileButton({ jobId }: { jobId: string }) {
         loading={fetcher.state !== "idle"}
         onClick={() => document.getElementById(inputId)?.click()}
       >
-        Replace file
+        {label}
       </Button>
     </>
+  );
+}
+
+/** Set a job's print size: width × height × pieces, or a roll's length. */
+function EditSizeButton({
+  job,
+}: {
+  job: { id: string; cut: boolean; widthCm: number; heightCm: number; pieces: number };
+}) {
+  const fetcher = useFetcher<{ sizeSaved?: boolean; errors?: string[] }>();
+  const shopify = useAppBridge();
+  const [open, setOpen] = useState(false);
+  const [width, setWidth] = useState(job.widthCm ? String(job.widthCm) : "");
+  const [height, setHeight] = useState(
+    job.heightCm ? String(job.cut ? job.heightCm : job.heightCm / 100) : "",
+  );
+  const [pieces, setPieces] = useState(String(job.pieces));
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    if (fetcher.data.sizeSaved) {
+      setOpen(false);
+      shopify.toast.show("Size saved");
+    } else if (fetcher.data.errors) {
+      shopify.toast.show(fetcher.data.errors.join(" "), { isError: true });
+    }
+  }, [fetcher.state, fetcher.data, shopify]);
+
+  const save = () => {
+    const data = new FormData();
+    data.append("action", "set_size");
+    data.append("jobId", job.id);
+    if (job.cut) {
+      data.append("widthCm", width);
+      data.append("heightCm", height);
+      data.append("pieces", pieces);
+    } else {
+      // A roll's length is entered in metres.
+      data.append("heightCm", String(parseFloat(height.replace(",", ".")) * 100));
+    }
+    fetcher.submit(data, { method: "post" });
+  };
+
+  return (
+    <Popover
+      active={open}
+      onClose={() => setOpen(false)}
+      preferredAlignment="right"
+      activator={
+        <Button variant="plain" onClick={() => setOpen((v) => !v)}>
+          {job.widthCm && job.heightCm ? "Edit size" : "Set size"}
+        </Button>
+      }
+    >
+      <Box padding="400" minWidth="260px">
+        <FormLayout>
+          {job.cut ? (
+            <>
+              <FormLayout.Group condensed>
+                <TextField label="Width" suffix="cm" type="number" min={1} max={58} step={0.1} value={width} onChange={setWidth} autoComplete="off" />
+                <TextField label="Height" suffix="cm" type="number" min={1} step={0.1} value={height} onChange={setHeight} autoComplete="off" />
+              </FormLayout.Group>
+              <TextField label="Pieces" type="number" min={1} value={pieces} onChange={setPieces} autoComplete="off" />
+            </>
+          ) : (
+            <TextField
+              label="Length"
+              suffix="m"
+              type="number"
+              min={0.1}
+              step={0.1}
+              value={height}
+              onChange={setHeight}
+              helpText="58 cm wide roll"
+              autoComplete="off"
+            />
+          )}
+          <Button variant="primary" onClick={save} loading={fetcher.state !== "idle"}>
+            Save size
+          </Button>
+        </FormLayout>
+      </Box>
+    </Popover>
   );
 }
 

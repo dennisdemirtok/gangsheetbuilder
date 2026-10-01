@@ -154,7 +154,9 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
     include: { images: true },
   });
 
-  if (gangSheet.kind === "cut") {
+  // A cut job, or a roll ordered by hand without a builder sheet: the file
+  // is the customer's (or uploaded on the order page), not composed here.
+  if (gangSheet.kind === "cut" || gangSheet.images.length === 0) {
     await importCutMotif(gangSheet);
     return;
   }

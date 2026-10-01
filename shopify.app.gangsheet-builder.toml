@@ -20,6 +20,12 @@ api_version = "2026-07"
   topics = [ "orders/paid" ]
   uri = "/webhooks/orders-paid"
 
+  # B2B orders on invoice are not paid when created (by hand in the admin
+  # or at checkout); the handler only takes those, the rest wait for paid.
+  [[webhooks.subscriptions]]
+  topics = [ "orders/create" ]
+  uri = "/webhooks/orders-create"
+
   [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]
   uri = "/webhooks/app/uninstalled"
