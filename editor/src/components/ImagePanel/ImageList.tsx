@@ -10,6 +10,7 @@ import {
   getDpiColor,
   getDpiLevel,
   DPI_LEVEL_LABELS,
+  cmText,
 } from "../../utils/units";
 import { freeCapacityFor, imageBbox } from "../../utils/layout";
 import { removeBg, getAppProxyUrl } from "../../services/api";
@@ -62,7 +63,10 @@ export function ImageList() {
 function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
   const updateGroup = useEditorStore((s) => s.updateGroup);
   const [busy, setBusy] = useState(false);
-  const white = groups.filter((g) => g.master.hasWhiteBackground && !g.master.bgRemoved);
+  // bgRemoved is also set for files that came in transparent — an EPS
+  // with a white box inside a transparent margin is one — so check for an
+  // actual background-free version instead.
+  const white = groups.filter((g) => g.master.hasWhiteBackground && !g.master.bgRemovedUrl);
   if (white.length === 0) return null;
 
   const removeAll = async () => {
@@ -288,8 +292,7 @@ function GroupItem({
               {dpi} DPI
             </span>
             <span style={{ fontSize: 11, color: theme.textDim }}>
-              {(image.displayWidth / 10).toFixed(1)} ×{" "}
-              {(image.displayHeight / 10).toFixed(1)} cm
+              {cmText(image.displayWidth)} × {cmText(image.displayHeight)} cm
             </span>
             {(dpiLevel === "bad" || dpiLevel === "low") && (
               <span style={{ fontSize: 11, color: dpiColor, fontWeight: 600 }}>
@@ -437,7 +440,7 @@ function GroupItem({
             <ActionButton
               label={isRemovingBg ? "Tar bort…" : "Ta bort BG"}
               onClick={handleRemoveBg}
-              disabled={isRemovingBg || image.bgRemoved}
+              disabled={isRemovingBg || Boolean(image.bgRemovedUrl)}
             />
             <ActionButton
               label="Beskär"
@@ -470,7 +473,7 @@ function GroupItem({
             />
           </div>
 
-          {image.hasWhiteBackground && !image.bgRemoved && (
+          {image.hasWhiteBackground && !image.bgRemovedUrl && (
             <div
               style={{
                 padding: "5px 8px",

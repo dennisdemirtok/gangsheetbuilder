@@ -491,14 +491,16 @@ export function GangSheetCanvas() {
           boxShadow: theme.shadowLg,
           borderRadius: 0,
           lineHeight: 0,
+          // Mid-grey checks: white logos vanished on a white one, and DTF
+          // prints white as often as any colour.
           backgroundImage:
-            "linear-gradient(45deg, #eee 25%, transparent 25%), " +
-            "linear-gradient(-45deg, #eee 25%, transparent 25%), " +
-            "linear-gradient(45deg, transparent 75%, #eee 75%), " +
-            "linear-gradient(-45deg, transparent 75%, #eee 75%)",
+            "linear-gradient(45deg, #b4b4b4 25%, transparent 25%), " +
+            "linear-gradient(-45deg, #b4b4b4 25%, transparent 25%), " +
+            "linear-gradient(45deg, transparent 75%, #b4b4b4 75%), " +
+            "linear-gradient(-45deg, transparent 75%, #b4b4b4 75%)",
           backgroundSize: "24px 24px",
           backgroundPosition: "0 0, 0 12px, 12px -12px, -12px 0px",
-          backgroundColor: "#fff",
+          backgroundColor: "#cdcdcd",
           transformOrigin: "center center",
           transition: "transform 0.15s ease",
         }}

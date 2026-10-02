@@ -2,7 +2,8 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { downloadFile, uploadFile, storageKey } from "../lib/r2.server";
-import { removeWhiteBackground } from "../lib/image-processing.server";
+import { removeAllWhite, removeWhiteBackground } from "../lib/image-processing.server";
+import { resolveRasterKey } from "../lib/placement";
 import prisma from "../db.server";
 
 /**
@@ -17,6 +18,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const body = await request.json();
     const { imageId } = body;
+    // "background" (default): white around the design. "all": every white
+    // pixel, also inside it — chosen by the customer after seeing the first.
+    const mode: "background" | "all" = body.mode === "all" ? "all" : "background";
 
     if (!imageId) {
       return json({ error: "Missing imageId" }, { status: 400 });
@@ -30,15 +34,24 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: "Image not found" }, { status: 404 });
     }
 
-    if (image.bgRemoved && image.bgRemovedUrl) {
-      return json({
-        status: "already_done",
-        bgRemovedUrl: image.bgRemovedUrl,
-      });
+    // Where this mode's result lives, so switching modes never serves the
+    // other one from a cache.
+    const parts = image.originalUrl.split("/");
+    const sessionPart = parts[1] || "unknown";
+    const imagePart = parts[2] || imageId;
+    const bgRemovedKey = `uploads/${sessionPart}/${imagePart}/${mode === "all" ? "bg-removed-all" : "bg-removed"}.png`;
+
+    if (image.bgRemovedUrl === bgRemovedKey) {
+      if (!image.bgRemoved) {
+        await prisma.gangSheetImage.update({ where: { id: imageId }, data: { bgRemoved: true } });
+      }
+      // Same shape as a fresh result: the editor prefixes "/…" paths.
+      return json({ status: "already_done", bgRemovedUrl: `/api/image/${bgRemovedKey}`, mode });
     }
 
-    // Download original image from R2
-    const originalBuffer = await downloadFile(image.originalUrl);
+    // The raster the design prints from: an EPS/AI original is a vector
+    // sharp cannot read, so use the PNG it was converted to at upload.
+    const originalBuffer = await downloadFile(resolveRasterKey(image.originalUrl));
 
     let resultBuffer: Buffer;
 
@@ -52,16 +65,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         resultBuffer = await removeWhiteBackground(originalBuffer);
       }
     } else {
-      // Use local Sharp-based white background removal
-      resultBuffer = await removeWhiteBackground(originalBuffer);
+      // Local: the white around the design, or on request all white.
+      resultBuffer =
+        mode === "all"
+          ? await removeAllWhite(originalBuffer)
+          : await removeWhiteBackground(originalBuffer);
     }
-
-    // Upload result to R2
-    // Extract session and image parts from original URL
-    const parts = image.originalUrl.split("/");
-    const sessionPart = parts[1] || "unknown";
-    const imagePart = parts[2] || imageId;
-    const bgRemovedKey = `uploads/${sessionPart}/${imagePart}/bg-removed.png`;
 
     await uploadFile(bgRemovedKey, resultBuffer, "image/png");
 
@@ -80,6 +89,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return json({
       status: "done",
       bgRemovedUrl: bgRemovedUrlFull,
+      mode,
     });
   } catch (error) {
     console.error("Remove BG error:", error);

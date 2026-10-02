@@ -175,7 +175,9 @@ export function buildPlacementsPayload(
       // Print the background-free version only if the customer kept it —
       // they can take a removed background back in the guide.
       useBgRemoved: Boolean(first.bgRemovedUrl),
-      placements: copies.map((c) => ({ xMm: c.positionX, yMm: c.positionY })),
+      // Each copy's own rotation: the packer turns single copies 90°, and
+      // the export used to print every copy at the first one's angle.
+      placements: copies.map((c) => ({ xMm: c.positionX, yMm: c.positionY, rotation: c.rotation })),
     };
   });
 
@@ -220,10 +222,14 @@ export async function getPricing(): Promise<any> {
 }
 
 // Remove background
-export async function removeBg(imageId: string): Promise<any> {
+/**
+ * Take the white background off a design. "all" also clears white inside
+ * it (the hole of an "O") — offered after the customer has seen the first.
+ */
+export async function removeBg(imageId: string, mode: "background" | "all" = "background"): Promise<any> {
   return fetchApi("/api/remove-bg", {
     method: "POST",
-    body: JSON.stringify({ imageId }),
+    body: JSON.stringify({ imageId, mode }),
   });
 }
 

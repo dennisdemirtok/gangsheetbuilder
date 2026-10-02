@@ -43,74 +43,28 @@ export async function extractMetadata(buffer: Buffer): Promise<ImageMetadata> {
 }
 
 /**
- * Detect if an image likely has a white (or near-white) background.
- * Samples corner pixels and edge regions.
- * Returns true if the background appears to be white/light.
+ * Does the design sit on a white background that would print as a white
+ * box? Answered by the removal itself, on a small copy: if clearing the
+ * white that touches the edge (through any transparent margin) would clear
+ * more than a sliver of the image, there is a background.
+ *
+ * This used to give up as soon as the file had any transparency, and only
+ * looked at the four corners — so an EPS whose white box sits inside a
+ * transparent margin (Ghostscript renders the page that way) was never
+ * flagged, and printed with its box.
  */
 async function detectWhiteBackground(
   buffer: Buffer,
-  hasAlpha: boolean,
+  _hasAlpha: boolean,
 ): Promise<boolean> {
-  if (hasAlpha) {
-    // If image has alpha channel, check if it's actually used
-    const stats = await sharp(buffer).stats();
-    const alphaChannel = stats.channels[3];
-    if (alphaChannel && alphaChannel.min < 200) {
-      // Alpha is used (some transparency), likely no white bg issue
-      return false;
-    }
-  }
-
   try {
-    const img = sharp(buffer);
-    const meta = await img.metadata();
-    const w = meta.width || 100;
-    const h = meta.height || 100;
-
-    // Sample 4 corners (10x10 px each) and check if they're white
-    const cornerSize = Math.min(10, Math.floor(w / 10), Math.floor(h / 10));
-    if (cornerSize < 2) return false;
-
-    const corners = [
-      { left: 0, top: 0 }, // top-left
-      { left: w - cornerSize, top: 0 }, // top-right
-      { left: 0, top: h - cornerSize }, // bottom-left
-      { left: w - cornerSize, top: h - cornerSize }, // bottom-right
-    ];
-
-    let whiteCorners = 0;
-
-    for (const corner of corners) {
-      const region = await sharp(buffer)
-        .extract({
-          left: corner.left,
-          top: corner.top,
-          width: cornerSize,
-          height: cornerSize,
-        })
-        .raw()
-        .toBuffer();
-
-      const channels = meta.channels || 3;
-      let totalBrightness = 0;
-      const pixelCount = (region.length / channels);
-
-      for (let i = 0; i < region.length; i += channels) {
-        const r = region[i]!;
-        const g = region[i + 1]!;
-        const b = region[i + 2]!;
-        totalBrightness += (r + g + b) / 3;
-      }
-
-      const avgBrightness = totalBrightness / pixelCount;
-      // White threshold: average brightness > 240 (out of 255)
-      if (avgBrightness > 240) {
-        whiteCorners++;
-      }
-    }
-
-    // If 3 or more corners are white, likely a white background
-    return whiteCorners >= 3;
+    const { data, info } = await sharp(buffer, { limitInputPixels: false })
+      .resize({ width: 600, height: 600, fit: "inside", withoutEnlargement: true })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const cleared = clearEdgeWhite(data, info.width, info.height, info.channels, 240, 20);
+    return cleared > info.width * info.height * 0.03;
   } catch {
     return false;
   }
@@ -211,30 +165,110 @@ export async function removeWhiteBackground(
 ): Promise<Buffer> {
   const img = sharp(buffer, { limitInputPixels: false });
   const meta = await img.metadata();
-  const w = meta.width || 0;
-  const h = meta.height || 0;
-
-  if (w === 0 || h === 0) return buffer;
+  if (!meta.width || !meta.height) return buffer;
 
   const { data, info } = await img
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
 
-  const channels = info.channels; // 4 (RGBA)
-  const loose = threshold - fuzz;
+  clearEdgeWhite(data, info.width, info.height, info.channels, threshold, fuzz);
 
-  /** Near-white and still visible: part of the background if it touches it. */
-  const whiteish = (p: number) => {
+  return sharp(data, {
+    raw: { width: info.width, height: info.height, channels: info.channels },
+  })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Make every near-white pixel transparent — also white inside the design,
+ * like the counter of an "O". Only on request: it also clears white the
+ * design is meant to print. The customer sees the result before using it.
+ */
+export async function removeAllWhite(
+  buffer: Buffer,
+  threshold: number = 240,
+  fuzz: number = 20,
+): Promise<Buffer> {
+  const { data, info } = await sharp(buffer, { limitInputPixels: false })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const loose = threshold - fuzz;
+  for (let i = 0; i < data.length; i += info.channels) {
+    const whiteness = Math.min(data[i]!, data[i + 1]!, data[i + 2]!);
+    if (whiteness < loose) continue;
+    const a = whiteness >= threshold ? 0 : Math.round(255 * (1 - (whiteness - loose) / fuzz));
+    data[i + 3] = Math.min(data[i + 3]!, Math.max(0, a));
+  }
+  return sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Make a white background transparent, in place. Returns how many visible
+ * white pixels it cleared (0 when there is no white background).
+ *
+ * A white background is a frame around the design: the edge of everything
+ * visible in the file is mostly white. That covers a JPG on white paper and
+ * an EPS whose white box sits inside a transparent margin (Ghostscript
+ * renders the page that way, and a fill that started at the file's own edge
+ * never reached the box). A white logo on a transparent background has a
+ * mostly transparent edge and is left alone — clearing "white connected to
+ * the edge" through the transparency would have erased it. From the white
+ * on that edge, white connected to it is cleared; white inside the design
+ * (text, details) stays and prints white. A scanline fill keeps the stack
+ * small even on 40-megapixel renders.
+ */
+function clearEdgeWhite(
+  data: Buffer,
+  w: number,
+  h: number,
+  channels: number,
+  threshold: number,
+  fuzz: number,
+): number {
+  const loose = threshold - fuzz;
+  const VISIBLE = 16;
+  const alpha = (p: number) => data[p * channels + 3]!;
+  const isWhite = (p: number) => {
     const i = p * channels;
     return (
-      data[i + 3]! > 0 &&
+      data[i + 3]! >= VISIBLE &&
       data[i]! >= loose &&
       data[i + 1]! >= loose &&
       data[i + 2]! >= loose
     );
   };
 
+  // Bounds of everything visible.
+  let minX = w;
+  let minY = h;
+  let maxX = -1;
+  let maxY = -1;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      if (alpha(row + x) >= VISIBLE) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX < 0) return 0;
+
+  // Is the edge of the visible area mostly white — a frame?
+  const edge: number[] = [];
+  for (let x = minX; x <= maxX; x++) edge.push(minY * w + x, maxY * w + x);
+  for (let y = minY + 1; y < maxY; y++) edge.push(y * w + minX, y * w + maxX);
+  const whiteOnEdge = edge.filter(isWhite);
+  if (whiteOnEdge.length < edge.length * 0.5) return 0;
+
+  let cleared = 0;
   const clear = (p: number) => {
     const i = p * channels;
     const whiteness = Math.min(data[i]!, data[i + 1]!, data[i + 2]!);
@@ -242,60 +276,44 @@ export async function removeWhiteBackground(
       whiteness >= threshold
         ? 0
         : Math.max(0, Math.min(255, Math.round(255 * (1 - (whiteness - loose) / fuzz))));
+    cleared++;
   };
 
-  // Scanline flood fill from every white pixel on the border. A span stack
-  // stays small even on 40-megapixel EPS renders, unlike a pixel stack.
   const seen = new Uint8Array(w * h);
   const stack: number[] = [];
-  const seed = (x: number, y: number) => {
-    const p = y * w + x;
-    if (!seen[p] && whiteish(p)) stack.push(x, y);
-  };
-  for (let x = 0; x < w; x++) {
-    seed(x, 0);
-    seed(x, h - 1);
-  }
-  for (let y = 0; y < h; y++) {
-    seed(0, y);
-    seed(w - 1, y);
-  }
+  for (const p of whiteOnEdge) stack.push(p % w, Math.floor(p / w));
 
   while (stack.length > 0) {
     const y = stack.pop()!;
     let x = stack.pop()!;
     let p = y * w + x;
-    if (seen[p]) continue;
-    // Walk left to the start of this run of background.
-    while (x > 0 && !seen[p - 1] && whiteish(p - 1)) {
+    if (seen[p] || !isWhite(p)) continue;
+    // Walk left to the start of this run of white.
+    while (x > 0 && !seen[p - 1] && isWhite(p - 1)) {
       x--;
       p--;
     }
     let aboveOpen = false;
     let belowOpen = false;
-    for (; x < w && !seen[p] && whiteish(p); x++, p++) {
+    for (; x < w && !seen[p] && isWhite(p); x++, p++) {
       seen[p] = 1;
-      clear(p);
       if (y > 0) {
         const up = p - w;
-        const open = !seen[up] && whiteish(up);
+        const open = !seen[up] && isWhite(up);
         if (open && !aboveOpen) stack.push(x, y - 1);
         aboveOpen = open;
       }
       if (y < h - 1) {
         const down = p + w;
-        const open = !seen[down] && whiteish(down);
+        const open = !seen[down] && isWhite(down);
         if (open && !belowOpen) stack.push(x, y + 1);
         belowOpen = open;
       }
     }
   }
-
-  return sharp(data, {
-    raw: { width: info.width, height: info.height, channels: info.channels },
-  })
-    .png()
-    .toBuffer();
+  // Clear after the fill, so partial alphas don't change what counts as white.
+  for (let p = 0; p < seen.length; p++) if (seen[p]) clear(p);
+  return cleared;
 }
 
 /**

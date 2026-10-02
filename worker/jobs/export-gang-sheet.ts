@@ -11,6 +11,11 @@ import {
   resolveRasterKey,
 } from "../../app/lib/placement";
 import { storeJobFile } from "../../app/lib/job-file.server";
+import {
+  convertToRaster,
+  removeAllWhite,
+  removeWhiteBackground,
+} from "../../app/lib/image-processing.server";
 
 const prisma = new PrismaClient();
 
@@ -182,27 +187,39 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
     const imageKey = resolveRasterKey(
       image.bgRemoved && image.bgRemovedUrl ? image.bgRemovedUrl : image.originalUrl,
     );
-    const buffer = await downloadFromR2(imageKey);
+    let buffer = await downloadFromR2(imageKey);
 
     const targetWidth = mmToPx(image.displayWidth);
     const targetHeight = mmToPx(image.displayHeight);
 
-    const processedBuffer = await renderPlacedImage(
-      buffer,
-      targetWidth,
-      targetHeight,
-      image.rotation,
-      image.flipX,
-      image.flipY,
-    );
+    // An EPS/AI is rasterized at upload at its own size and 300 DPI. Printed
+    // larger, that picture is stretched — #1024 printed a vector logo at
+    // 114 DPI. Draw it again from the vector at the size it is printed.
+    // A removed background is redone on the sharp render, the same way.
+    const vector = /\.(eps|ai|ps)$/i.test(image.originalUrl);
+    const usesBgRemoved = Boolean(image.bgRemoved && image.bgRemovedUrl);
+    const scale = image.widthPx > 0 ? targetWidth / image.widthPx : 1;
+    if (vector && scale > 1.05) {
+      try {
+        const original = await downloadFromR2(image.originalUrl);
+        const dpi = Math.min(2400, Math.ceil(300 * scale));
+        let sharpRender = await convertToRaster(original, image.originalFilename || "design.eps", dpi);
+        if (usesBgRemoved) {
+          sharpRender = /bg-removed-all\.png$/.test(image.bgRemovedUrl!)
+            ? await removeAllWhite(sharpRender)
+            : await removeWhiteBackground(sharpRender);
+        }
+        buffer = sharpRender;
+      } catch (err) {
+        console.warn(
+          `[export] Could not re-render ${image.originalFilename} from the vector, using the upload raster:`,
+          (err as Error).message,
+        );
+      }
+    }
 
-    const meta = await sharp(processedBuffer, {
-      limitInputPixels: false,
-    }).metadata();
-    const bboxWidthPx = meta.width || 0;
-    const bboxHeightPx = meta.height || 0;
-
-    // One placement per copy using the placements saved by the editor
+    // One placement per copy using the placements saved by the editor —
+    // each with its own rotation, since the packer turns single copies.
     const { placements, skipped } = computeCopyPlacements(
       {
         positionX: image.positionX,
@@ -223,7 +240,29 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
       );
     }
 
+    // Render the design once per rotation in use, not once per copy.
+    const rendered = new Map<number, { buffer: Buffer; w: number; h: number }>();
+    const renderFor = async (rotation: number) => {
+      const hit = rendered.get(rotation);
+      if (hit) return hit;
+      const out = await renderPlacedImage(
+        buffer,
+        targetWidth,
+        targetHeight,
+        rotation,
+        image.flipX,
+        image.flipY,
+      );
+      const meta = await sharp(out, { limitInputPixels: false }).metadata();
+      const entry = { buffer: out, w: meta.width || 0, h: meta.height || 0 };
+      rendered.set(rotation, entry);
+      return entry;
+    };
+
     for (const placement of placements) {
+      const { buffer: processedBuffer, w: bboxWidthPx, h: bboxHeightPx } = await renderFor(
+        placement.rotation ?? image.rotation,
+      );
       const left = mmToPx(placement.xMm);
       const top = mmToPx(placement.yMm);
 

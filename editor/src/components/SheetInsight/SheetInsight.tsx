@@ -1,7 +1,8 @@
 import { useMemo } from "react";
 import { useEditorStore, groupImages } from "../../store/editorStore";
 import { useSheetStats } from "../../utils/sheetStats";
-import { freeCapacityFor, imageBbox, requiredHeightMm } from "../../utils/layout";
+import { freeCapacityFor, imageBbox } from "../../utils/layout";
+import { neededHeightMm } from "../../utils/packing";
 import { smallestSheetFor } from "../../config/sheets";
 import { getSheetPrice } from "../../services/storefrontPrices";
 import { theme } from "../../styles/theme";
@@ -54,7 +55,7 @@ export function SheetInsight() {
         return { id: img.id, w: b.w, h: b.h };
       });
     if (items.length === 0) return null;
-    const fits = smallestSheetFor(requiredHeightMm(items, sheetSize.widthMm, gapMm));
+    const fits = smallestSheetFor(neededHeightMm(items, sheetSize.widthMm, gapMm));
     if (fits.heightMm >= sheetSize.heightMm) return null;
     const now = getSheetPrice(sheetSize.key);
     const then = getSheetPrice(fits.key);

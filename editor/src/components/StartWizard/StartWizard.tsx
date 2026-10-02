@@ -7,9 +7,9 @@ import {
 } from "../../store/editorStore";
 import { uploadImage, getAppProxyUrl, ensureGangSheet, removeBg } from "../../services/api";
 import { getSheetPrice } from "../../services/storefrontPrices";
-import { calculateDisplayDpi, getDpiColor, dpiWarning, DPI_THRESHOLDS } from "../../utils/units";
-import { capacity, requiredHeightMm, imageBbox, EDGE_MARGIN_MM } from "../../utils/layout";
-import { computeSheetStats } from "../../utils/sheetStats";
+import { calculateDisplayDpi, cmText, getDpiColor, dpiWarning, DPI_THRESHOLDS } from "../../utils/units";
+import { capacity, imageBbox, EDGE_MARGIN_MM } from "../../utils/layout";
+import { neededHeightMm } from "../../utils/packing";
 import { SHEET_SIZES, SHEET_WIDTH_MM, smallestSheetFor } from "../../config/sheets";
 import { theme } from "../../styles/theme";
 import { showToast } from "../../utils/toast";
@@ -78,7 +78,13 @@ interface Draft {
   /** Use the background-free version (on by default when there is one). */
   useBgRemoved: boolean;
   bgBusy?: boolean;
+  /** Only the white around the design, or every white pixel. */
+  bgMode?: BgMode;
+  /** Results already fetched, per mode, so switching back is instant. */
+  bgUrls?: Partial<Record<BgMode, string>>;
 }
+
+type BgMode = "background" | "all";
 
 /** The theme block exposes this when the upload modal is on the page. */
 function openUploadFlow() {
@@ -116,11 +122,11 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
     sheetSize,
     images,
     setGangSheetId,
-    setSheetSize,
-    addImage,
-    setGroupCount,
-    arrangeSheet,
+    addDesigns,
   } = useEditorStore();
+
+  const draftsRef = useRef<Draft[]>([]);
+  draftsRef.current = drafts;
 
   // Designs already on the sheet: the guide adds to them.
   const existing = useMemo(() => images.filter((img) => img.placed), [images]);
@@ -155,14 +161,34 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
   }, [sessionId, sheetSize, filmType, gangSheetId, setGangSheetId]);
 
   const takeOffBackground = useCallback(
-    async (draftId: string, dbId: string) => {
+    async (draftId: string, dbId: string, mode: BgMode = "background") => {
+      const known = draftsRef.current.find((d) => d.id === draftId)?.bgUrls?.[mode];
+      if (known) {
+        update(draftId, { bgRemovedUrl: known, bgMode: mode, useBgRemoved: true });
+        return;
+      }
       update(draftId, { bgBusy: true });
       try {
-        const result = await removeBg(dbId);
+        const result = await removeBg(dbId, mode);
         if (!result?.bgRemovedUrl) throw new Error("no result");
-        update(draftId, { bgRemovedUrl: absolute(result.bgRemovedUrl), useBgRemoved: true, bgBusy: false });
+        const url = absolute(result.bgRemovedUrl);
+        setDrafts((prev) =>
+          prev.map((d) =>
+            d.id === draftId
+              ? {
+                  ...d,
+                  bgRemovedUrl: url,
+                  bgMode: mode,
+                  bgUrls: { ...d.bgUrls, [mode]: url },
+                  useBgRemoved: true,
+                  bgBusy: false,
+                }
+              : d,
+          ),
+        );
       } catch {
-        update(draftId, { useBgRemoved: false, bgBusy: false });
+        update(draftId, { bgBusy: false, ...(mode === "background" ? { useBgRemoved: false } : {}) });
+        if (mode === "all") showToast("Det gick inte att ta bort det vita. Försök igen.", "error");
       }
     },
     [update],
@@ -184,7 +210,9 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
             originalUrl: absolute(result.originalUrl),
             filename: result.filename || draft.file.name,
           };
-          const white = Boolean(result.hasWhiteBackground) && !result.hasAlpha;
+          // The server's check already looks past transparency: an EPS has
+          // a transparent margin around its white box.
+          const white = Boolean(result.hasWhiteBackground);
           setDrafts((prev) =>
             prev.map((d) =>
               d.id === draft.id
@@ -258,7 +286,8 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
       total += d.count;
     }
     if (total === 0) return null;
-    const neededMm = requiredHeightMm(items, SHEET_WIDTH_MM, gapMm);
+    // The same nesting the build uses — turning designs where it saves film.
+    const neededMm = neededHeightMm(items, SHEET_WIDTH_MM, gapMm);
     let sheet = smallestSheetFor(neededMm);
     // Never shorter than the sheet designs already sit on.
     if (adding && sheet.heightMm < sheetSize.heightMm) {
@@ -276,10 +305,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
     if (ready.length === 0 || !plan || uploading > 0) return;
     setBusy("Placerar motiven...");
     try {
-      // Pick the film length first — placement depends on it.
-      if (!adding || plan.sheet.heightMm > sheetSize.heightMm) setSheetSize(plan.sheet);
-
-      for (const d of ready) {
+      const entries = ready.map((d) => {
         const u = d.uploaded!;
         const widthMm = d.widthCm * 10;
         const ratio = (u.height || d.heightPx) / (u.width || d.widthPx);
@@ -309,26 +335,24 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
           hasWhiteBackground: Boolean(u.hasWhiteBackground) && !bgOff,
           placed: true,
         };
-        addImage(image);
-        // Ask groupKey for the key rather than assuming it — copies are
-        // grouped by database row, not by the id generated here.
-        if (d.count > 1) setGroupCount(groupKey(image), d.count);
-      }
+        return { image, count: d.count };
+      });
 
-      // A fresh sheet gets the server's tight nesting; designs added to a
-      // sheet already in progress find free room on their own, and the
-      // whole sheet is only re-arranged if something ended up overlapping.
-      const state = useEditorStore.getState();
-      const stats = computeSheetStats(state.images, state.sheetSize);
-      if (!adding || !stats.ready) {
-        setBusy("Ordnar arket...");
-        await arrangeSheet();
-      }
+      // One nesting for everything: a fresh sheet gets the shortest film
+      // that holds it all; designs already on a sheet stay where they are
+      // and the new ones fill the space around them.
+      const result = addDesigns(entries, {
+        floor: adding ? sheetSize : SHEET_SIZES[0]!,
+        keepExisting: adding,
+      });
 
-      const placedCount = groupImages(useEditorStore.getState().images).reduce((n, g) => n + g.count, 0);
-      const expected = existing.length + ready.reduce((n, d) => n + d.count, 0);
-      if (placedCount < expected) {
-        showToast(`${expected - placedCount} kopior fick inte plats — lägg dem på ett nytt ark.`, "warning");
+      if (result.overflow > 0) {
+        showToast(`${result.overflow} kopior fick inte plats ens på 5 meter — lägg dem på ett nytt ark.`, "warning");
+      } else if (result.turned > 0) {
+        showToast(
+          `${result.turned === 1 ? "Ett motiv" : `${result.turned} motiv`} vändes 90° för att spara film — de trycks likadant.`,
+          "info",
+        );
       }
       if (failed.length > 0) {
         showToast(`${failed.length} fil${failed.length > 1 ? "er" : ""} kunde inte laddas upp och lades inte till.`, "error");
@@ -342,8 +366,6 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
   };
 
   // Every local preview holds a blob alive until it is revoked.
-  const draftsRef = useRef<Draft[]>([]);
-  draftsRef.current = drafts;
   useEffect(
     () => () => {
       for (const d of draftsRef.current) URL.revokeObjectURL(d.blobUrl);
@@ -430,6 +452,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
                     key={d.id}
                     draft={d}
                     gapMm={gapMm}
+                    onBgMode={(mode) => d.uploaded && void takeOffBackground(d.id, d.uploaded.id, mode)}
                     onChange={(patch) => update(d.id, patch)}
                     onRemove={() => {
                       URL.revokeObjectURL(d.blobUrl);
@@ -545,11 +568,13 @@ function DraftRow({
   draft,
   gapMm,
   onChange,
+  onBgMode,
   onRemove,
 }: {
   draft: Draft;
   gapMm: number;
   onChange: (patch: Partial<Draft>) => void;
+  onBgMode: (mode: BgMode) => void;
   onRemove: () => void;
 }) {
   const widthMm = draft.widthCm * 10;
@@ -645,7 +670,7 @@ function DraftRow({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <span style={S.fieldLabel}>Blir</span>
                 <p style={S.computed}>
-                  {draft.widthCm.toFixed(1)} × {(heightMm / 10).toFixed(1)} cm
+                  {cmText(widthMm)} × {cmText(heightMm)} cm
                   {draft.status === "ready" &&
                     (draft.vector ? (
                       <span style={{ color: theme.success, fontWeight: 600, marginLeft: 6 }}>Vektor</span>
@@ -676,18 +701,31 @@ function DraftRow({
                 )}
               </p>
             )}
-            {draft.bgBusy && <p style={S.note}>Tar bort vit bakgrund…</p>}
+            {draft.bgBusy && <p style={S.note}>Tar bort vitt…</p>}
             {draft.bgRemovedUrl && !draft.bgBusy && (
               <p style={S.note}>
-                {draft.useBgRemoved
-                  ? "Vit bakgrund borttagen — annars trycks den som en vit ruta."
-                  : "Den vita bakgrunden behålls och trycks som vitt."}{" "}
+                {!draft.useBgRemoved
+                  ? "Den vita bakgrunden behålls och trycks som vitt."
+                  : draft.bgMode === "all"
+                    ? "Allt vitt borttaget, även inuti motivet."
+                    : "Vit bakgrund borttagen — annars trycks den som en vit ruta. Vitt inuti motivet trycks vitt."}{" "}
                 <button
                   onClick={() => onChange({ useBgRemoved: !draft.useBgRemoved })}
                   style={S.inlineLink}
                 >
                   {draft.useBgRemoved ? "Behåll bakgrunden" : "Ta bort den"}
                 </button>
+                {draft.useBgRemoved && (
+                  <>
+                    {" · "}
+                    <button
+                      onClick={() => onBgMode(draft.bgMode === "all" ? "background" : "all")}
+                      style={S.inlineLink}
+                    >
+                      {draft.bgMode === "all" ? "Bara bakgrunden" : "Ta bort även vitt inuti"}
+                    </button>
+                  </>
+                )}
               </p>
             )}
           </>

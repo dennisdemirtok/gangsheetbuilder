@@ -106,3 +106,8 @@ export const DPI_COLORS = {
   warning: "#f59e0b",
   bad: "#ef4444",
 };
+
+/** Centimetres the Swedish way: "10,5". */
+export function cmText(mm: number): string {
+  return (mm / 10).toFixed(1).replace(".", ",");
+}

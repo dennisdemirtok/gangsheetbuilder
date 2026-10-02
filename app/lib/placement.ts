@@ -45,6 +45,13 @@ export interface PlacementImage {
 export interface CopyPlacement {
   xMm: number; // top-left of the bounding box for this copy
   yMm: number;
+  /**
+   * This copy's own rotation (degrees clockwise). The packer turns single
+   * copies 90° to save film; copies stored without it use the image's
+   * rotation. Every copy used to print at the first copy's rotation, so a
+   * turned copy printed upright — on top of its neighbours.
+   */
+  rotation?: number;
 }
 
 export interface PlacementResult {
@@ -99,16 +106,22 @@ export function computeCopyPlacements(
   );
   const quantity = Math.max(1, Math.floor(image.quantity || 1));
 
-  // Preferred path: print exactly where the editor put each copy.
+  // Preferred path: print exactly where — and how turned — the editor put
+  // each copy.
   if (image.placements && image.placements.length > 0) {
     const placements: CopyPlacement[] = [];
     let skipped = 0;
     for (const copy of image.placements) {
-      if (copy.yMm + bbox.heightMm > sheetHeightMm) {
+      const rotation = copy.rotation ?? image.rotation;
+      const copyBox =
+        rotation === image.rotation
+          ? bbox
+          : rotatedBoundingBox(image.displayWidth, image.displayHeight, rotation);
+      if (copy.yMm + copyBox.heightMm > sheetHeightMm) {
         skipped++;
         continue;
       }
-      placements.push({ xMm: copy.xMm, yMm: copy.yMm });
+      placements.push({ xMm: copy.xMm, yMm: copy.yMm, rotation });
     }
     return {
       bboxWidthMm: bbox.widthMm,
@@ -122,7 +135,7 @@ export function computeCopyPlacements(
     return {
       bboxWidthMm: bbox.widthMm,
       bboxHeightMm: bbox.heightMm,
-      placements: [{ xMm: image.positionX, yMm: image.positionY }],
+      placements: [{ xMm: image.positionX, yMm: image.positionY, rotation: image.rotation }],
       skipped: 0,
     };
   }
@@ -143,7 +156,7 @@ export function computeCopyPlacements(
       skipped++;
       continue;
     }
-    placements.push({ xMm, yMm });
+    placements.push({ xMm, yMm, rotation: image.rotation });
   }
 
   return {
@@ -165,10 +178,14 @@ export function parseStoredPlacements(value: unknown): CopyPlacement[] | null {
   const out: CopyPlacement[] = [];
   for (const entry of value) {
     if (!entry || typeof entry !== "object") continue;
-    const { xMm, yMm } = entry as { xMm?: unknown; yMm?: unknown };
+    const { xMm, yMm, rotation } = entry as { xMm?: unknown; yMm?: unknown; rotation?: unknown };
     if (typeof xMm !== "number" || typeof yMm !== "number") continue;
     if (!Number.isFinite(xMm) || !Number.isFinite(yMm)) continue;
-    out.push({ xMm, yMm });
+    out.push(
+      typeof rotation === "number" && Number.isFinite(rotation)
+        ? { xMm, yMm, rotation }
+        : { xMm, yMm },
+    );
   }
   return out.length > 0 ? out : null;
 }

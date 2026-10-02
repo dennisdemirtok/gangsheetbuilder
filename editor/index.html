@@ -58,6 +58,14 @@
     }
 
     let uploadSeq = 0;
+    const uploadedReal = {};
+
+    // Real logos, converted the way the upload route does (Ghostscript at
+    // 300 DPI): public/test-assets/manifest.json maps a file name to the
+    // server's thumbnail and pixel size. Local preview only.
+    const realAssets = await realFetch("/test-assets/manifest.json")
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch(() => ({}));
 
     window.fetch = function (input, init) {
       const url = typeof input === "string" ? input : input.url;
@@ -87,6 +95,26 @@
         const w = [1200, 2400, 600][uploadSeq % 3];
         const h = [1200, 800, 600][uploadSeq % 3];
         const data = swatch(w, h, hue);
+        const real = file && realAssets[file.name];
+        if (real) {
+          const dbId = "dbimg_" + Date.now().toString(36) + "_" + uploadSeq;
+          uploadedReal[dbId] = file.name;
+          return json({
+            id: dbId,
+            imageId: "img_dev_" + Date.now().toString(36) + "_" + uploadSeq,
+            filename: file.name,
+            // Absolute: the editor prefixes the app proxy path to "/…" URLs.
+            thumbnailUrl: location.origin + encodeURI(real.thumb),
+            originalUrl: location.origin + encodeURI(real.thumb),
+            width: real.width,
+            height: real.height,
+            dpiX: 300,
+            dpiY: 300,
+            hasAlpha: real.hasAlpha,
+            hasWhiteBackground: real.hasWhiteBackground,
+            warnings: [],
+          }).then((res) => new Promise((r) => setTimeout(() => r(res), 400 + Math.random() * 600)));
+        }
         return json({
           // Unique across reloads: the editor keeps its designs in
           // sessionStorage, and reused ids would merge new uploads into them.
@@ -106,6 +134,14 @@
       }
 
       if (url.includes("/api/remove-bg")) {
+        // Real logos: the server's removal, precomputed into test-assets.
+        const id = JSON.parse((init && init.body) || "{}").imageId;
+        const realName = Object.keys(realAssets).find((n) => uploadedReal[id] === n);
+        if (realName && realAssets[realName].nobg) {
+          return new Promise((r) => setTimeout(r, 400)).then(() =>
+            json({ status: "done", bgRemovedUrl: location.origin + encodeURI(realAssets[realName].nobg) }),
+          );
+        }
         // A transparent version: just the badge, no backdrop.
         const c = document.createElement("canvas");
         c.width = 600; c.height = 600;

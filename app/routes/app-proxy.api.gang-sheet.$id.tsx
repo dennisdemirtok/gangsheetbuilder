@@ -141,15 +141,20 @@ const MAX_PLACEMENTS = 2000;
  */
 function sanitizePlacements(
   value: unknown,
-): { xMm: number; yMm: number }[] | null {
+): { xMm: number; yMm: number; rotation?: number }[] | null {
   if (!Array.isArray(value)) return null;
-  const out: { xMm: number; yMm: number }[] = [];
+  const out: { xMm: number; yMm: number; rotation?: number }[] = [];
   for (const entry of value.slice(0, MAX_PLACEMENTS)) {
     if (!entry || typeof entry !== "object") continue;
-    const { xMm, yMm } = entry as { xMm?: unknown; yMm?: unknown };
+    const { xMm, yMm, rotation } = entry as { xMm?: unknown; yMm?: unknown; rotation?: unknown };
     if (typeof xMm !== "number" || typeof yMm !== "number") continue;
     if (!Number.isFinite(xMm) || !Number.isFinite(yMm)) continue;
-    out.push({ xMm, yMm });
+    // Each copy's own rotation: the packer turns single copies 90°.
+    out.push(
+      typeof rotation === "number" && Number.isFinite(rotation)
+        ? { xMm, yMm, rotation: ((rotation % 360) + 360) % 360 }
+        : { xMm, yMm },
+    );
   }
   return out.length > 0 ? out : null;
 }

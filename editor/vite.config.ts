@@ -17,6 +17,9 @@ export default defineConfig({
     },
     outDir: "../extensions/gang-sheet-editor/assets",
     emptyOutDir: false,
+    // public/ holds local-preview test files (customer logos among them);
+    // they must never ship with the storefront extension.
+    copyPublicDir: false,
     rollupOptions: {
       // Don't externalize React — bundle it (storefront doesn't have React)
       output: {

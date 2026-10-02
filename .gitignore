@@ -25,3 +25,6 @@ pnpm-lock.yaml
 # Ignore shopify files created during app dev
 .shopify/*
 .shopify.lock
+
+# Local preview test files (customer artwork) — never commit
+editor/public/test-assets/

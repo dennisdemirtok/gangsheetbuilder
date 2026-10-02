@@ -80,7 +80,7 @@ export async function exportGangSheet(gangSheetId: string): Promise<{
         y: mmToPx(placement.yMm, EXPORT_DPI),
         width: mmToPx(image.displayWidth, EXPORT_DPI),
         height: mmToPx(image.displayHeight, EXPORT_DPI),
-        rotation: image.rotation,
+        rotation: placement.rotation ?? image.rotation,
         flipX: image.flipX,
         flipY: image.flipY,
       });
