@@ -9,8 +9,10 @@ import { uploadImage, getAppProxyUrl, ensureGangSheet, removeBg } from "../../se
 import { getSheetPrice } from "../../services/storefrontPrices";
 import { calculateDisplayDpi, cmText, getDpiColor, dpiWarning, DPI_THRESHOLDS } from "../../utils/units";
 import { capacity, imageBbox, EDGE_MARGIN_MM } from "../../utils/layout";
-import { neededHeightMm } from "../../utils/packing";
-import { SHEET_SIZES, SHEET_WIDTH_MM, smallestSheetFor } from "../../config/sheets";
+import { packSheet } from "../../utils/packing";
+import { SheetPreview, type PreviewPiece } from "./SheetPreview";
+import { useIsMobile } from "../../utils/useIsMobile";
+import { MAX_SHEET_MM, SHEET_SIZES, SHEET_WIDTH_MM, sheetForHeight, smallestSheetFor } from "../../config/sheets";
 import { theme } from "../../styles/theme";
 import { showToast } from "../../utils/toast";
 
@@ -29,14 +31,29 @@ import { showToast } from "../../utils/toast";
  * guide adds to the sheet instead of squeezing what is there.
  */
 
-/** Common placements, so nobody has to guess what "10 cm" looks like. */
+/**
+ * Common placements as the space they must fit in, not a width. A width
+ * alone made a tall logo enormous: "Vänsterbröst 8 cm" on a 1:3 badge was
+ * 24 cm tall. The design is scaled to fit inside the box.
+ */
 const SIZE_PRESETS = [
-  { label: "Vänsterbröst", cm: 8 },
-  { label: "Bröst", cm: 10 },
-  { label: "A4-bred", cm: 21 },
-  { label: "Rygg", cm: 28 },
-  { label: "A3-bred", cm: 29.7 },
+  { label: "Vänsterbröst", w: 9, h: 9 },
+  { label: "Mitt bröst", w: 20, h: 10 },
+  { label: "Framsida", w: 28, h: 28 },
+  { label: "Rygg", w: 30, h: 36 },
+  { label: "Ärm", w: 7, h: 7 },
+  { label: "Nacke", w: 7, h: 4 },
 ];
+type SizePreset = (typeof SIZE_PRESETS)[number];
+
+/** The size a fresh design gets: fits in 10 × 10 cm. */
+const DEFAULT_BOX = { w: 10, h: 10 };
+
+/** Width (cm, to a millimetre) that fits a w×h px design inside the box. */
+function fitWidthCm(box: { w: number; h: number }, widthPx: number, heightPx: number): number {
+  const ratio = widthPx / Math.max(1, heightPx);
+  return Math.round(Math.min(box.w, box.h * ratio, 58) * 10) / 10;
+}
 
 /** Uploads at a time: fast, without starving a slow connection. */
 const PARALLEL_UPLOADS = 3;
@@ -68,6 +85,8 @@ interface Draft {
   heightPx: number;
   /** Target printed width in cm. */
   widthCm: number;
+  /** The placement chosen, if any; the width follows it when the shape is known. */
+  preset?: string;
   count: number;
   vector: boolean;
   status: "uploading" | "ready" | "failed";
@@ -224,6 +243,13 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
                     // be measured in the browser, and SVGs come back drawn.
                     widthPx: result.width || d.widthPx,
                     heightPx: result.height || d.heightPx,
+                    // The real shape is known now (EPS can't be measured in
+                    // the browser): fit it to the chosen box again.
+                    widthCm: fitWidthCm(
+                      SIZE_PRESETS.find((p) => p.label === d.preset) ?? DEFAULT_BOX,
+                      result.width || d.widthPx,
+                      result.height || d.heightPx,
+                    ),
                     previewUrl: d.previewUrl || uploaded.thumbnailUrl,
                     useBgRemoved: white,
                   }
@@ -256,7 +282,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
           previewUrl: dims.w ? blobUrl : "",
           widthPx: dims.w || 1000,
           heightPx: dims.h || 1000,
-          widthCm: 10,
+          widthCm: fitWidthCm(DEFAULT_BOX, dims.w || 1000, dims.h || 1000),
           count: 1,
           vector: VECTOR_EXT.test(file.name),
           status: "uploading",
@@ -273,29 +299,56 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
   /* ── Plan: film for what is on the sheet plus what is being added ── */
 
   const plan = useMemo(() => {
-    const items: { id: string; w: number; h: number }[] = existing.map((img) => {
-      const b = imageBbox(img);
-      return { id: img.id, w: b.w, h: b.h };
-    });
+    // The same nesting the build runs: a fresh sheet nests everything; on a
+    // sheet in progress the designs already there stay put.
+    const newItems: { id: string; w: number; h: number }[] = [];
+    const urlOf = new Map<string, string>();
     let total = 0;
     for (const d of drafts) {
       if (d.status === "failed") continue;
       const w = d.widthCm * 10;
       const h = (d.heightPx / d.widthPx) * w;
-      for (let i = 0; i < d.count; i++) items.push({ id: `${d.id}_${i}`, w, h });
+      const url = (d.useBgRemoved && d.bgRemovedUrl) || d.previewUrl || d.uploaded?.thumbnailUrl || "";
+      for (let i = 0; i < d.count; i++) {
+        newItems.push({ id: `${d.id}_${i}`, w, h });
+        urlOf.set(`${d.id}_${i}`, url);
+      }
       total += d.count;
     }
     if (total === 0) return null;
-    // The same nesting the build uses — turning designs where it saves film.
-    const neededMm = neededHeightMm(items, SHEET_WIDTH_MM, gapMm);
+
+    const tall = sheetForHeight(MAX_SHEET_MM);
+    const existingItems = existing.map((img) => {
+      const b = imageBbox(img);
+      return { id: img.id, w: b.w, h: b.h };
+    });
+    const result = adding
+      ? packSheet(newItems, tall, gapMm, existing.map(imageBbox))
+      : packSheet([...existingItems, ...newItems], tall, gapMm);
+    const tooBig = result.overflow.length > 0;
+    const neededMm = result.bottomMm + EDGE_MARGIN_MM;
     let sheet = smallestSheetFor(neededMm);
     // Never shorter than the sheet designs already sit on.
     if (adding && sheet.heightMm < sheetSize.heightMm) {
-      sheet = SHEET_SIZES.find((s) => s.key === sheetSize.key) ?? sheet;
+      sheet = sheetForHeight(sheetSize.heightMm);
     }
-    const tooBig = neededMm > SHEET_SIZES[SHEET_SIZES.length - 1]!.heightMm;
-    return { neededMm, sheet, tooBig, total, price: getSheetPrice(sheet.key) };
+
+    const pieces: PreviewPiece[] = [];
+    for (const img of existing) {
+      const b = imageBbox(img);
+      pieces.push({
+        fixed: { ...b, rotation: img.rotation, unrotatedW: img.displayWidth, unrotatedH: img.displayHeight },
+        url: img.bgRemovedUrl || img.thumbnailUrl,
+      });
+    }
+    for (const [id, placement] of result.placements) {
+      if (urlOf.has(id)) pieces.push({ placement, url: urlOf.get(id)! });
+    }
+    return { neededMm, sheet, tooBig, total, price: getSheetPrice(sheet.key), pieces };
   }, [drafts, existing, adding, gapMm, sheetSize]);
+
+  const isMobile = useIsMobile();
+  const showPreview = Boolean(plan) && !isMobile;
 
   const uploading = drafts.filter((d) => d.status === "uploading").length;
   const ready = drafts.filter((d) => d.status === "ready");
@@ -373,8 +426,16 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
     [],
   );
 
-  const applyToAll = (patch: Partial<Pick<Draft, "widthCm" | "count">>) =>
-    setDrafts((prev) => prev.map((d) => ({ ...d, ...patch })));
+  const applyToAll = (patch: Partial<Pick<Draft, "widthCm" | "count">> & { preset?: SizePreset }) =>
+    setDrafts((prev) =>
+      prev.map((d) => {
+        const { preset, ...rest } = patch;
+        if (preset) {
+          return { ...d, ...rest, preset: preset.label, widthCm: fitWidthCm(preset, d.widthPx, d.heightPx) };
+        }
+        return { ...d, ...rest, ...(rest.widthCm !== undefined ? { preset: undefined } : {}) };
+      }),
+    );
 
   const buildLabel = busy
     ? busy
@@ -387,7 +448,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
 
   return (
     <div style={S.backdrop}>
-      <div style={S.modal} className="gs-wizard">
+      <div style={{ ...S.modal, maxWidth: showPreview ? 900 : 640 }} className="gs-wizard">
         <div style={S.head}>
           <div>
             <h2 style={S.title}>{adding ? "Lägg till motiv" : "Bygg ditt gang sheet"}</h2>
@@ -402,6 +463,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
+        <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div style={S.body}>
           {/* Step 1 — upload */}
           <Step n={1} title="Ladda upp dina motiv — välj gärna alla på en gång" done={drafts.length > 0} />
@@ -465,6 +527,17 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
             </>
           )}
         </div>
+        {showPreview && plan && (
+          <aside style={S.previewCol}>
+            <SheetPreview
+              pieces={plan.pieces}
+              sheetWidthMm={SHEET_WIDTH_MM}
+              sheetHeightMm={plan.sheet.heightMm}
+              label={plan.sheet.label.replace(/ \(.*\)$/, "")}
+            />
+          </aside>
+        )}
+        </div>
 
         {/* Footer — the plan */}
         <div style={S.foot}>
@@ -477,7 +550,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
               </p>
               <p style={S.planSub}>
                 {plan.tooBig
-                  ? "Mer än 5 meter — dela upp på flera ark efter att du byggt."
+                  ? "Mer än 10 meter — dela upp på flera ark efter att du byggt."
                   : `Behöver ca ${(plan.neededMm / 10).toFixed(0)} cm film.`}
               </p>
             </div>
@@ -505,12 +578,18 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
 }
 
 /** One width and count for every design — the "50 logos at 8 cm" case. */
-function BulkBar({ onApply }: { onApply: (patch: { widthCm?: number; count?: number }) => void }) {
+function BulkBar({
+  onApply,
+}: {
+  onApply: (patch: { widthCm?: number; count?: number; preset?: SizePreset }) => void;
+}) {
+  const [active, setActive] = useState<string | null>(null);
   const [width, setWidth] = useState("");
   const [count, setCount] = useState("");
   const apply = () => {
     const w = parseFloat(width.replace(",", "."));
     const c = parseInt(count, 10);
+    if (Number.isFinite(w) && w > 0) setActive(null);
     onApply({
       ...(Number.isFinite(w) && w > 0 ? { widthCm: Math.min(58, Math.max(1, w)) } : {}),
       ...(Number.isFinite(c) && c > 0 ? { count: Math.min(5000, c) } : {}),
@@ -524,12 +603,19 @@ function BulkBar({ onApply }: { onApply: (patch: { widthCm?: number; count?: num
           <button
             key={p.label}
             onClick={() => {
-              setWidth(String(p.cm));
-              onApply({ widthCm: p.cm });
+              setActive(p.label);
+              setWidth("");
+              onApply({ preset: p });
             }}
-            style={{ ...S.preset, borderColor: theme.border, background: theme.bgCard, color: theme.textMuted }}
+            title={`Varje motiv anpassas så att det ryms i ${p.w} × ${p.h} cm`}
+            style={{
+              ...S.preset,
+              borderColor: active === p.label ? theme.accent : theme.border,
+              background: active === p.label ? theme.accentBg : theme.bgCard,
+              color: active === p.label ? theme.accent : theme.textMuted,
+            }}
           >
-            {p.label} {String(p.cm).replace(".", ",")} cm
+            {p.label} <span style={{ opacity: 0.7 }}>{p.w}×{p.h}</span>
           </button>
         ))}
       </div>
@@ -620,11 +706,14 @@ function DraftRow({
           <>
             <div style={S.presets}>
               {SIZE_PRESETS.map((p) => {
-                const active = Math.abs(p.cm - draft.widthCm) < 0.05;
+                const active = draft.preset === p.label;
                 return (
                   <button
                     key={p.label}
-                    onClick={() => onChange({ widthCm: p.cm })}
+                    title={`Ryms i ${p.w} × ${p.h} cm`}
+                    onClick={() =>
+                      onChange({ preset: p.label, widthCm: fitWidthCm(p, draft.widthPx, draft.heightPx) })
+                    }
                     style={{
                       ...S.preset,
                       borderColor: active ? theme.accent : theme.border,
@@ -649,6 +738,7 @@ function DraftRow({
                   value={draft.widthCm}
                   onChange={(e) =>
                     onChange({
+                      preset: undefined,
                       widthCm: Math.min(58, Math.max(1, parseFloat(e.target.value) || 1)),
                     })
                   }
@@ -694,7 +784,7 @@ function DraftRow({
                 {sharpCm >= 1 && sharpCm < draft.widthCm && (
                   <>
                     {" "}
-                    <button onClick={() => onChange({ widthCm: sharpCm })} style={S.inlineLink}>
+                    <button onClick={() => onChange({ widthCm: sharpCm, preset: undefined })} style={S.inlineLink}>
                       Använd {String(sharpCm).replace(".", ",")} cm
                     </button>
                   </>
@@ -831,7 +921,17 @@ const S: Record<string, React.CSSProperties> = {
     fontFamily: theme.fontFamily,
     cursor: "pointer",
   },
-  body: { flex: 1, overflow: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 12 },
+  body: { flex: 1, minWidth: 0, overflow: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 12 },
+  previewCol: {
+    width: 230,
+    flexShrink: 0,
+    borderLeft: `1px solid ${theme.border}`,
+    background: theme.bgSidebar,
+    padding: 20,
+    overflow: "auto",
+    display: "flex",
+    justifyContent: "center",
+  },
   step: { display: "flex", alignItems: "center", gap: 8 },
   stepNum: {
     width: 20,

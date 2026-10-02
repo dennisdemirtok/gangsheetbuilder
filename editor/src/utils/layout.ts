@@ -8,10 +8,11 @@
  */
 
 /**
- * Safety margin to the film edge (mm). Not customer-configurable — the
- * outer centimetre of DTF film is unreliable to print and handle.
+ * Safety margin to the film edge (mm). Not customer-configurable. Was 10:
+ * two 28 cm back prints then did not fit side by side on 58 cm film. The
+ * print shop prints the full width as long as nothing reaches past it.
  */
-export const EDGE_MARGIN_MM = 10;
+export const EDGE_MARGIN_MM = 5;
 
 /** Gap between neighbouring designs (mm). */
 export const GAP_PRESETS = {
@@ -111,6 +112,16 @@ function sharedArea(a: Rect, b: Rect): number {
 }
 
 /**
+ * More than a corner: over 1 cm² and 3 % of the smaller design. Bounding
+ * boxes of round logos graze at transparent corners and print fine.
+ */
+export function isRealOverlap(a: Rect, b: Rect): boolean {
+  if (!rectsOverlap(a, b)) return false;
+  const shared = sharedArea(a, b);
+  return shared > 100 && shared > Math.min(a.w * a.h, b.w * b.h) * 0.03;
+}
+
+/**
  * Overlaps, split by how much they cover.
  *
  * Designs are compared by their bounding boxes, and a logo's box is mostly
@@ -130,9 +141,7 @@ export function findOverlaps<T extends BboxSource & { id: string }>(
       const a = boxes[i]!;
       const b = boxes[j]!;
       if (!rectsOverlap(a.rect, b.rect)) continue;
-      const shared = sharedArea(a.rect, b.rect);
-      const smaller = Math.min(a.rect.w * a.rect.h, b.rect.w * b.rect.h);
-      const real = shared > 100 && shared > smaller * 0.03;
+      const real = isRealOverlap(a.rect, b.rect);
       const set = real ? overlapping : touching;
       set.add(a.id);
       set.add(b.id);
@@ -271,6 +280,60 @@ export function findFreeSpot(
     for (let x = area.x; x + w <= area.x + area.w + 0.01; x += step) {
       if (cellIsFree({ x, y, w, h }, blockers, gap)) return { x, y };
     }
+  }
+  return null;
+}
+
+/**
+ * The free spot for a w×h design closest to `target` — where the customer
+ * dropped it. Searched near the drop first, then wider, so a design let go
+ * on top of another lands right beside it instead of far away.
+ */
+export function nearestFreeSpot(
+  w: number,
+  h: number,
+  target: { x: number; y: number },
+  sheet: SheetDims,
+  gap: number,
+  blockers: Rect[],
+): { x: number; y: number } | null {
+  const area = printableArea(sheet);
+  if (w > area.w + 0.01 || h > area.h + 0.01) return null;
+  const step = 5;
+  for (const radius of [120, 400, Infinity]) {
+    const x0 = Math.max(area.x, target.x - radius);
+    const x1 = Math.min(area.x + area.w - w, target.x + radius);
+    const y0 = Math.max(area.y, target.y - radius);
+    const y1 = Math.min(area.y + area.h - h, target.y + radius);
+    let best: { x: number; y: number } | null = null;
+    let bestD = Infinity;
+    // Candidates on a grid, the drop point itself pulled inside, and right
+    // up against each neighbour — so it lands snug beside one, not a few
+    // millimetres off where the grid happens to fall.
+    const xs: number[] = [Math.min(Math.max(target.x, area.x), area.x + area.w - w)];
+    const ys: number[] = [Math.min(Math.max(target.y, area.y), area.y + area.h - h)];
+    for (let x = x0; x <= x1 + 0.01; x += step) xs.push(x);
+    for (let y = y0; y <= y1 + 0.01; y += step) ys.push(y);
+    for (const b of blockers) {
+      for (const x of [b.x + b.w + gap, b.x - w - gap]) if (x >= x0 - 0.01 && x <= x1 + 0.01) xs.push(x);
+      for (const y of [b.y + b.h + gap, b.y - h - gap]) if (y >= y0 - 0.01 && y <= y1 + 0.01) ys.push(y);
+    }
+    // Copies in rows share their edges; checking each once keeps a full
+    // sheet fast.
+    const uniq = (v: number[]) => [...new Map(v.map((n) => [Math.round(n * 10), n])).values()];
+    xs.splice(0, xs.length, ...uniq(xs));
+    ys.splice(0, ys.length, ...uniq(ys));
+    for (const y of ys) {
+      for (const x of xs) {
+        const d = (x - target.x) ** 2 + (y - target.y) ** 2;
+        if (d >= bestD) continue;
+        if (cellIsFree({ x, y, w, h }, blockers, gap)) {
+          bestD = d;
+          best = { x, y };
+        }
+      }
+    }
+    if (best) return best;
   }
   return null;
 }

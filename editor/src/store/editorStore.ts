@@ -7,15 +7,18 @@ import {
   findFreeSpot,
   imageBbox,
   isOutsidePrintable,
+  isRealOverlap,
+  nearestFreeSpot,
   packAll,
   placeGroup,
   rectsOverlap,
   type Rect,
 } from "../utils/layout";
-import { nextSheetUp } from "../config/sheets";
+import { MAX_SHEET_MM, sheetForHeight, sheetLabel } from "../config/sheets";
 import { showToast } from "../utils/toast";
 import { packSheet, type Placement } from "../utils/packing";
 import { getSheetPrice, hasStorefrontPrices } from "../services/storefrontPrices";
+import type { TextDesign } from "../utils/textRender";
 
 
 export interface EditorImage {
@@ -49,6 +52,8 @@ export interface EditorImage {
   hasWhiteBackground?: boolean;
   placed: boolean;
   locked?: boolean; // aspect ratio lock
+  /** Made with the text tool: what it says and how, so it can be edited. */
+  text?: TextDesign;
 }
 
 export interface SheetSize {
@@ -145,6 +150,22 @@ export interface EditorState {
    * free spot is only on a longer one.
    */
   keepClear: (id: string) => void;
+  /**
+   * New artwork for every copy of a design — an edited text. Copies keep
+   * their place; any that now reach a neighbour move somewhere free.
+   */
+  replaceArtwork: (groupId: string, patch: Partial<EditorImage>) => void;
+  /** Put the designs and sheet length back as they were — undo and redo. */
+  restoreSnapshot: (images: EditorImage[], sheetSize: SheetSize) => void;
+  /**
+   * After a drag: a design dropped on another (more than a corner) or off
+   * the film moves to the nearest free spot, or back where it came from.
+   * Finding out at checkout was too late; this is where it happens.
+   */
+  settleAfterMove: (id: string, from: { x: number; y: number }) => void;
+  /** Colour behind the sheet: "checks" or a garment colour (#hex). */
+  canvasBg: string;
+  setCanvasBg: (bg: string) => void;
   selectImage: (id: string | null) => void;
   setUploading: (val: boolean) => void;
   setAutoBuilding: (val: boolean) => void;
@@ -167,7 +188,7 @@ const DEFAULT_SHEET: SheetSize = {
   key: "58x100",
   widthMm: 580,
   heightMm: 1000,
-  label: "58 × 100 cm",
+  label: sheetLabel(1000),
 };
 
 function generateSessionId(): string {
@@ -242,15 +263,15 @@ function freeSpotGrowing(
   gap: number,
   blockers: Rect[],
 ): { size: SheetSize; spot: { x: number; y: number } | null } {
-  let size = start;
-  let spot = findFreeSpot(w, h, size, gap, blockers);
-  while (!spot) {
-    const bigger = nextSheetUp(size);
-    if (!bigger) break;
-    size = bigger;
-    spot = findFreeSpot(w, h, size, gap, blockers);
-  }
-  return { size, spot };
+  const spot = findFreeSpot(w, h, start, gap, blockers);
+  if (spot) return { size: start, spot };
+  // No room: below everything there is, on a sheet just long enough —
+  // then the best free spot on that sheet (it may be higher up).
+  const bottom = blockers.reduce((max, b) => Math.max(max, b.y + b.h + gap), EDGE_MARGIN_MM);
+  const needed = bottom + h + EDGE_MARGIN_MM;
+  if (needed > MAX_SHEET_MM) return { size: start, spot: null };
+  const size = sheetForHeight(Math.max(start.heightMm, needed));
+  return { size, spot: findFreeSpot(w, h, size, gap, blockers) ?? { x: EDGE_MARGIN_MM, y: bottom } };
 }
 
 /** A design turned a quarter, never upside down relative to `deg`. */
@@ -280,15 +301,15 @@ function packGrowing(
   obstacles: Rect[] = [],
 ): { size: SheetSize; placements: Map<string, Placement>; overflow: string[] } {
   const items = images.map(toItem);
-  let size = start;
-  let result = packSheet(items, size, gap, obstacles);
-  while (result.overflow.length > 0) {
-    const bigger = nextSheetUp(size);
-    if (!bigger) break;
-    size = bigger;
-    result = packSheet(items, size, gap, obstacles);
+  const first = packSheet(items, start, gap, obstacles);
+  if (first.overflow.length === 0) {
+    return { size: start, placements: first.placements, overflow: [] };
   }
-  return { size, placements: result.placements, overflow: result.overflow };
+  // Too long for `start`: nest on the longest sheet, then cut the film to
+  // the decimetre the designs need.
+  const tall = packSheet(items, sheetForHeight(MAX_SHEET_MM), gap, obstacles);
+  const size = sheetForHeight(Math.max(start.heightMm, tall.bottomMm + EDGE_MARGIN_MM));
+  return { size, placements: tall.placements, overflow: tall.overflow };
 }
 
 /** Move (and where the packer says so, turn) every design it placed. */
@@ -420,6 +441,9 @@ export const useEditorStore = create<EditorState>()(
       gapMm: DEFAULT_GAP_MM,
       lastArrange: null,
       lastFillShortfall: null,
+      canvasBg: "checks",
+
+      setCanvasBg: (bg) => set({ canvasBg: bg }),
 
       setSheetSize: (size) => {
         const state = get();
@@ -568,11 +592,10 @@ export const useEditorStore = create<EditorState>()(
           const pack = (at: SheetSize) =>
             packSheet(ids.map((id) => ({ id, w: bbox.w, h: bbox.h })), at, state.gapMm, blockers);
           let result = pack(size);
-          while (result.overflow.length > 0) {
-            const bigger = nextSheetUp(size);
-            if (!bigger) break;
-            size = bigger;
-            result = pack(size);
+          if (result.overflow.length > 0) {
+            const tall = pack(sheetForHeight(MAX_SHEET_MM));
+            size = sheetForHeight(Math.max(state.sheetSize.heightMm, tall.bottomMm + EDGE_MARGIN_MM));
+            result = tall;
           }
           const spots = ids
             .map((id) => ({ id, p: result.placements.get(id) }))
@@ -770,7 +793,12 @@ export const useEditorStore = create<EditorState>()(
           isOutsidePrintable(img, state.sheetSize);
         if (!clashes) return;
 
-        const { size, spot } = freeSpotGrowing(box.w, box.h, state.sheetSize, state.gapMm, others);
+        // Beside where it is, when there is room; it used to jump to the
+        // first free spot from the top, often far from where it was made.
+        const near = nearestFreeSpot(box.w, box.h, { x: box.x, y: box.y }, state.sheetSize, state.gapMm, others);
+        const { size, spot } = near
+          ? { size: state.sheetSize, spot: near }
+          : freeSpotGrowing(box.w, box.h, state.sheetSize, state.gapMm, others);
         if (!spot) return; // not even the longest sheet has room — the checks will say so
         const grew = size.key !== state.sheetSize.key;
         set({
@@ -786,6 +814,54 @@ export const useEditorStore = create<EditorState>()(
             : "Motivet flyttades till en ledig plats så att det inte ligger på något annat.",
           "info",
         );
+      },
+
+      restoreSnapshot: (images, sheetSize) =>
+        set((state) => ({
+          images,
+          ...withSheetSize(state, sheetSize),
+          selectedImageId: images.some((i) => i.id === state.selectedImageId)
+            ? state.selectedImageId
+            : null,
+          lastArrange: null,
+          lastFillShortfall: null,
+        })),
+
+      replaceArtwork: (groupId, patch) => {
+        const ids = get()
+          .images.filter((img) => groupKey(img) === groupId)
+          .map((img) => img.id);
+        if (ids.length === 0) return;
+        set((state) => ({
+          images: state.images.map((img) => (ids.includes(img.id) ? { ...img, ...patch } : img)),
+          lastArrange: null,
+        }));
+        for (const id of ids) get().keepClear(id);
+      },
+
+      settleAfterMove: (id, from) => {
+        const state = get();
+        const img = state.images.find((i) => i.id === id);
+        if (!img?.placed) return;
+        const box = imageBbox(img);
+        const others = state.images.filter((o) => o.placed && o.id !== id).map(imageBbox);
+        const onTop = others.some((o) => isRealOverlap(box, o));
+        if (!onTop && !isOutsidePrintable(img, state.sheetSize)) return;
+
+        const spot = nearestFreeSpot(box.w, box.h, { x: box.x, y: box.y }, state.sheetSize, state.gapMm, others);
+        const to = spot ?? from;
+        set({
+          images: state.images.map((i) =>
+            i.id === id ? { ...i, positionX: to.x, positionY: to.y } : i,
+          ),
+          lastArrange: null,
+        });
+        // Pulled back inside the edge explains itself; the rest needs a word.
+        if (!spot) {
+          showToast("Det fanns ingen ledig plats där — motivet flyttades tillbaka.", "info");
+        } else if (onTop) {
+          showToast("Motiv kan inte ligga på varandra — det lades på närmaste lediga plats.", "info");
+        }
       },
 
       selectImage: (id) => set({ selectedImageId: id }),

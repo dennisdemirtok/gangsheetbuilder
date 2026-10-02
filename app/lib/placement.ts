@@ -19,11 +19,12 @@
 export const DEFAULT_PLACEMENT_GAP_MM = 5;
 
 /**
- * Safety margin to the film edge in mm. The outer centimetre of DTF film
- * is unreliable to print and handle, so nothing is nested into it.
+ * Safety margin to the film edge in mm. The print shop prints the full
+ * 58 cm as long as nothing reaches past it; 5 mm keeps designs clear of the
+ * edge (it was 10, which kept two 28 cm prints from sitting side by side).
  * Mirrored by EDGE_MARGIN_MM in editor/src/utils/layout.ts — change both.
  */
-export const EDGE_MARGIN_MM = 10;
+export const EDGE_MARGIN_MM = 5;
 
 export interface PlacementImage {
   positionX: number; // mm, top-left of rotated bounding box

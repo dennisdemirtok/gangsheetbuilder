@@ -35,6 +35,48 @@ function rotatedBboxMm(wMm: number, hMm: number, angleDeg: number): { bboxW: num
   };
 }
 
+/** One design's transform as written to the store, for tidying after. */
+interface Change {
+  imageId: string;
+  from: { x: number; y: number };
+  reshaped: boolean;
+}
+
+/**
+ * What the sheet is shown on. Checks show what is transparent; a garment
+ * colour shows how the print will look on the shirt — white logos on
+ * black, dark text on navy. Purely a preview: nothing of it is printed.
+ */
+const BACKDROPS: { id: string; label: string; color: string }[] = [
+  { id: "checks", label: "Rutor (genomskinligt)", color: "" },
+  { id: "#ffffff", label: "Vit", color: "#ffffff" },
+  { id: "#111111", label: "Svart", color: "#111111" },
+  { id: "#9a9b9d", label: "Gråmelerad", color: "#9a9b9d" },
+  { id: "#1d2742", label: "Marinblå", color: "#1d2742" },
+  { id: "#b3202a", label: "Röd", color: "#b3202a" },
+  { id: "#2f4a8f", label: "Kungsblå", color: "#2f4a8f" },
+  { id: "#3d4a33", label: "Mörkgrön", color: "#3d4a33" },
+  { id: "#d9c9a8", label: "Sand", color: "#d9c9a8" },
+];
+
+const CHECKS: React.CSSProperties = {
+  // Mid-grey checks: white logos vanished on a white one, and DTF
+  // prints white as often as any colour.
+  backgroundImage:
+    "linear-gradient(45deg, #b4b4b4 25%, transparent 25%), " +
+    "linear-gradient(-45deg, #b4b4b4 25%, transparent 25%), " +
+    "linear-gradient(45deg, transparent 75%, #b4b4b4 75%), " +
+    "linear-gradient(-45deg, transparent 75%, #b4b4b4 75%)",
+  backgroundSize: "24px 24px",
+  backgroundPosition: "0 0, 0 12px, 12px -12px, -12px 0px",
+  backgroundColor: "#cdcdcd",
+};
+
+function backdropStyle(bg: string): React.CSSProperties {
+  if (bg === "checks" || !/^#[0-9a-f]{6}$/i.test(bg)) return CHECKS;
+  return { backgroundImage: "none", backgroundColor: bg };
+}
+
 export function GangSheetCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<Canvas | null>(null);
@@ -62,6 +104,8 @@ export function GangSheetCanvas() {
     setShowDpiOverlay,
     setZoom,
     arrangeSheet,
+    canvasBg,
+    setCanvasBg,
   } = useEditorStore();
 
   // Collision + out-of-bounds state, recomputed whenever anything moves.
@@ -114,7 +158,8 @@ export function GangSheetCanvas() {
      * placement contract: displayWidth/Height = unrotated dims (mm),
      * rotation = angle (deg), positionX/Y = top-left of the rotated bbox.
      * `centerX/centerY` are the object's absolute center in canvas px,
-     * `angle` in degrees, `scaleX/scaleY` absolute scale.
+     * `angle` in degrees, `scaleX/scaleY` absolute scale. Returns what
+     * changed, so a selection is tidied once all of it has been written.
      */
     const persistTransform = (
       imageId: string,
@@ -125,7 +170,7 @@ export function GangSheetCanvas() {
       angle: number,
       scaleX: number,
       scaleY: number,
-    ) => {
+    ): Change | null => {
       const displayWidth = canvasPxToMm(widthPx * Math.abs(scaleX), scaleFactor);
       const displayHeight = canvasPxToMm(heightPx * Math.abs(scaleY), scaleFactor);
       const rotation = angle;
@@ -138,14 +183,30 @@ export function GangSheetCanvas() {
         displayHeight,
         rotation,
       });
-      // Made bigger or turned onto a neighbour: move it somewhere free.
-      // A plain drag is left where the customer put it (it shows red).
-      const reshaped =
-        before &&
-        (Math.abs(before.displayWidth - displayWidth) > 0.5 ||
+      if (!before) return null;
+      return {
+        imageId,
+        from: { x: before.positionX, y: before.positionY },
+        reshaped:
+          Math.abs(before.displayWidth - displayWidth) > 0.5 ||
           Math.abs(before.displayHeight - displayHeight) > 0.5 ||
-          before.rotation !== rotation);
-      if (reshaped) useEditorStore.getState().keepClear(imageId);
+          before.rotation !== rotation,
+      };
+    };
+
+    /**
+     * Made bigger or turned onto a neighbour: it moves somewhere free.
+     * Dropped on another design or past the film edge: it slides to the
+     * nearest free spot. Designs on top of each other used to show up only
+     * as a red warning at checkout.
+     */
+    const settle = (changes: (Change | null)[]) => {
+      const store = useEditorStore.getState();
+      for (const c of changes) {
+        if (!c) continue;
+        if (c.reshaped) store.keepClear(c.imageId);
+        else store.settleAfterMove(c.imageId, c.from);
+      }
     };
 
     canvas.on("object:modified", (e) => {
@@ -155,38 +216,46 @@ export function GangSheetCanvas() {
       if (target instanceof ActiveSelection) {
         // Multi-select: children's left/top are relative to the group.
         // Compose each child's transform with the group matrix to get
-        // absolute (center-based) coordinates.
+        // absolute (center-based) coordinates. All of them are written
+        // before any is tidied: designs moved together are checked against
+        // where their neighbours ended up, not where they started.
+        const changes: (Change | null)[] = [];
         for (const child of target.getObjects()) {
           const imageId = getObjData(child)?.imageId;
           if (!imageId) continue;
           const decomposed = util.qrDecompose(child.calcTransformMatrix());
-          persistTransform(
-            imageId,
-            child.width || 0,
-            child.height || 0,
-            decomposed.translateX,
-            decomposed.translateY,
-            decomposed.angle,
-            decomposed.scaleX,
-            decomposed.scaleY,
+          changes.push(
+            persistTransform(
+              imageId,
+              child.width || 0,
+              child.height || 0,
+              decomposed.translateX,
+              decomposed.translateY,
+              decomposed.angle,
+              decomposed.scaleX,
+              decomposed.scaleY,
+            ),
           );
         }
+        settle(changes);
         return;
       }
 
       const imageId = getObjData(target)?.imageId;
       if (!imageId) return;
       // Objects are created with originX/originY "center", so left/top IS the center
-      persistTransform(
-        imageId,
-        target.width || 0,
-        target.height || 0,
-        target.left || 0,
-        target.top || 0,
-        target.angle || 0,
-        target.scaleX || 1,
-        target.scaleY || 1,
-      );
+      settle([
+        persistTransform(
+          imageId,
+          target.width || 0,
+          target.height || 0,
+          target.left || 0,
+          target.top || 0,
+          target.angle || 0,
+          target.scaleX || 1,
+          target.scaleY || 1,
+        ),
+      ]);
     });
 
     return () => {
@@ -491,16 +560,7 @@ export function GangSheetCanvas() {
           boxShadow: theme.shadowLg,
           borderRadius: 0,
           lineHeight: 0,
-          // Mid-grey checks: white logos vanished on a white one, and DTF
-          // prints white as often as any colour.
-          backgroundImage:
-            "linear-gradient(45deg, #b4b4b4 25%, transparent 25%), " +
-            "linear-gradient(-45deg, #b4b4b4 25%, transparent 25%), " +
-            "linear-gradient(45deg, transparent 75%, #b4b4b4 75%), " +
-            "linear-gradient(-45deg, transparent 75%, #b4b4b4 75%)",
-          backgroundSize: "24px 24px",
-          backgroundPosition: "0 0, 0 12px, 12px -12px, -12px 0px",
-          backgroundColor: "#cdcdcd",
+          ...backdropStyle(canvasBg),
           transformOrigin: "center center",
           transition: "transform 0.15s ease",
         }}
@@ -515,11 +575,13 @@ export function GangSheetCanvas() {
         onTidy={() => void arrangeSheet()}
       />
 
-      {/* DPI Legend */}
-      <DpiLegend
-        visible={showDpiOverlay}
-        onToggle={() => setShowDpiOverlay(!showDpiOverlay)}
-      />
+      <div style={CORNER}>
+        <BackdropPicker value={canvasBg} onChange={setCanvasBg} collapsible={isMobile} />
+        <DpiLegend
+          visible={showDpiOverlay}
+          onToggle={() => setShowDpiOverlay(!showDpiOverlay)}
+        />
+      </div>
 
       {/* Pinch works, but nothing on screen said so. */}
       {isMobile && (
@@ -528,6 +590,140 @@ export function GangSheetCanvas() {
     </div>
   );
 }
+
+/** Bottom-left of the canvas: the backdrop picker above the DPI legend. */
+const CORNER: React.CSSProperties = {
+  position: "absolute",
+  bottom: 12,
+  left: 12,
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+  zIndex: 5,
+};
+
+const PANEL: React.CSSProperties = {
+  background: "rgba(25, 28, 30, 0.88)",
+  backdropFilter: "blur(12px)",
+  borderRadius: theme.radius,
+};
+
+function BackdropPicker({
+  value,
+  onChange,
+  collapsible,
+}: {
+  value: string;
+  onChange: (bg: string) => void;
+  /** Phones: one small button until tapped — open, it covered the sheet. */
+  collapsible?: boolean;
+}) {
+  const [open, setOpen] = useState(!collapsible);
+  const custom = value !== "checks" && !BACKDROPS.some((b) => b.id === value);
+  const pick = (bg: string) => {
+    onChange(bg);
+    if (collapsible) setOpen(false);
+  };
+  const current =
+    value === "checks"
+      ? { ...CHECKS, backgroundSize: "8px 8px", backgroundPosition: "0 0, 0 4px, 4px -4px, -4px 0px" }
+      : { background: value };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{
+          ...PANEL,
+          alignSelf: "flex-start",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "6px 12px",
+          border: "none",
+          color: "#ffffff",
+          fontFamily: theme.fontFamily,
+          fontSize: theme.fontSize.labelMd,
+          fontWeight: theme.fontWeight.semibold,
+          cursor: "pointer",
+        }}
+      >
+        <span style={{ ...SWATCH, ...current, cursor: "inherit" }} />
+        Plaggfärg
+      </button>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        ...PANEL,
+        padding: "8px 10px",
+        fontFamily: theme.fontFamily,
+        color: "#ffffff",
+        display: "flex",
+        flexDirection: "column",
+        gap: 6,
+      }}
+    >
+      <span style={{ fontSize: theme.fontSize.labelMd, fontWeight: theme.fontWeight.semibold }}>
+        Visa på plaggfärg
+      </span>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxWidth: 196 }}>
+        {BACKDROPS.map((b) => {
+          const active = value === b.id;
+          return (
+            <button
+              key={b.id}
+              type="button"
+              title={b.label}
+              aria-label={b.label}
+              aria-pressed={active}
+              onClick={() => pick(b.id)}
+              style={{
+                ...SWATCH,
+                ...(b.id === "checks" ? { ...CHECKS, backgroundSize: "8px 8px", backgroundPosition: "0 0, 0 4px, 4px -4px, -4px 0px" } : { background: b.color }),
+                boxShadow: active ? `0 0 0 2px rgba(25,28,30,1), 0 0 0 4px ${theme.accent}` : "none",
+              }}
+            />
+          );
+        })}
+        <label
+          title="Egen färg"
+          style={{
+            ...SWATCH,
+            position: "relative",
+            background: custom
+              ? value
+              : "conic-gradient(#e53935, #fdd835, #43a047, #1e88e5, #8e24aa, #e53935)",
+            boxShadow: custom ? `0 0 0 2px rgba(25,28,30,1), 0 0 0 4px ${theme.accent}` : "none",
+            cursor: "pointer",
+          }}
+        >
+          <input
+            type="color"
+            aria-label="Egen färg"
+            value={custom ? value : "#ffffff"}
+            onChange={(e) => onChange(e.target.value)}
+            onBlur={() => collapsible && setOpen(false)}
+            style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%" }}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+const SWATCH: React.CSSProperties = {
+  width: 18,
+  height: 18,
+  borderRadius: "50%",
+  border: "1px solid rgba(255,255,255,0.35)",
+  padding: 0,
+  cursor: "pointer",
+  flexShrink: 0,
+};
 
 function DpiLegend({
   visible,
@@ -558,17 +754,12 @@ function DpiLegend({
   return (
     <div
       style={{
-        position: "absolute",
-        bottom: 12,
-        left: 12,
-        background: "rgba(25, 28, 30, 0.88)",
-        backdropFilter: "blur(12px)",
-        borderRadius: theme.radius,
+        ...PANEL,
         padding: visible ? "10px 14px" : "6px 12px",
         fontSize: theme.fontSize.labelSm,
         fontFamily: theme.fontFamily,
         color: "#ffffff",
-        zIndex: 5,
+        alignSelf: "flex-start",
       }}
     >
       <label

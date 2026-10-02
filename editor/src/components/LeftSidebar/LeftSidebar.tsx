@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { ImageUploader, showToast } from "../ImagePanel/ImageUploader";
+import { ImageUploader } from "../ImagePanel/ImageUploader";
 import { ImageList } from "../ImagePanel/ImageList";
+import { TextTab } from "./TextTab";
+import { REDO_KEYS, UNDO_KEYS } from "../../store/history";
 import { useEditorStore, groupImages } from "../../store/editorStore";
 import {
   EDGE_MARGIN_MM,
@@ -9,7 +11,6 @@ import {
   gapPresetFromMm,
   type GapPreset,
 } from "../../utils/layout";
-import { uploadImage, ensureGangSheet, getAppProxyUrl } from "../../services/api";
 import { theme } from "../../styles/theme";
 
 export type TabKey = "designs" | "text" | "settings";
@@ -158,259 +159,6 @@ function DesignsTab({ isUploading }: { isUploading: boolean }) {
   );
 }
 
-function TextTab() {
-  const [text, setText] = useState("Din text här");
-  const [fontSize, setFontSize] = useState(48);
-  const [fontFamily, setFontFamily] = useState("Arial Black");
-  const [textColor, setTextColor] = useState("#000000");
-  const {
-    addImage,
-    sessionId,
-    gangSheetId,
-    sheetSize,
-    filmType,
-    isUploading,
-    setUploading,
-    setGangSheetId,
-  } = useEditorStore();
-
-  const fonts = [
-    "Arial Black", "Impact", "Bebas Neue", "Oswald",
-    "Roboto", "Open Sans", "Montserrat", "Poppins",
-    "Bangers", "Permanent Marker", "Lobster", "Pacifico",
-  ];
-
-  const handleAddText = async () => {
-    if (!text.trim() || isUploading) return;
-
-    // Create text as an image via canvas
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d")!;
-    ctx.font = `bold ${fontSize}px "${fontFamily}", sans-serif`;
-    const metrics = ctx.measureText(text);
-    const w = Math.ceil(metrics.width) + 20;
-    const h = Math.ceil(fontSize * 1.4 + 20);
-    canvas.width = w;
-    canvas.height = h;
-    ctx.font = `bold ${fontSize}px "${fontFamily}", sans-serif`;
-    ctx.fillStyle = textColor;
-    ctx.textBaseline = "top";
-    ctx.fillText(text, 10, 10);
-
-    // Upload the rendered text as a real PNG so it gets a dbId and
-    // reaches the backend (data-URL-only text is lost on order/export)
-    setUploading(true);
-    try {
-      const blob: Blob | null = await new Promise((resolve) =>
-        canvas.toBlob(resolve, "image/png"),
-      );
-      if (!blob) throw new Error("Kunde inte skapa textbild");
-      const file = new File([blob], `text-${Date.now()}.png`, {
-        type: "image/png",
-      });
-
-      const gsId = await ensureGangSheet(
-        sessionId,
-        sheetSize.widthMm,
-        sheetSize.heightMm,
-        filmType,
-        gangSheetId,
-      );
-      if (gsId !== gangSheetId) setGangSheetId(gsId);
-
-      const result = await uploadImage(file, sessionId, gsId || "");
-
-      const base = getAppProxyUrl();
-      const thumbUrl = result.thumbnailUrl?.startsWith("/")
-        ? base + result.thumbnailUrl
-        : result.thumbnailUrl;
-      const origUrl = result.originalUrl?.startsWith("/")
-        ? base + result.originalUrl
-        : result.originalUrl;
-
-      addImage({
-        id: result.imageId || result.id,
-        dbId: result.id,
-        groupId: "grp_" + Math.random().toString(36).slice(2, 10),
-        filename: `Text: ${text.substring(0, 20)}`,
-        thumbnailUrl: thumbUrl,
-        originalUrl: origUrl,
-        widthPx: result.width || w,
-        heightPx: result.height || h,
-        dpiX: 300,
-        dpiY: 300,
-        positionX: 20,
-        positionY: 20,
-        displayWidth: (w / 300) * 25.4,
-        displayHeight: (h / 300) * 25.4,
-        rotation: 0,
-        flipX: false,
-        flipY: false,
-        quantity: 1,
-        marginMm: 5,
-        bgRemoved: true,
-        placed: true,
-      });
-    } catch (err) {
-      showToast(
-        `Kunde inte lägga till text: ${(err as Error).message}`,
-        "error",
-      );
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  return (
-    <>
-      <TabHeader title="Lägg till text" />
-      <div
-        style={{
-          flex: 1,
-          overflow: "auto",
-          padding: theme.space.lg,
-          display: "flex",
-          flexDirection: "column",
-          gap: theme.space.md,
-        }}
-      >
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Skriv din text..."
-          rows={2}
-          style={{
-            width: "100%",
-            padding: theme.space.md,
-            border: `1px solid ${theme.border}`,
-            borderRadius: theme.radiusSm,
-            fontSize: theme.fontSize.bodyMd,
-            fontFamily: theme.fontFamily,
-            background: theme.bgInput,
-            color: theme.text,
-            resize: "vertical",
-          }}
-        />
-
-        <div style={{ display: "flex", gap: theme.space.sm }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: theme.fontSize.labelXs, color: theme.textDim }}>Typsnitt</label>
-            <select
-              value={fontFamily}
-              onChange={(e) => setFontFamily(e.target.value)}
-              style={{
-                width: "100%",
-                padding: "6px 8px",
-                border: `1px solid ${theme.border}`,
-                borderRadius: theme.radiusSm,
-                fontSize: theme.fontSize.labelMd,
-                fontFamily: theme.fontFamily,
-                background: theme.bgInput,
-                color: theme.text,
-              }}
-            >
-              {fonts.map((f) => (
-                <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
-              ))}
-            </select>
-          </div>
-          <div style={{ width: 60 }}>
-            <label style={{ fontSize: theme.fontSize.labelXs, color: theme.textDim }}>Storlek</label>
-            <input
-              type="number"
-              value={fontSize}
-              onChange={(e) => setFontSize(parseInt(e.target.value) || 24)}
-              min={12}
-              max={300}
-              style={{
-                width: "100%",
-                padding: "6px 4px",
-                border: `1px solid ${theme.border}`,
-                borderRadius: theme.radiusSm,
-                fontSize: theme.fontSize.labelMd,
-                fontFamily: theme.fontFamily,
-                textAlign: "center",
-                background: theme.bgInput,
-                color: theme.text,
-              }}
-            />
-          </div>
-        </div>
-
-        <div>
-          <label style={{ fontSize: theme.fontSize.labelXs, color: theme.textDim }}>Färg</label>
-          <div style={{ display: "flex", gap: theme.space.xs, marginTop: 4, flexWrap: "wrap" }}>
-            {["#000000", "#ffffff", "#bb0018", "#1a5276", "#27ae60", "#f39c12", "#8e44ad", "#2c3e50"].map((c) => (
-              <button
-                key={c}
-                onClick={() => setTextColor(c)}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: theme.radiusSm,
-                  border: textColor === c ? `2px solid ${theme.accent}` : `1px solid ${theme.border}`,
-                  background: c,
-                  cursor: "pointer",
-                }}
-              />
-            ))}
-            <input
-              type="color"
-              value={textColor}
-              onChange={(e) => setTextColor(e.target.value)}
-              style={{ width: 28, height: 28, border: "none", padding: 0, cursor: "pointer" }}
-            />
-          </div>
-        </div>
-
-        {/* Preview */}
-        <div
-          style={{
-            padding: theme.space.lg,
-            background: theme.bgCard,
-            borderRadius: theme.radius,
-            textAlign: "center",
-            minHeight: 60,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <span
-            style={{
-              fontFamily: `"${fontFamily}", sans-serif`,
-              fontSize: Math.min(fontSize, 36),
-              fontWeight: 700,
-              color: textColor,
-            }}
-          >
-            {text || "Förhandsvisning"}
-          </span>
-        </div>
-
-        <button
-          onClick={handleAddText}
-          disabled={!text.trim() || isUploading}
-          style={{
-            width: "100%",
-            padding: `${theme.space.md}px`,
-            fontSize: theme.fontSize.bodySm,
-            fontWeight: theme.fontWeight.semibold,
-            fontFamily: theme.fontFamily,
-            border: "none",
-            borderRadius: theme.radius,
-            background: text.trim() && !isUploading ? theme.accentGradient : theme.bgInput,
-            color: text.trim() && !isUploading ? "#fff" : theme.textDim,
-            cursor: text.trim() && !isUploading ? "pointer" : "not-allowed",
-          }}
-        >
-          {isUploading ? "Laddar upp..." : "Lägg till på arket"}
-        </button>
-      </div>
-    </>
-  );
-}
-
 function SettingsTab() {
   const { sheetSize, gapMm, setGapMm } = useEditorStore();
   const activePreset = gapPresetFromMm(gapMm);
@@ -498,6 +246,8 @@ function SettingsTab() {
             Tangentbordsgenvägar
           </label>
           <div style={{ marginTop: theme.space.sm, fontSize: theme.fontSize.labelMd, color: theme.textDim, display: "flex", flexDirection: "column", gap: 4 }}>
+            <Shortcut keys={UNDO_KEYS} label="Ångra" />
+            <Shortcut keys={REDO_KEYS} label="Gör om" />
             <Shortcut keys="Delete" label="Ta bort markerad" />
             <Shortcut keys="Ctrl+D" label="Duplicera" />
             <Shortcut keys="Esc" label="Stäng editor" />

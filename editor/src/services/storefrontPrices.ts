@@ -80,16 +80,55 @@ export function getPerDecimeterVariant(): SheetVariant | null {
   );
 }
 
-/** Price for one sheet of this size, or null when the theme did not supply one. */
-export function getSheetPrice(sizeKey: string): number | null {
-  const v = getSheetVariants()[sizeKey];
-  return v && v.sizeKey ? v.priceSek : null;
+/** Decimetres in a sheet key like "58x150" (→ 15), or null. */
+function decimetresOf(sizeKey: string): number | null {
+  const m = /^58x(\d+)$/.exec(sizeKey);
+  return m ? Math.round(Number(m[1]) / 10) : null;
 }
 
-/** Variant to put in the cart for this sheet size. */
+/**
+ * Price for one sheet of this size, or null when the theme did not supply
+ * one. Whole metres have their own variant; any other length is that many
+ * decimetres of the per-decimetre variant.
+ */
+export function getSheetPrice(sizeKey: string): number | null {
+  const v = getSheetVariants()[sizeKey];
+  if (v && v.sizeKey) return v.priceSek;
+  const dm = decimetresOf(sizeKey);
+  const perDm = getPerDecimeterVariant();
+  return dm && perDm ? dm * perDm.priceSek : null;
+}
+
+/** Variant to put in the cart for this sheet size (whole metres only). */
 export function getSheetVariantId(sizeKey: string): string | null {
   const v = getSheetVariants()[sizeKey];
   return v && v.sizeKey ? v.variantId : null;
+}
+
+/**
+ * The cart line for `copies` sheets of this size. Whole metres keep their
+ * own variant, as before. Other lengths are billed as decimetres of the
+ * per-decimetre variant — the quantity is decimetres × copies, so the
+ * line carries both, for the order to read back how many sheets it is.
+ */
+export function getSheetCartLine(
+  sizeKey: string,
+  copies: number,
+): { variantId: string; quantity: number; properties: Record<string, string> } | null {
+  const n = Math.max(1, Math.floor(copies || 1));
+  const whole = getSheetVariantId(sizeKey);
+  const dm = decimetresOf(sizeKey);
+  const lengthText = dm ? `${(dm / 10).toLocaleString("sv-SE", { maximumFractionDigits: 1 })} m` : sizeKey;
+  if (whole) {
+    return { variantId: whole, quantity: n, properties: n > 1 ? { "Antal ark": String(n) } : {} };
+  }
+  const perDm = getPerDecimeterVariant();
+  if (!perDm || !dm) return null;
+  return {
+    variantId: perDm.variantId,
+    quantity: dm * n,
+    properties: { Längd: lengthText, "Antal ark": String(n), _decimeters: String(dm) },
+  };
 }
 
 /** True when the theme gave us a usable price table. */

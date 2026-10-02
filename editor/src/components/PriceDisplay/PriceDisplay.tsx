@@ -1,59 +1,104 @@
 import { useEditorStore, getSheetsTotalPrice, groupImages } from "../../store/editorStore";
 import { theme } from "../../styles/theme";
-import { SHEET_SIZES } from "../../config/sheets";
+import { MAX_SHEET_MM, MIN_SHEET_MM, SHEET_STEP_MM, sheetForHeight } from "../../config/sheets";
+import { getSheetPrice } from "../../services/storefrontPrices";
 
 
 
-const chevronSvg = (color: string) =>
-  `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='${encodeURIComponent(color)}' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E")`;
 
+/**
+ * Sheet length. It follows the designs by itself — longer when they need
+ * room, a shorter one offered when they fit — and the customer can add or
+ * take away film in 10 cm steps. A dropdown of whole metres used to make
+ * 1,3 m of designs cost 2 m.
+ */
 export function PriceDisplay() {
-  const { sheetSize, images, sheets, setSheetSize } = useEditorStore();
-
-  const groups = groupImages(images);
-  const totalCopies = images.length;
-  const totalSheets = sheets?.length || 1;
+  const { sheetSize, setSheetSize } = useEditorStore();
+  const step = (deltaMm: number) => {
+    const next = sheetForHeight(sheetSize.heightMm + deltaMm);
+    if (next.heightMm !== sheetSize.heightMm) setSheetSize(next);
+  };
+  const price = getSheetPrice(sheetSize.key);
+  const atMin = sheetSize.heightMm <= MIN_SHEET_MM;
+  const atMax = sheetSize.heightMm >= MAX_SHEET_MM;
+  const meters = (sheetSize.heightMm / 1000).toLocaleString("sv-SE", { maximumFractionDigits: 1 });
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: theme.space.lg }}>
-      {/* Sheet size — dropdown */}
-      <div>
-        <SectionLabel>Arkstorlek</SectionLabel>
-        <select
-          value={sheetSize.key}
-          onChange={(e) => {
-            const size = SHEET_SIZES.find((s) => s.key === e.target.value);
-            if (size) setSheetSize(size);
-          }}
-          style={{
-            width: "100%",
-            padding: `${theme.space.md}px ${theme.space.lg}px`,
-            border: `1px solid ${theme.borderStrong}`,
-            borderRadius: theme.radiusSm,
-            fontSize: theme.fontSize.bodyMd,
-            fontFamily: theme.fontFamily,
-            fontWeight: theme.fontWeight.medium,
-            background: theme.bgCard,
-            color: theme.text,
-            outline: "none",
-            cursor: "pointer",
-            appearance: "none",
-            backgroundImage: chevronSvg(theme.textDim as string),
-            backgroundRepeat: "no-repeat",
-            backgroundPosition: "right 12px center",
-          }}
+    <div style={{ display: "flex", flexDirection: "column", gap: theme.space.sm }}>
+      <SectionLabel>Arklängd</SectionLabel>
+      <div style={L.row}>
+        <button
+          onClick={() => step(-SHEET_STEP_MM)}
+          disabled={atMin}
+          style={{ ...L.stepBtn, opacity: atMin ? 0.35 : 1 }}
+          title="10 cm kortare"
+          aria-label="10 cm kortare"
         >
-          {SHEET_SIZES.map((size) => (
-            <option key={size.key} value={size.key}>
-              {size.label}
-            </option>
-          ))}
-        </select>
+          −
+        </button>
+        <div style={L.value}>
+          <span style={L.meters}>{meters} m</span>
+          <span style={L.sub}>58 × {Math.round(sheetSize.heightMm / 10)} cm{price !== null ? ` · ${price} kr` : ""}</span>
+        </div>
+        <button
+          onClick={() => step(SHEET_STEP_MM)}
+          disabled={atMax}
+          style={{ ...L.stepBtn, opacity: atMax ? 0.35 : 1 }}
+          title="10 cm längre"
+          aria-label="10 cm längre"
+        >
+          +
+        </button>
       </div>
-
+      <p style={L.hint}>Längden följer motiven. Du betalar per påbörjad decimeter, minst 1 meter.</p>
     </div>
   );
 }
+
+const L: Record<string, React.CSSProperties> = {
+  row: {
+    display: "flex",
+    alignItems: "stretch",
+    gap: 6,
+  },
+  stepBtn: {
+    width: 40,
+    border: `1px solid ${theme.borderStrong}`,
+    borderRadius: theme.radiusSm,
+    background: theme.bgCard,
+    color: theme.text,
+    fontSize: 18,
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  value: {
+    flex: 1,
+    minWidth: 0,
+    border: `1px solid ${theme.borderStrong}`,
+    borderRadius: theme.radiusSm,
+    background: theme.bgCard,
+    padding: "6px 10px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+  },
+  meters: {
+    fontSize: theme.fontSize.bodyMd,
+    fontWeight: theme.fontWeight.bold,
+    color: theme.text,
+  },
+  sub: {
+    fontSize: theme.fontSize.labelSm,
+    color: theme.textMuted,
+  },
+  hint: {
+    margin: 0,
+    fontSize: theme.fontSize.labelSm,
+    color: theme.textDim,
+    lineHeight: 1.4,
+  },
+};
 
 /**
  * Price bar — rendered separately at the bottom of right sidebar

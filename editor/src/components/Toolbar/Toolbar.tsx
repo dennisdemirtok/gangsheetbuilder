@@ -1,5 +1,6 @@
 import { useEditorStore, groupKey } from "../../store/editorStore";
 import { theme } from "../../styles/theme";
+import { REDO_KEYS, UNDO_KEYS, redo, undo, useHistory } from "../../store/history";
 
 export function Toolbar() {
   const {
@@ -11,6 +12,7 @@ export function Toolbar() {
     zoom,
     setZoom,
   } = useEditorStore();
+  const { canUndo, canRedo } = useHistory();
 
   const selectedImage = selectedImageId
     ? images.find((img) => img.id === selectedImageId)
@@ -38,6 +40,11 @@ export function Toolbar() {
         border: `1px solid ${theme.border}`,
       }}
     >
+      <ToolButton icon="↶" title={`Ångra (${UNDO_KEYS})`} onClick={undo} disabled={!canUndo} />
+      <ToolButton icon="↷" title={`Gör om (${REDO_KEYS})`} onClick={redo} disabled={!canRedo} />
+
+      <Divider />
+
       {/* Zoom controls */}
       <ToolButton
         icon="−"

@@ -95,6 +95,27 @@
         const w = [1200, 2400, 600][uploadSeq % 3];
         const h = [1200, 800, 600][uploadSeq % 3];
         const data = swatch(w, h, hue);
+        // Text from the text tool: hand back the PNG itself, as the server
+        // would, so its size and look can be checked here.
+        if (file && /^text-/.test(file.name)) {
+          return createImageBitmap(file).then((bmp) => {
+            const u = URL.createObjectURL(file);
+            return json({
+              id: "dbimg_" + Date.now().toString(36) + "_" + uploadSeq,
+              imageId: "img_dev_" + Date.now().toString(36) + "_" + uploadSeq,
+              filename: file.name,
+              thumbnailUrl: u,
+              originalUrl: u,
+              width: bmp.width,
+              height: bmp.height,
+              dpiX: 300,
+              dpiY: 300,
+              hasAlpha: true,
+              hasWhiteBackground: false,
+              warnings: [],
+            });
+          });
+        }
         const real = file && realAssets[file.name];
         if (real) {
           const dbId = "dbimg_" + Date.now().toString(36) + "_" + uploadSeq;

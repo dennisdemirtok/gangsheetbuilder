@@ -182,6 +182,39 @@ export async function removeWhiteBackground(
 }
 
 /**
+ * Cut away empty transparent margins around a design.
+ *
+ * Files often carry a lot of empty canvas around the artwork — in real
+ * uploads a median 13 %, up to 65 %. The customer sizes the file, not the
+ * logo, so "10 cm" printed a smaller logo and the margin took film. Only
+ * transparent edges are cut: a white margin on an opaque file may be part
+ * of the design. Returns the input untouched when there is nothing to cut.
+ */
+export async function trimTransparentEdges(
+  buffer: Buffer,
+): Promise<{ buffer: Buffer; trimmed: boolean; width: number; height: number }> {
+  const img = sharp(buffer, { limitInputPixels: false });
+  const meta = await img.metadata();
+  const width = meta.width || 0;
+  const height = meta.height || 0;
+  if (!meta.hasAlpha || width === 0 || height === 0) return { buffer, trimmed: false, width, height };
+
+  // Against full transparency, so a logo touching the top-left corner is
+  // not taken for background.
+  const { data, info } = await sharp(buffer, { limitInputPixels: false })
+    .trim({ background: { r: 0, g: 0, b: 0, alpha: 0 }, threshold: 10 })
+    .png()
+    .toBuffer({ resolveWithObject: true })
+    .catch(() => ({ data: buffer, info: { width, height } as sharp.OutputInfo }));
+
+  // A sliver is not worth re-encoding the file for.
+  if (info.width >= width - 2 && info.height >= height - 2) {
+    return { buffer, trimmed: false, width, height };
+  }
+  return { buffer: data, trimmed: true, width: info.width, height: info.height };
+}
+
+/**
  * Make every near-white pixel transparent — also white inside the design,
  * like the counter of an "O". Only on request: it also clears white the
  * design is meant to print. The customer sees the result before using it.

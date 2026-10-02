@@ -15,6 +15,7 @@ import {
   convertToRaster,
   removeAllWhite,
   removeWhiteBackground,
+  trimTransparentEdges,
 } from "../../app/lib/image-processing.server";
 
 const prisma = new PrismaClient();
@@ -192,24 +193,56 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
     const targetWidth = mmToPx(image.displayWidth);
     const targetHeight = mmToPx(image.displayHeight);
 
-    // An EPS/AI is rasterized at upload at its own size and 300 DPI. Printed
-    // larger, that picture is stretched — #1024 printed a vector logo at
-    // 114 DPI. Draw it again from the vector at the size it is printed.
-    // A removed background is redone on the sharp render, the same way.
-    const vector = /\.(eps|ai|ps)$/i.test(image.originalUrl);
+    // A vector (EPS/AI/PS/SVG) was rendered once at upload — EPS at its own
+    // size and 300 DPI, SVG at up to 8000 px — and cut to its artwork.
+    // Printed larger, that picture is stretched: #1024 printed a vector
+    // logo at 114 DPI. Draw it again from the vector at the size it is
+    // printed, cut the same way, and take the background off again if the
+    // customer chose that. The database points at the rendered PNG; the
+    // vector sits beside it as original.<ext>.
+    const ext = (image.originalFilename?.split(".").pop() || "").toLowerCase();
+    const dir = image.originalUrl.slice(0, image.originalUrl.lastIndexOf("/") + 1);
+    const vectorKey = ["eps", "ai", "ps", "svg"].includes(ext) ? `${dir}original.${ext}` : null;
     const usesBgRemoved = Boolean(image.bgRemoved && image.bgRemovedUrl);
     const scale = image.widthPx > 0 ? targetWidth / image.widthPx : 1;
-    if (vector && scale > 1.05) {
+    if (vectorKey && scale > 1.05) {
       try {
-        const original = await downloadFromR2(image.originalUrl);
-        const dpi = Math.min(2400, Math.ceil(300 * scale));
-        let sharpRender = await convertToRaster(original, image.originalFilename || "design.eps", dpi);
-        if (usesBgRemoved) {
-          sharpRender = /bg-removed-all\.png$/.test(image.bgRemovedUrl!)
-            ? await removeAllWhite(sharpRender)
-            : await removeWhiteBackground(sharpRender);
+        const original = await downloadFromR2(vectorKey);
+        let render: Buffer;
+        if (ext === "svg") {
+          // Same density rule as the upload, scaled up to the print size.
+          const base = await sharp(original).metadata();
+          const longSide = Math.max(base.width || 0, base.height || 0) || 1000;
+          const uploadDensity = Math.max(72, Math.min(300, (72 * 8000) / longSide));
+          const density = Math.min(uploadDensity * scale, (72 * 20000) / longSide);
+          render = await sharp(original, { density, limitInputPixels: false }).png().toBuffer();
+        } else {
+          const dpi = Math.min(2400, Math.ceil(300 * scale));
+          render = await convertToRaster(original, image.originalFilename || `design.${ext}`, dpi);
         }
-        buffer = sharpRender;
+        const trimmed = await trimTransparentEdges(render);
+        if (trimmed.trimmed) render = trimmed.buffer;
+
+        // Only if it is the same picture the customer placed: same shape as
+        // the stored render. Anything else prints the stored raster.
+        const meta = await sharp(render, { limitInputPixels: false }).metadata();
+        const storedRatio = image.widthPx / Math.max(1, image.heightPx);
+        const renderRatio = (meta.width || 1) / Math.max(1, meta.height || 1);
+        if (Math.abs(renderRatio - storedRatio) / storedRatio < 0.02) {
+          if (usesBgRemoved) {
+            render = /bg-removed-all\.png$/.test(image.bgRemovedUrl!)
+              ? await removeAllWhite(render)
+              : await removeWhiteBackground(render);
+          }
+          buffer = render;
+          console.log(
+            `[export] ${image.originalFilename}: drawn from the vector at ${meta.width}px for ${Math.round(image.displayWidth)} mm`,
+          );
+        } else {
+          console.warn(
+            `[export] ${image.originalFilename}: vector render ${renderRatio.toFixed(3)} vs placed ${storedRatio.toFixed(3)} — using the upload raster`,
+          );
+        }
       } catch (err) {
         console.warn(
           `[export] Could not re-render ${image.originalFilename} from the vector, using the upload raster:`,

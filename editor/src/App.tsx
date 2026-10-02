@@ -11,6 +11,7 @@ import { SheetManager } from "./components/SheetManager/SheetManager";
 import { SheetInsight } from "./components/SheetInsight/SheetInsight";
 import { StartWizard } from "./components/StartWizard/StartWizard";
 import { useEditorStore, getSheetsTotalPrice, groupKey } from "./store/editorStore";
+import { redo, undo, useHistory } from "./store/history";
 import { getPricing, setAppProxyUrl } from "./services/api";
 import { theme } from "./styles/theme";
 
@@ -63,6 +64,18 @@ export function App() {
     const handleKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
+      if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === "y") {
+        e.preventDefault();
+        redo();
+        return;
+      }
 
       const { selectedImageId, removeGroup, images, duplicateImage } =
         useEditorStore.getState();
@@ -216,6 +229,17 @@ function DesktopShell({
 
 /* ─────────────────────────── Mobile ──────────────────────────── */
 
+/** Undo on the phone, where there is no keyboard: shown once there is something to undo. */
+function MobileUndo() {
+  const { canUndo } = useHistory();
+  if (!canUndo) return null;
+  return (
+    <HeaderButton onClick={undo} title="Ångra">
+      ↶
+    </HeaderButton>
+  );
+}
+
 /**
  * Phones got the desktop grid squeezed into 375 px: the layout overflowed
  * to ~900 px wide and 1570 px tall inside a 100vh box with no scrolling,
@@ -264,6 +288,7 @@ function MobileShell({
       >
         <Wordmark />
         <div style={{ flex: 1 }} />
+        <MobileUndo />
         <HeaderButton onClick={onRestartWizard} title="Lägg till motiv" strong>
           + Motiv
         </HeaderButton>

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useEditorStore, getSheetsTotalPrice } from "../../store/editorStore";
 import { computeSheetStats, type SheetIssue } from "../../utils/sheetStats";
-import { getSheetPrice, getSheetVariantId } from "../../services/storefrontPrices";
+import { getSheetCartLine, getSheetPrice } from "../../services/storefrontPrices";
 import {
   prepareForCart,
   saveGangSheet,
@@ -170,24 +170,26 @@ export function AddToCartButton() {
             getSheetPrice(job.size.key),
           );
 
-          // Prefer the variant the theme rendered. The app's variantMapping
-          // is optional config that nobody had filled in, which made every
-          // single add-to-cart fail with "Variant-koppling saknas".
-          const variantId =
-            getSheetVariantId(job.size.key) ?? cartData.variantId ?? null;
+          // The variant the theme rendered: a whole metre has its own, any
+          // other length is decimetres of the per-decimetre variant. The
+          // app's variantMapping is optional config nobody filled in, which
+          // made every add-to-cart fail with "Variant-koppling saknas".
+          const copies = Math.max(1, job.sheet.quantity || 1);
+          const line = getSheetCartLine(job.size.key, copies);
+          const fallbackId = cartData.variantId ?? null;
 
-          if (!variantId) {
+          if (!line && !fallbackId) {
             throw new Error(
               `Hittade ingen produktvariant för ${job.size.label}. ` +
                 "Kontrollera att prisprodukten är vald i temat.",
             );
           }
 
-          items.push({
-            id: variantId,
-            quantity: Math.max(1, job.sheet.quantity || 1),
-            properties: cartData.properties,
-          });
+          items.push(
+            line
+              ? { id: line.variantId, quantity: line.quantity, properties: { ...cartData.properties, ...line.properties } }
+              : { id: fallbackId, quantity: copies, properties: cartData.properties },
+          );
         } catch (err) {
           throw new Error(`${job.name}: ${(err as Error).message}`);
         }

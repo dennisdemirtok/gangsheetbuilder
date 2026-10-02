@@ -176,6 +176,21 @@ export async function intakeOrder(
         : await createFileJob(shop, order.id, lineItem);
       if (!jobId) continue;
 
+      // A sheet billed by the decimetre (any length but whole metres, and
+      // every ready-made sheet) has quantity = decimetres × sheets. The
+      // print shop needs the number of sheets: 15 on a 1,5 m sheet used to
+      // read as "15 copies".
+      const dmProp = (lineItem.properties || []).find((p) => p.name === "_decimeters")?.value;
+      const perDecimetre = Boolean(dmProp) || /decimeter|\bdm\b/i.test(lineItem.variant_title || "");
+      if (perDecimetre) {
+        let dm = parseInt(String(dmProp ?? ""), 10);
+        if (!(dm > 0)) {
+          const sheet = await prisma.gangSheet.findUnique({ where: { id: jobId }, select: { heightMm: true } });
+          dm = sheet ? Math.round(sheet.heightMm / 100) : 0;
+        }
+        if (dm > 0) lineDetails.lineQuantity = Math.max(1, Math.round((lineItem.quantity ?? dm) / dm));
+      }
+
       // A redelivery of an order already in production must not send it back
       // to "Preparing file" — that used to reset printed sheets.
       const current = await prisma.gangSheet.findUnique({

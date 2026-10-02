@@ -8,6 +8,7 @@ import {
   generateThumbnail,
   convertToRaster,
   needsGhostscript,
+  trimTransparentEdges,
 } from "../lib/image-processing.server";
 import prisma from "../db.server";
 import { v4 as uuidv4 } from "uuid";
@@ -47,7 +48,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Convert EPS/AI to PNG via Ghostscript if needed
-    let processBuffer = buffer;
+    let processBuffer: Buffer = buffer;
     let convertedFromVector = false;
     if (needsGhostscript(filename)) {
       try {
@@ -59,6 +60,34 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         console.error("Ghostscript conversion failed:", convErr);
         // Continue with original buffer — metadata will be limited
       }
+    } else if (/\.svg$/i.test(filename)) {
+      // An SVG has no pixel size of its own; drawn at sharp's default it
+      // was a few hundred pixels and printed soft. Render it like an EPS:
+      // 300 DPI, at most 8000 px on the long side. The export draws it
+      // again from the SVG at the size it is printed.
+      try {
+        const sharpMod = (await import("sharp")).default;
+        const base = await sharpMod(buffer).metadata();
+        const longSide = Math.max(base.width || 0, base.height || 0) || 1000;
+        const density = Math.max(72, Math.min(300, (72 * 8000) / longSide));
+        processBuffer = await sharpMod(buffer, { density }).png().toBuffer();
+        convertedFromVector = true;
+      } catch (svgErr) {
+        console.error("SVG rasterization failed:", svgErr);
+      }
+    }
+
+    // Cut empty transparent margins: the customer sizes the file, and the
+    // margin used to shrink the printed logo and take film.
+    let trimmedEdges = false;
+    try {
+      const t = await trimTransparentEdges(processBuffer);
+      if (t.trimmed) {
+        processBuffer = t.buffer;
+        trimmedEdges = true;
+      }
+    } catch (trimErr) {
+      console.warn("Trim failed, keeping the file as uploaded:", trimErr);
     }
 
     // Extract metadata from the (possibly converted) buffer
@@ -80,7 +109,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const originalKey = storageKey(sessionId, imageId, "original", ext);
     const thumbnailKey = storageKey(sessionId, imageId, "thumbnail", "webp");
     // Also store the converted PNG if it was vector
-    const convertedKey = convertedFromVector
+    // The PNG the design prints from, when it is not the upload itself: a
+    // rendered vector, or a file whose empty edges were cut away.
+    const usesConverted = convertedFromVector || trimmedEdges;
+    const convertedKey = usesConverted
       ? storageKey(sessionId, imageId, "converted", "png")
       : null;
 
@@ -96,7 +128,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       uploadFile(originalKey, buffer, validation.mimeType!),
       uploadFile(thumbnailKey, thumbnail, "image/webp"),
     ];
-    if (convertedKey && convertedFromVector) {
+    if (convertedKey) {
       uploads.push(uploadFile(convertedKey, processBuffer, "image/png"));
     }
     await Promise.all(uploads);
@@ -104,8 +136,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // For vector files (EPS/AI/PS), point originalUrl at the rasterized PNG —
     // sharp cannot read the raw vector, and exports/proxy must serve a raster.
     // The raw vector is still stored under originalKey for archival.
-    const renderableKey =
-      convertedKey && convertedFromVector ? convertedKey : originalKey;
+    const renderableKey = convertedKey ?? originalKey;
 
     // Return thumbnail as base64 data URL — guaranteed to work, no CORS issues
     const thumbnailBase64 = `data:image/webp;base64,${thumbnail.toString("base64")}`;
