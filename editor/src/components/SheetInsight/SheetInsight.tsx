@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { useEditorStore, groupImages } from "../../store/editorStore";
 import { useSheetStats } from "../../utils/sheetStats";
-import { freeCapacityFor, imageBbox } from "../../utils/layout";
+import { freeCapacityFor, imageBbox, requiredHeightMm } from "../../utils/layout";
+import { smallestSheetFor } from "../../config/sheets";
+import { getSheetPrice } from "../../services/storefrontPrices";
 import { theme } from "../../styles/theme";
 
 /**
@@ -19,6 +21,7 @@ export function SheetInsight() {
     autoFillGroup,
     lastFillShortfall,
     clearFillShortfall,
+    setSheetSize,
   } = useEditorStore();
   const stats = useSheetStats();
 
@@ -39,6 +42,24 @@ export function SheetInsight() {
     if (fits <= group.count) return null;
     return { group, extra: fits - group.count };
   }, [images, sheetSize, gapMm, selectedImageId]);
+
+  // The sheet grows by itself when designs need room, but never shrinks
+  // on its own — a customer may want space to fill. When everything would
+  // fit on a shorter, cheaper sheet, say so and offer the switch.
+  const shorter = useMemo(() => {
+    const items = images
+      .filter((i) => i.placed)
+      .map((img) => {
+        const b = imageBbox(img);
+        return { id: img.id, w: b.w, h: b.h };
+      });
+    if (items.length === 0) return null;
+    const fits = smallestSheetFor(requiredHeightMm(items, sheetSize.widthMm, gapMm));
+    if (fits.heightMm >= sheetSize.heightMm) return null;
+    const now = getSheetPrice(sheetSize.key);
+    const then = getSheetPrice(fits.key);
+    return { size: fits, saves: now !== null && then !== null ? now - then : null };
+  }, [images, sheetSize, gapMm]);
 
   if (images.length === 0) return null;
 
@@ -84,6 +105,13 @@ export function SheetInsight() {
             Okej
           </button>
         </p>
+      )}
+
+      {shorter && (
+        <button onClick={() => setSheetSize(shorter.size)} style={S.shorterBtn}>
+          Allt får plats på {shorter.size.label.replace(/ \(.*\)$/, "")} — byt
+          {shorter.saves ? ` och spara ${shorter.saves} kr` : ""}
+        </button>
       )}
 
       {fillTarget && (
@@ -166,6 +194,18 @@ const S: Record<string, React.CSSProperties> = {
     fontWeight: theme.fontWeight.semibold,
     fontFamily: theme.fontFamily,
     cursor: "pointer",
+  },
+  shorterBtn: {
+    padding: "9px 12px",
+    border: `1px solid ${theme.success}`,
+    borderRadius: theme.radiusSm,
+    background: theme.successBg,
+    color: theme.success,
+    fontSize: theme.fontSize.labelMd,
+    fontWeight: theme.fontWeight.semibold,
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+    textAlign: "left",
   },
   dismiss: {
     border: "none",

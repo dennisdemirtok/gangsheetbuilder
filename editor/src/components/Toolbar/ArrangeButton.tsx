@@ -47,7 +47,21 @@ export function ArrangeButton() {
             color: theme.warning,
           }}
         >
-          {lastArrange.overflow} motiv fick inte plats. Välj ett längre ark.
+          {lastArrange.overflow} motiv får inte plats ens på 5 meter. Lägg dem
+          på ett nytt ark eller gör dem mindre.
+        </div>
+      )}
+      {lastArrange && lastArrange.overflow === 0 && lastArrange.grewTo && (
+        <div
+          style={{
+            padding: "6px 10px",
+            borderRadius: theme.radiusSm,
+            background: theme.successBg,
+            fontSize: 11,
+            color: theme.success,
+          }}
+        >
+          Arket blev {lastArrange.grewTo.replace(/ \(.*\)$/, "")} så att allt får plats.
         </div>
       )}
     </div>

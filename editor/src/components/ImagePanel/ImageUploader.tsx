@@ -3,6 +3,7 @@ import { useEditorStore } from "../../store/editorStore";
 import { uploadImage, getAppProxyUrl, ensureGangSheet } from "../../services/api";
 import { pxToMm } from "../../utils/units";
 import { theme } from "../../styles/theme";
+import { showToast } from "../../utils/toast";
 
 export function ImageUploader() {
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -25,11 +26,12 @@ export function ImageUploader() {
         console.error("Failed to create gang sheet:", err);
       }
 
-      for (let i = 0; i < total; i++) {
-        const file = files[i]!;
+      // Three at a time: 40 logos one by one used to take minutes.
+      const queue = Array.from(files);
+      let done = 0;
+      setUploadProgress(`0/${total}`);
+      const uploadOne = async (file: File) => {
         console.log("[GS] Uploading:", file.name, file.size, "bytes");
-        setUploadProgress(`${i + 1}/${total}: ${file.name}`);
-
         try {
           const result = await uploadImage(
             file,
@@ -96,11 +98,18 @@ export function ImageUploader() {
         } catch (err) {
           console.error("Upload failed:", err);
           showToast(
-            `Uppladdning misslyckades: ${(err as Error).message}`,
+            `${file.name}: uppladdningen misslyckades (${(err as Error).message})`,
             "error",
           );
+        } finally {
+          done++;
+          setUploadProgress(`${done}/${total}`);
         }
-      }
+      };
+      const worker = async () => {
+        while (queue.length > 0) await uploadOne(queue.shift()!);
+      };
+      await Promise.all(Array.from({ length: Math.min(3, total) }, worker));
 
       setUploadProgress(null);
       setUploading(false);
@@ -185,7 +194,7 @@ export function ImageUploader() {
           }}
         >
           <Spinner />
-          <span>{uploadProgress}</span>
+          <span>Laddar upp {uploadProgress}</span>
         </div>
       )}
     </div>
@@ -208,32 +217,4 @@ function Spinner() {
   );
 }
 
-/**
- * Simple toast notification — appends to body and auto-removes.
- */
-export function showToast(message: string, type: "warning" | "error" | "info") {
-  const colors = {
-    warning: { bg: "#fef3c7", border: "#fbbf24", text: "#92400e" },
-    error: { bg: "#fef2f2", border: "#f87171", text: "#991b1b" },
-    info: { bg: "#eff6ff", border: "#60a5fa", text: "#1e40af" },
-  };
-  const c = colors[type];
-
-  const toast = document.createElement("div");
-  toast.textContent = message;
-  toast.style.cssText = `
-    position: fixed; top: 16px; right: 16px; z-index: 9999;
-    padding: 12px 16px; max-width: 360px;
-    background: ${c.bg}; border: 1px solid ${c.border}; color: ${c.text};
-    border-radius: 8px; font-size: 13px; font-family: system-ui;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-    animation: gs-toast-in 0.3s ease-out;
-  `;
-
-  document.body.appendChild(toast);
-  setTimeout(() => {
-    toast.style.opacity = "0";
-    toast.style.transition = "opacity 0.3s";
-    setTimeout(() => toast.remove(), 300);
-  }, 5000);
-}
+export { showToast };

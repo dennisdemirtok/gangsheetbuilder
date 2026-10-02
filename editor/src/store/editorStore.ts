@@ -6,11 +6,14 @@ import {
   freeCapacityFor,
   findFreeSpot,
   imageBbox,
+  isOutsidePrintable,
   packAll,
   placeGroup,
+  rectsOverlap,
   type Rect,
 } from "../utils/layout";
 import { nextSheetUp } from "../config/sheets";
+import { showToast } from "../utils/toast";
 import { getSheetPrice, hasStorefrontPrices } from "../services/storefrontPrices";
 import {
   autoBuild,
@@ -91,7 +94,7 @@ export interface EditorState {
    * keep claiming "1 placerade" after the sheet has been filled with 312.
    * Utilization is deliberately absent — SheetInsight already shows it.
    */
-  lastArrange: { placed: number; overflow: number } | null;
+  lastArrange: { placed: number; overflow: number; grewTo?: string } | null;
 
   // Multi-sheet
   sheets: SheetEntry[];
@@ -128,6 +131,12 @@ export interface EditorState {
   arrangeSheet: () => Promise<void>;
   duplicateImage: (id: string) => void;
   resizeImage: (id: string, widthMm: number, heightMm: number, keepRatio: boolean) => void;
+  /**
+   * Move a design to a free spot when it now sits on another design or off
+   * the film — after it was made bigger or rotated. Grows the sheet if the
+   * free spot is only on a longer one.
+   */
+  keepClear: (id: string) => void;
   selectImage: (id: string | null) => void;
   setUploading: (val: boolean) => void;
   setAutoBuilding: (val: boolean) => void;
@@ -200,6 +209,70 @@ export function groupImages(images: EditorImage[]): ImageGroup[] {
     return { groupId: key, master: members[0]!, members, count: members.length };
   });
 }
+
+/** The active sheet set to `size`, in the top-level state and its entry. */
+function withSheetSize(
+  state: Pick<EditorState, "sheets" | "activeSheetIndex">,
+  size: SheetSize,
+): Pick<EditorState, "sheetSize" | "sheets"> {
+  return {
+    sheetSize: size,
+    sheets: state.sheets.map((s, i) =>
+      i === state.activeSheetIndex ? { ...s, size: size.label, sheetSize: size } : s,
+    ),
+  };
+}
+
+/**
+ * The first free spot for a w×h design, on a longer sheet if the current
+ * one is full. Null only when even the longest sheet has no room.
+ */
+function freeSpotGrowing(
+  w: number,
+  h: number,
+  start: SheetSize,
+  gap: number,
+  blockers: Rect[],
+): { size: SheetSize; spot: { x: number; y: number } | null } {
+  let size = start;
+  let spot = findFreeSpot(w, h, size, gap, blockers);
+  while (!spot) {
+    const bigger = nextSheetUp(size);
+    if (!bigger) break;
+    size = bigger;
+    spot = findFreeSpot(w, h, size, gap, blockers);
+  }
+  return { size, spot };
+}
+
+/**
+ * Pack every placed design, moving to a longer sheet until nothing is left
+ * over. Never shrinks — a customer may have picked 2 m to fill later.
+ *
+ * Packing on a fixed sheet used to leave whatever did not fit where it was,
+ * on top of the designs packed around it. That is how #1024 reached the
+ * print shop with 2 m of logos piled onto 1 m of film.
+ */
+function packGrowing(images: EditorImage[], start: SheetSize, gap: number) {
+  const items = images
+    .filter((img) => img.placed)
+    .map((img) => {
+      const b = imageBbox(img);
+      return { id: img.id, w: b.w, h: b.h };
+    });
+  let size = start;
+  let result = packAll(items, size, gap);
+  while (result.overflow.length > 0) {
+    const bigger = nextSheetUp(size);
+    if (!bigger) break;
+    size = bigger;
+    result = packAll(items, size, gap);
+  }
+  return { size, ...result };
+}
+
+const grewMessage = (size: SheetSize, what = "allt") =>
+  `Arket blev ${size.label.replace(/ \(.*\)$/, "")} så att ${what} får plats.`;
 
 /** Bounding boxes of every placed image except those in `exceptGroup`. */
 function blockersExcept(
@@ -293,19 +366,32 @@ export const useEditorStore = create<EditorState>()(
       lastFillShortfall: null,
 
       setSheetSize: (size) => {
-        const shrinking = size.heightMm < get().sheetSize.heightMm;
-        set((state) => ({
-          sheetSize: size,
-          // Keep the active sheet's entry in sync so per-sheet pricing is correct
-          sheets: state.sheets.map((s, i) =>
-            i === state.activeSheetIndex
-              ? { ...s, size: size.label, sheetSize: size }
-              : s,
-          ),
-        }));
-        // On a shorter sheet, designs further down would silently fall off
-        // the film. Re-pack so the customer sees what actually prints.
-        if (shrinking && get().images.length > 0) get().arrangeAll();
+        const state = get();
+        const placed = state.images.filter((img) => img.placed);
+        const shrinking = size.heightMm < state.sheetSize.heightMm;
+
+        // A shorter sheet must still hold everything. Re-packing onto one
+        // that is too short used to leave the rest piled on top.
+        if (shrinking && placed.length > 0) {
+          const items = placed.map((img) => {
+            const b = imageBbox(img);
+            return { id: img.id, w: b.w, h: b.h };
+          });
+          if (packAll(items, size, state.gapMm).overflow.length > 0) {
+            showToast(
+              `Motiven får inte plats på ${size.label.replace(/ \(.*\)$/, "")}. Ta bort eller förminska några först.`,
+              "warning",
+            );
+            return;
+          }
+        }
+
+        // Keep the active sheet's entry in sync so per-sheet pricing is correct
+        set(withSheetSize(state, size));
+        // Designs below the new end would fall off the film: re-pack them.
+        if (shrinking && placed.some((img) => isOutsidePrintable(img, size))) {
+          get().arrangeAll();
+        }
       },
 
       setFilmType: (type) => {
@@ -338,16 +424,8 @@ export const useEditorStore = create<EditorState>()(
           const bbox = imageBbox({ ...image, positionX: 0, positionY: 0 });
           const blockers = blockersExcept(state.images, null);
 
-          let size = sheetSize;
-          let spot = findFreeSpot(bbox.w, bbox.h, size, gapMm, blockers);
-
           // Sheet full? Grow it rather than silently stacking designs.
-          while (!spot) {
-            const bigger = nextSheetUp(size);
-            if (!bigger) break;
-            size = bigger;
-            spot = findFreeSpot(bbox.w, bbox.h, size, gapMm, blockers);
-          }
+          const { size, spot } = freeSpotGrowing(bbox.w, bbox.h, sheetSize, gapMm, blockers);
 
           const placed: EditorImage = {
             ...image,
@@ -414,6 +492,7 @@ export const useEditorStore = create<EditorState>()(
         const state = get();
         const group = groupImages(state.images).find((g) => g.groupId === groupId);
         if (group && group.count > 1) get().setGroupCount(groupId, group.count);
+        else if (group) get().keepClear(group.master.id);
       },
 
       setGroupCount: (groupId, count) =>
@@ -427,14 +506,22 @@ export const useEditorStore = create<EditorState>()(
           const bbox = imageBbox({ ...source, positionX: 0, positionY: 0 });
           const blockers = blockersExcept(state.images, groupId);
 
-          const spots = placeGroup(
-            wanted,
-            bbox.w,
-            bbox.h,
-            state.sheetSize,
-            state.gapMm,
-            blockers,
-          );
+          // Not enough room? Lengthen the sheet before dropping copies the
+          // customer asked for — a short count is a wrong order.
+          let size = state.sheetSize;
+          let spots = placeGroup(wanted, bbox.w, bbox.h, size, state.gapMm, blockers);
+          while (spots.length < wanted) {
+            const bigger = nextSheetUp(size);
+            if (!bigger) break;
+            const more = placeGroup(wanted, bbox.w, bbox.h, bigger, state.gapMm, blockers);
+            size = bigger;
+            spots = more;
+          }
+          const grew = size.key !== state.sheetSize.key;
+          if (grew) {
+            const n = Math.min(wanted, spots.length);
+            queueMicrotask(() => showToast(grewMessage(size, `alla ${n}`), "info"));
+          }
 
           // Reuse existing copies so ids (and their dbId links) survive.
           const copies: EditorImage[] = spots.map((spot, i) => {
@@ -468,6 +555,7 @@ export const useEditorStore = create<EditorState>()(
               missing > 0
                 ? { filename: source.filename, missing }
                 : null,
+            ...(grew ? withSheetSize(state, size) : {}),
           };
         }),
 
@@ -496,29 +584,30 @@ export const useEditorStore = create<EditorState>()(
         if (fits > group.count) get().setGroupCount(groupId, fits);
       },
 
-      arrangeAll: () =>
-        set((state) => {
-          const items = state.images
-            .filter((img) => img.placed)
-            .map((img) => {
-              const b = imageBbox(img);
-              return { id: img.id, w: b.w, h: b.h };
-            });
-          const { positions, overflow } = packAll(
-            items,
-            state.sheetSize,
-            state.gapMm,
-          );
-          return {
-            images: state.images.map((img) => {
-              const pos = positions.get(img.id);
-              return pos
-                ? { ...img, positionX: pos.x, positionY: pos.y, placed: true }
-                : img;
-            }),
-            lastArrange: { placed: positions.size, overflow: overflow.length },
-          };
-        }),
+      arrangeAll: () => {
+        const state = get();
+        const { size, positions, overflow } = packGrowing(
+          state.images,
+          state.sheetSize,
+          state.gapMm,
+        );
+        const grew = size.key !== state.sheetSize.key;
+        set({
+          images: state.images.map((img) => {
+            const pos = positions.get(img.id);
+            return pos
+              ? { ...img, positionX: pos.x, positionY: pos.y, placed: true }
+              : img;
+          }),
+          lastArrange: {
+            placed: positions.size,
+            overflow: overflow.length,
+            grewTo: grew ? size.label : undefined,
+          },
+          ...(grew ? withSheetSize(state, size) : {}),
+        });
+        if (grew) showToast(grewMessage(size), "info");
+      },
 
       arrangeSheet: async () => {
         const state = get();
@@ -546,35 +635,54 @@ export const useEditorStore = create<EditorState>()(
             ),
           );
 
-          const result = await autoBuild({
-            gangSheetId: gsId,
-            sheetWidthMm: get().sheetSize.widthMm,
-            sheetHeightMm: get().sheetSize.heightMm,
-            gapMm: get().gapMm,
-            // One item per copy, keyed by its editor id. Copies share a
-            // database row, so packing rows would give them all one spot.
-            items: get()
-              .images.filter((img) => img.placed)
-              .map((img) => ({
-                id: img.id,
-                width: img.displayWidth,
-                height: img.displayHeight,
-              })),
-          });
+          // One item per copy, keyed by its editor id. Copies share a
+          // database row, so packing rows would give them all one spot.
+          const items = get()
+            .images.filter((img) => img.placed)
+            .map((img) => ({
+              id: img.id,
+              width: img.displayWidth,
+              height: img.displayHeight,
+            }));
 
-          // A 200 with no placements is not a usable answer — treat it the
-          // same as a failed request and pack locally instead.
-          if (!Array.isArray(result?.placements)) {
-            throw new Error("Auto-arrange returned no placements");
+          // Try the sheet as it is first — the server nests tighter than the
+          // local packer — and go longer only while anything is left over.
+          const startSize = get().sheetSize;
+          let size = startSize;
+          let result: any = null;
+          for (;;) {
+            result = await autoBuild({
+              gangSheetId: gsId,
+              sheetWidthMm: size.widthMm,
+              sheetHeightMm: size.heightMm,
+              gapMm: get().gapMm,
+              items,
+            });
+            // A 200 with no placements is not a usable answer — treat it the
+            // same as a failed request and pack locally instead.
+            if (!Array.isArray(result?.placements)) {
+              throw new Error("Auto-arrange returned no placements");
+            }
+            const left = Array.isArray(result.overflow) ? result.overflow.length : 0;
+            const bigger = left > 0 ? nextSheetUp(size) : null;
+            if (!bigger) break;
+            size = bigger;
           }
 
+          const overflow = Array.isArray(result.overflow) ? result.overflow.length : 0;
+          if (overflow > 0) throw new Error(`${overflow} designs did not fit`);
+
+          const grew = size.key !== startSize.key;
+          if (grew) set(withSheetSize(get(), size));
           get().applyAutoBuild(result.placements);
           set({
             lastArrange: {
               placed: result.placements.length,
-              overflow: Array.isArray(result.overflow) ? result.overflow.length : 0,
+              overflow: 0,
+              grewTo: grew ? size.label : undefined,
             },
           });
+          if (grew) showToast(grewMessage(size), "info");
         } catch (err) {
           console.error("Auto-arrange failed, packing locally:", err);
           get().arrangeAll();
@@ -622,6 +730,38 @@ export const useEditorStore = create<EditorState>()(
 
         const group = groupImages(get().images).find((g) => g.groupId === key);
         if (group && group.count > 1) get().setGroupCount(key, group.count);
+        else get().keepClear(id);
+      },
+
+      keepClear: (id) => {
+        const state = get();
+        const img = state.images.find((i) => i.id === id);
+        if (!img?.placed) return;
+        const box = imageBbox(img);
+        const others = state.images
+          .filter((o) => o.placed && o.id !== id)
+          .map(imageBbox);
+        const clashes =
+          others.some((o) => rectsOverlap(box, o)) ||
+          isOutsidePrintable(img, state.sheetSize);
+        if (!clashes) return;
+
+        const { size, spot } = freeSpotGrowing(box.w, box.h, state.sheetSize, state.gapMm, others);
+        if (!spot) return; // not even the longest sheet has room — the checks will say so
+        const grew = size.key !== state.sheetSize.key;
+        set({
+          images: state.images.map((i) =>
+            i.id === id ? { ...i, positionX: spot.x, positionY: spot.y } : i,
+          ),
+          lastArrange: null,
+          ...(grew ? withSheetSize(state, size) : {}),
+        });
+        showToast(
+          grew
+            ? `Motivet flyttades till en ledig plats. ${grewMessage(size, "det")}`
+            : "Motivet flyttades till en ledig plats så att det inte ligger på något annat.",
+          "info",
+        );
       },
 
       selectImage: (id) => set({ selectedImageId: id }),

@@ -196,48 +196,97 @@ export async function convertToPng(buffer: Buffer): Promise<Buffer> {
 }
 
 /**
- * Remove white background from an image using Sharp.
- * This is a fast local alternative to remove.bg API.
- * Works best for images with solid white backgrounds.
+ * Remove the white background around a design.
+ *
+ * Only white that is connected to the edge of the image is removed — the
+ * background. This used to clear every near-white pixel, so white text and
+ * white details inside a logo turned transparent too, and in DTF they would
+ * print in the colour of the garment instead of white. Anti-aliased edges
+ * against the background fade out instead of leaving a white halo.
  */
 export async function removeWhiteBackground(
   buffer: Buffer,
   threshold: number = 240,
   fuzz: number = 20,
 ): Promise<Buffer> {
-  const img = sharp(buffer);
+  const img = sharp(buffer, { limitInputPixels: false });
   const meta = await img.metadata();
   const w = meta.width || 0;
   const h = meta.height || 0;
 
   if (w === 0 || h === 0) return buffer;
 
-  // Get raw pixel data
   const { data, info } = await img
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
 
-  const channels = info.channels; // Should be 4 (RGBA)
+  const channels = info.channels; // 4 (RGBA)
+  const loose = threshold - fuzz;
 
-  // Process each pixel: if RGB are all above threshold, set alpha to 0
-  for (let i = 0; i < data.length; i += channels) {
-    const r = data[i]!;
-    const g = data[i + 1]!;
-    const b = data[i + 2]!;
+  /** Near-white and still visible: part of the background if it touches it. */
+  const whiteish = (p: number) => {
+    const i = p * channels;
+    return (
+      data[i + 3]! > 0 &&
+      data[i]! >= loose &&
+      data[i + 1]! >= loose &&
+      data[i + 2]! >= loose
+    );
+  };
 
-    // Check if pixel is "white-ish"
-    if (r >= threshold - fuzz && g >= threshold - fuzz && b >= threshold - fuzz) {
-      // Calculate how white the pixel is for smooth edges
-      const whiteness = Math.min(r, g, b);
-      if (whiteness >= threshold) {
-        data[i + 3] = 0; // Fully transparent
-      } else {
-        // Partial transparency for anti-aliasing
-        const alpha = Math.round(
-          255 * (1 - (whiteness - (threshold - fuzz)) / fuzz),
-        );
-        data[i + 3] = Math.max(0, Math.min(255, alpha));
+  const clear = (p: number) => {
+    const i = p * channels;
+    const whiteness = Math.min(data[i]!, data[i + 1]!, data[i + 2]!);
+    data[i + 3] =
+      whiteness >= threshold
+        ? 0
+        : Math.max(0, Math.min(255, Math.round(255 * (1 - (whiteness - loose) / fuzz))));
+  };
+
+  // Scanline flood fill from every white pixel on the border. A span stack
+  // stays small even on 40-megapixel EPS renders, unlike a pixel stack.
+  const seen = new Uint8Array(w * h);
+  const stack: number[] = [];
+  const seed = (x: number, y: number) => {
+    const p = y * w + x;
+    if (!seen[p] && whiteish(p)) stack.push(x, y);
+  };
+  for (let x = 0; x < w; x++) {
+    seed(x, 0);
+    seed(x, h - 1);
+  }
+  for (let y = 0; y < h; y++) {
+    seed(0, y);
+    seed(w - 1, y);
+  }
+
+  while (stack.length > 0) {
+    const y = stack.pop()!;
+    let x = stack.pop()!;
+    let p = y * w + x;
+    if (seen[p]) continue;
+    // Walk left to the start of this run of background.
+    while (x > 0 && !seen[p - 1] && whiteish(p - 1)) {
+      x--;
+      p--;
+    }
+    let aboveOpen = false;
+    let belowOpen = false;
+    for (; x < w && !seen[p] && whiteish(p); x++, p++) {
+      seen[p] = 1;
+      clear(p);
+      if (y > 0) {
+        const up = p - w;
+        const open = !seen[up] && whiteish(up);
+        if (open && !aboveOpen) stack.push(x, y - 1);
+        aboveOpen = open;
+      }
+      if (y < h - 1) {
+        const down = p + w;
+        const open = !seen[down] && whiteish(down);
+        if (open && !belowOpen) stack.push(x, y + 1);
+        belowOpen = open;
       }
     }
   }

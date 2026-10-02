@@ -147,8 +147,9 @@ function DesktopShell({
           }}
         >
           <PriceBadge />
-          <HeaderButton onClick={onRestartWizard} title="Öppna guiden igen">
-            Guide
+          {/* The guide is also how to add many designs at once later on. */}
+          <HeaderButton onClick={onRestartWizard} title="Ladda upp flera motiv och ange storlek och antal" strong>
+            + Lägg till motiv
           </HeaderButton>
           <HeaderButton onClick={onReset} title="Rensa allt">
             Rensa
@@ -263,8 +264,8 @@ function MobileShell({
       >
         <Wordmark />
         <div style={{ flex: 1 }} />
-        <HeaderButton onClick={onRestartWizard} title="Guide">
-          Guide
+        <HeaderButton onClick={onRestartWizard} title="Lägg till motiv" strong>
+          + Motiv
         </HeaderButton>
         <HeaderButton onClick={onReset} title="Rensa allt">
           Rensa

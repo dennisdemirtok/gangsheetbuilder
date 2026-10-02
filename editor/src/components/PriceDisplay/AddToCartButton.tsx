@@ -13,10 +13,63 @@ import {
   removeCartLinesForSheets,
 } from "../../services/cart";
 import { theme } from "../../styles/theme";
+import { showToast } from "../../utils/toast";
+
+/** A sheet's problems, labelled with the sheet when there are several. */
+interface SheetCheck {
+  index: number;
+  issues: SheetIssue[];
+}
+
+/**
+ * Every sheet in the cart, not only the one on screen: a second sheet with
+ * piled-up designs used to go to print unchecked.
+ */
+function checkAllSheets(): SheetCheck[] {
+  const state = useEditorStore.getState();
+  return state.sheets
+    .map((sheet, index) => {
+      const active = index === state.activeSheetIndex;
+      const sheetImages = active ? state.images : sheet.savedImages || [];
+      const size = active ? state.sheetSize : sheet.sheetSize ?? state.sheetSize;
+      return { index, issues: sheetImages.length ? computeSheetStats(sheetImages, size).issues : [] };
+    })
+    .filter((c) => c.issues.length > 0);
+}
+
+function labelled(checks: SheetCheck[]): SheetIssue[] {
+  const { sheets } = useEditorStore.getState();
+  return checks.flatMap((c) =>
+    c.issues.map((issue) =>
+      sheets.length > 1
+        ? { ...issue, message: `${sheets[c.index]?.name ?? `Ark ${c.index + 1}`}: ${issue.message}` }
+        : issue,
+    ),
+  );
+}
+
+/**
+ * Re-arrange every sheet that has designs on top of each other or off the
+ * film, lengthening it where needed. The customer then sees the result —
+ * and the new price — before anything goes in the cart.
+ */
+async function fixSheets(checks: SheetCheck[]): Promise<SheetCheck[]> {
+  const store = useEditorStore.getState();
+  const original = store.activeSheetIndex;
+  for (const check of checks) {
+    if (!check.issues.some((i) => i.severity === "error")) continue;
+    useEditorStore.getState().switchSheet(check.index);
+    await useEditorStore.getState().arrangeSheet();
+  }
+  useEditorStore.getState().switchSheet(original);
+  return checkAllSheets();
+}
 
 export function AddToCartButton() {
   const [isAdding, setIsAdding] = useState(false);
-  const [confirming, setConfirming] = useState<SheetIssue[] | null>(null);
+  const [confirming, setConfirming] = useState<SheetCheck[] | null>(null);
+  const [fixing, setFixing] = useState(false);
+  const [fixFailed, setFixFailed] = useState(false);
   const {
     gangSheetId,
     sessionId,
@@ -35,12 +88,31 @@ export function AddToCartButton() {
    * arrived. Check first and make them acknowledge it.
    */
   const handleClick = () => {
-    const stats = computeSheetStats(images, sheetSize);
-    if (stats.issues.length > 0) {
-      setConfirming(stats.issues);
+    const checks = checkAllSheets();
+    if (checks.length > 0) {
+      setFixFailed(false);
+      setConfirming(checks);
       return;
     }
     void handleAddToCart();
+  };
+
+  const handleFix = async () => {
+    if (!confirming) return;
+    setFixing(true);
+    try {
+      const left = await fixSheets(confirming);
+      const errorsLeft = left.some((c) => c.issues.some((i) => i.severity === "error"));
+      if (!errorsLeft) {
+        setConfirming(null);
+        showToast("Klart! Kontrollera arket och priset, och lägg sedan i varukorgen.", "success");
+      } else {
+        setFixFailed(true);
+        setConfirming(left);
+      }
+    } finally {
+      setFixing(false);
+    }
   };
 
   const handleAddToCart = async () => {
@@ -161,8 +233,11 @@ export function AddToCartButton() {
     <>
       {confirming && (
         <IssueDialog
-          issues={confirming}
+          issues={labelled(confirming)}
+          fixing={fixing}
+          fixFailed={fixFailed}
           onCancel={() => setConfirming(null)}
+          onFix={() => void handleFix()}
           onProceed={() => void handleAddToCart()}
         />
       )}
@@ -194,29 +269,41 @@ export function AddToCartButton() {
 }
 
 /**
- * Last stop before the cart. Errors (overlap, off-sheet) get a blunt
- * warning; a low-DPI warning alone still lets the customer go ahead.
+ * Last stop before the cart.
+ *
+ * Designs on top of each other or off the film print wrong, and an "order
+ * anyway" button here was clicked through: #1024 was paid for as 1 m with
+ * 2 m of logos piled onto it. Those errors now only offer the fix — which
+ * re-arranges and, if needed, lengthens the sheet at its real price. Low
+ * resolution and touching corners are warnings the customer may accept.
  */
 function IssueDialog({
   issues,
+  fixing,
+  fixFailed,
   onCancel,
+  onFix,
   onProceed,
 }: {
   issues: SheetIssue[];
+  fixing: boolean;
+  fixFailed: boolean;
   onCancel: () => void;
+  onFix: () => void;
   onProceed: () => void;
 }) {
-  const hasErrors = issues.some((i) => i.severity === "error");
+  const errors = issues.filter((i) => i.severity === "error");
+  const hasErrors = errors.length > 0;
 
   return (
-    <div style={D.backdrop} onClick={onCancel}>
+    <div style={D.backdrop} onClick={fixing ? undefined : onCancel}>
       <div style={D.modal} onClick={(e) => e.stopPropagation()}>
         <h3 style={D.title}>
-          {hasErrors ? "Kontrollera arket först" : "Innan du beställer"}
+          {hasErrors ? "Arket behöver fixas" : "Innan du beställer"}
         </h3>
         <p style={D.lead}>
           {hasErrors
-            ? "Så här som arket ser ut nu kommer det att tryckas. Vill du fortsätta ändå?"
+            ? "Motiv som ligger på varandra eller utanför filmen trycks fel. Vi kan ordna dem åt dig — arket blir längre om allt inte får plats, och du ser det nya priset innan du lägger i varukorgen."
             : "Vi hittade något som kan påverka trycket:"}
         </p>
         <ul style={D.list}>
@@ -232,13 +319,26 @@ function IssueDialog({
             </li>
           ))}
         </ul>
+        {/* Still wrong after a fix: more than the longest sheet holds. */}
+        {hasErrors && fixFailed && !fixing && (
+          <p style={{ ...D.lead, margin: "12px 0 0" }}>
+            Får det inte plats ens på 5 meter? Lägg en del av motiven på ett nytt
+            ark under Ark, eller gör dem mindre.
+          </p>
+        )}
         <div style={D.actions}>
-          <button onClick={onCancel} style={D.secondary}>
-            Gå tillbaka och fixa
+          <button onClick={onCancel} style={D.secondary} disabled={fixing}>
+            Gå tillbaka
           </button>
-          <button onClick={onProceed} style={D.primary}>
-            Beställ ändå
-          </button>
+          {hasErrors ? (
+            <button onClick={onFix} style={{ ...D.primary, opacity: fixing ? 0.7 : 1 }} disabled={fixing}>
+              {fixing ? "Ordnar arket…" : "Fixa automatiskt"}
+            </button>
+          ) : (
+            <button onClick={onProceed} style={D.primary}>
+              Beställ ändå
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -130,6 +130,7 @@ export function GangSheetCanvas() {
       const displayHeight = canvasPxToMm(heightPx * Math.abs(scaleY), scaleFactor);
       const rotation = angle;
       const { bboxW, bboxH } = rotatedBboxMm(displayWidth, displayHeight, rotation);
+      const before = useEditorStore.getState().images.find((i) => i.id === imageId);
       updateImage(imageId, {
         positionX: canvasPxToMm(centerX, scaleFactor) - bboxW / 2,
         positionY: canvasPxToMm(centerY, scaleFactor) - bboxH / 2,
@@ -137,6 +138,14 @@ export function GangSheetCanvas() {
         displayHeight,
         rotation,
       });
+      // Made bigger or turned onto a neighbour: move it somewhere free.
+      // A plain drag is left where the customer put it (it shows red).
+      const reshaped =
+        before &&
+        (Math.abs(before.displayWidth - displayWidth) > 0.5 ||
+          Math.abs(before.displayHeight - displayHeight) > 0.5 ||
+          before.rotation !== rotation);
+      if (reshaped) useEditorStore.getState().keepClear(imageId);
     };
 
     canvas.on("object:modified", (e) => {

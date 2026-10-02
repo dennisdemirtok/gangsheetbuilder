@@ -15,6 +15,7 @@ import { freeCapacityFor, imageBbox } from "../../utils/layout";
 import { removeBg, getAppProxyUrl } from "../../services/api";
 import { theme } from "../../styles/theme";
 import { useSheetStats } from "../../utils/sheetStats";
+import { showToast } from "../../utils/toast";
 
 export function ImageList() {
   const { images, selectedImageId } = useEditorStore();
@@ -39,6 +40,7 @@ export function ImageList() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <WhiteBackgroundBar groups={groups} />
       {groups.map((group) => (
         <GroupItem
           key={group.groupId}
@@ -48,6 +50,78 @@ export function ImageList() {
           isOutside={group.members.some((m) => stats.outsideIds.has(m.id))}
         />
       ))}
+    </div>
+  );
+}
+
+/**
+ * One click for every design with a white background. Taking them off one
+ * by one was the step customers skipped — and a white box prints as a
+ * white box.
+ */
+function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
+  const updateGroup = useEditorStore((s) => s.updateGroup);
+  const [busy, setBusy] = useState(false);
+  const white = groups.filter((g) => g.master.hasWhiteBackground && !g.master.bgRemoved);
+  if (white.length === 0) return null;
+
+  const removeAll = async () => {
+    setBusy(true);
+    let failed = 0;
+    const base = getAppProxyUrl();
+    const queue = [...white];
+    const worker = async () => {
+      while (queue.length > 0) {
+        const group = queue.shift()!;
+        try {
+          const result = await removeBg(group.master.dbId || group.master.id);
+          const url = result.bgRemovedUrl.startsWith("/") ? base + result.bgRemovedUrl : result.bgRemovedUrl;
+          updateGroup(group.groupId, { bgRemoved: true, bgRemovedUrl: url, hasWhiteBackground: false });
+        } catch {
+          failed++;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, white.length) }, worker));
+    setBusy(false);
+    if (failed > 0) showToast(`Bakgrunden kunde inte tas bort på ${failed} motiv.`, "error");
+  };
+
+  return (
+    <div
+      style={{
+        padding: "8px 10px",
+        borderRadius: theme.radiusSm,
+        background: theme.warningBg,
+        color: theme.warning,
+        fontSize: 11.5,
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+      }}
+    >
+      <span style={{ flex: 1 }}>
+        {white.length === 1 ? "1 motiv har" : `${white.length} motiv har`} vit
+        bakgrund, som trycks som en vit ruta.
+      </span>
+      <button
+        onClick={() => void removeAll()}
+        disabled={busy}
+        style={{
+          flexShrink: 0,
+          padding: "5px 9px",
+          border: "none",
+          borderRadius: 6,
+          background: theme.warning,
+          color: "#fff",
+          fontSize: 11.5,
+          fontWeight: 600,
+          fontFamily: theme.fontFamily,
+          cursor: busy ? "wait" : "pointer",
+        }}
+      >
+        {busy ? "Tar bort…" : white.length > 1 ? "Ta bort på alla" : "Ta bort"}
+      </button>
     </div>
   );
 }
@@ -236,7 +310,7 @@ function GroupItem({
           {hasOverlap
             ? "⚠ Ligger ovanpå ett annat motiv"
             : "⚠ Ligger utanför tryckytan"}{" "}
-          — klicka "Ordna om tätt".
+          — klicka "Ordna om arket".
         </p>
       )}
 

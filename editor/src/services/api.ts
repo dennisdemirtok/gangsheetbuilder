@@ -132,6 +132,8 @@ interface PlacementPayloadImage {
   flipY: boolean;
   quantity: number;
   marginMm?: number;
+  /** Set when the customer uses the background-free version. */
+  bgRemovedUrl?: string;
 }
 
 /**
@@ -170,6 +172,9 @@ export function buildPlacementsPayload(
       flipY: first.flipY,
       quantity: copies.length,
       marginMm: first.marginMm ?? 5,
+      // Print the background-free version only if the customer kept it —
+      // they can take a removed background back in the guide.
+      useBgRemoved: Boolean(first.bgRemovedUrl),
       placements: copies.map((c) => ({ xMm: c.positionX, yMm: c.positionY })),
     };
   });

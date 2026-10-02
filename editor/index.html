@@ -88,8 +88,10 @@
         const h = [1200, 800, 600][uploadSeq % 3];
         const data = swatch(w, h, hue);
         return json({
-          id: "dbimg_" + uploadSeq,
-          imageId: "img_dev_" + uploadSeq,
+          // Unique across reloads: the editor keeps its designs in
+          // sessionStorage, and reused ids would merge new uploads into them.
+          id: "dbimg_" + Date.now().toString(36) + "_" + uploadSeq,
+          imageId: "img_dev_" + Date.now().toString(36) + "_" + uploadSeq,
           filename: (file && file.name) || `design-${uploadSeq}.png`,
           thumbnailUrl: data,
           originalUrl: data,
@@ -97,10 +99,24 @@
           height: h,
           dpiX: 300,
           dpiY: 300,
-          hasAlpha: true,
-          hasWhiteBackground: uploadSeq === 2,
+          hasAlpha: uploadSeq % 2 === 1,
+          hasWhiteBackground: uploadSeq % 2 === 0,
           warnings: [],
-        });
+        }).then((res) => new Promise((r) => setTimeout(() => r(res), 700 + Math.random() * 800)));
+      }
+
+      if (url.includes("/api/remove-bg")) {
+        // A transparent version: just the badge, no backdrop.
+        const c = document.createElement("canvas");
+        c.width = 600; c.height = 600;
+        const x = c.getContext("2d");
+        x.fillStyle = "hsl(200 70% 45%)";
+        x.beginPath(); x.arc(300, 300, 240, 0, Math.PI * 2); x.fill();
+        x.fillStyle = "#fff"; x.font = "bold 150px sans-serif";
+        x.textAlign = "center"; x.textBaseline = "middle"; x.fillText("TC", 300, 300);
+        return new Promise((r) => setTimeout(r, 500)).then(() =>
+          json({ status: "done", bgRemovedUrl: c.toDataURL("image/png") }),
+        );
       }
 
       if (url.includes("/api/auto-build")) {

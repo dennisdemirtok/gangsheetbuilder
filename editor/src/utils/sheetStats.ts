@@ -4,7 +4,7 @@ import { groupKey, useEditorStore } from "../store/editorStore";
 import {
   EDGE_MARGIN_MM,
   contentBottomMm,
-  findOverlappingIds,
+  findOverlaps,
   imageBbox,
   isOutsidePrintable,
   printableArea,
@@ -13,7 +13,7 @@ import {
 import { calculateDisplayDpi, getDpiLevel } from "./units";
 
 export interface SheetIssue {
-  kind: "overlap" | "outside" | "lowDpi";
+  kind: "overlap" | "touching" | "outside" | "lowDpi";
   severity: "error" | "warning";
   message: string;
   imageIds: string[];
@@ -40,7 +40,7 @@ export function computeSheetStats(
   const placed = images.filter((img) => img.placed);
   const boxes = placed.map(imageBbox);
 
-  const overlappingIds = findOverlappingIds(placed);
+  const { overlapping: overlappingIds, touching } = findOverlaps(placed);
   const outsideIds = new Set(
     placed.filter((img) => isOutsidePrintable(img, sheetSize)).map((i) => i.id),
   );
@@ -83,6 +83,15 @@ export function computeSheetStats(
       severity: "error",
       message: `${outsideIds.size} motiv ligger utanför det tryckbara området (${EDGE_MARGIN_MM} mm från kanten).`,
       imageIds: [...outsideIds],
+    });
+  }
+
+  if (touching.size > 0) {
+    issues.push({
+      kind: "touching",
+      severity: "warning",
+      message: `Hörnen på ${touching.size} motiv nuddar varandra. Kontrollera att inget av själva trycken överlappar.`,
+      imageIds: [...touching],
     });
   }
 

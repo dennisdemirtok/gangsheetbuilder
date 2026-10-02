@@ -100,17 +100,46 @@ export function rectsOverlap(a: Rect, b: Rect, tolerance = 0.5): boolean {
 export function findOverlappingIds<T extends BboxSource & { id: string }>(
   images: T[],
 ): Set<string> {
+  return findOverlaps(images).overlapping;
+}
+
+/** Area (mm²) two rects share, 0 when they don't overlap. */
+function sharedArea(a: Rect, b: Rect): number {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return w > 0 && h > 0 ? w * h : 0;
+}
+
+/**
+ * Overlaps, split by how much they cover.
+ *
+ * Designs are compared by their bounding boxes, and a logo's box is mostly
+ * transparent at the corners — two round logos whose boxes graze each other
+ * print fine. Those are `touching`, a warning. `overlapping` covers more
+ * than a corner (over 1 cm² and 3 % of the smaller design) and prints one
+ * motif on top of the other; that is the #1024 case and blocks checkout.
+ */
+export function findOverlaps<T extends BboxSource & { id: string }>(
+  images: T[],
+): { overlapping: Set<string>; touching: Set<string> } {
   const boxes = images.map((img) => ({ id: img.id, rect: imageBbox(img) }));
-  const hits = new Set<string>();
+  const overlapping = new Set<string>();
+  const touching = new Set<string>();
   for (let i = 0; i < boxes.length; i++) {
     for (let j = i + 1; j < boxes.length; j++) {
-      if (rectsOverlap(boxes[i]!.rect, boxes[j]!.rect)) {
-        hits.add(boxes[i]!.id);
-        hits.add(boxes[j]!.id);
-      }
+      const a = boxes[i]!;
+      const b = boxes[j]!;
+      if (!rectsOverlap(a.rect, b.rect)) continue;
+      const shared = sharedArea(a.rect, b.rect);
+      const smaller = Math.min(a.rect.w * a.rect.h, b.rect.w * b.rect.h);
+      const real = shared > 100 && shared > smaller * 0.03;
+      const set = real ? overlapping : touching;
+      set.add(a.id);
+      set.add(b.id);
     }
   }
-  return hits;
+  for (const id of overlapping) touching.delete(id);
+  return { overlapping, touching };
 }
 
 /** Does the image stick out past the printable area? */

@@ -5,20 +5,28 @@ import {
   groupKey,
   type EditorImage,
 } from "../../store/editorStore";
-import { uploadImage, getAppProxyUrl, ensureGangSheet } from "../../services/api";
-import { calculateDisplayDpi, getDpiColor, dpiWarning } from "../../utils/units";
-import { capacity, requiredHeightMm, EDGE_MARGIN_MM } from "../../utils/layout";
+import { uploadImage, getAppProxyUrl, ensureGangSheet, removeBg } from "../../services/api";
+import { getSheetPrice } from "../../services/storefrontPrices";
+import { calculateDisplayDpi, getDpiColor, dpiWarning, DPI_THRESHOLDS } from "../../utils/units";
+import { capacity, requiredHeightMm, imageBbox, EDGE_MARGIN_MM } from "../../utils/layout";
+import { computeSheetStats } from "../../utils/sheetStats";
 import { SHEET_SIZES, SHEET_WIDTH_MM, smallestSheetFor } from "../../config/sheets";
 import { theme } from "../../styles/theme";
-import { showToast } from "../ImagePanel/ImageUploader";
+import { showToast } from "../../utils/toast";
 
 /**
- * Quantity-first start flow.
+ * Quantity-first start flow — and the way to add many designs later.
  *
- * The editor used to open on an empty metre of film and leave the customer
- * to work out how to fill it. People don't think in metres — they think
- * "50 of my logo at 10 cm". So: upload, say how big and how many, and the
- * builder picks the film length, nests everything and prices it.
+ * People don't think in metres — they think "50 of my logo at 10 cm". So:
+ * upload, say how big and how many, and the builder picks the film length,
+ * nests everything and prices it.
+ *
+ * Files upload the moment they are picked, three at a time, while the
+ * customer sets sizes; they used to go one by one only after "Bygg", which
+ * with 50 logos meant minutes of waiting on a spinner. A white background
+ * is taken off (and can be put back), sizes can be set for all designs in
+ * one go, and designs already on the sheet are counted in, so reopening the
+ * guide adds to the sheet instead of squeezing what is there.
  */
 
 /** Common placements, so nobody has to guess what "10 cm" looks like. */
@@ -30,27 +38,46 @@ const SIZE_PRESETS = [
   { label: "A3-bred", cm: 29.7 },
 ];
 
+/** Uploads at a time: fast, without starving a slow connection. */
+const PARALLEL_UPLOADS = 3;
+
+const VECTOR_EXT = /\.(svg|pdf|eps|ai)$/i;
+
+interface Uploaded {
+  id: string;
+  imageId: string;
+  thumbnailUrl: string;
+  originalUrl: string;
+  width: number;
+  height: number;
+  dpiX: number;
+  dpiY: number;
+  hasAlpha?: boolean;
+  hasWhiteBackground?: boolean;
+  filename: string;
+}
+
 interface Draft {
   id: string;
   file: File;
+  /** What the row shows: the local file, then the server's thumbnail. */
   previewUrl: string;
+  /** Local blob to revoke when the draft goes away. */
+  blobUrl: string;
   widthPx: number;
   heightPx: number;
   /** Target printed width in cm. */
   widthCm: number;
   count: number;
-  uploaded?: {
-    id: string;
-    imageId: string;
-    thumbnailUrl: string;
-    originalUrl: string;
-    width: number;
-    height: number;
-    dpiX: number;
-    hasAlpha?: boolean;
-    hasWhiteBackground?: boolean;
-    filename: string;
-  };
+  vector: boolean;
+  status: "uploading" | "ready" | "failed";
+  error?: string;
+  uploaded?: Uploaded;
+  /** The background-free version, when the file had a white background. */
+  bgRemovedUrl?: string;
+  /** Use the background-free version (on by default when there is one). */
+  useBgRemoved: boolean;
+  bgBusy?: boolean;
 }
 
 /** The theme block exposes this when the upload modal is on the page. */
@@ -63,6 +90,19 @@ const hasUploadFlow =
   typeof window !== "undefined" &&
   typeof (window as any).__gangsheetOpenUpload === "function";
 
+const absolute = (url: string | undefined) =>
+  url && url.startsWith("/") ? getAppProxyUrl() + url : url || "";
+
+/** Pixel size of a picked file, when the browser can draw it. */
+function readPixels(url: string): Promise<{ w: number; h: number }> {
+  return new Promise((resolve) => {
+    const im = new Image();
+    im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
+    im.onerror = () => resolve({ w: 0, h: 0 });
+    im.src = url;
+  });
+}
+
 export function StartWizard({ onClose }: { onClose: () => void }) {
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -74,102 +114,187 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
     filmType,
     gapMm,
     sheetSize,
+    images,
     setGangSheetId,
     setSheetSize,
     addImage,
     setGroupCount,
-    arrangeAll,
+    arrangeSheet,
   } = useEditorStore();
 
-  const readFiles = useCallback(async (files: FileList) => {
-    const next: Draft[] = [];
-    for (const file of Array.from(files)) {
-      const previewUrl = URL.createObjectURL(file);
-      // Read intrinsic pixels locally so sizing advice appears instantly,
-      // before the (possibly large) upload finishes.
-      const dims = await new Promise<{ w: number; h: number }>((resolve) => {
-        const im = new Image();
-        im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
-        im.onerror = () => resolve({ w: 0, h: 0 });
-        im.src = previewUrl;
-      });
-      const widthPx = dims.w || 1000;
-      const heightPx = dims.h || 1000;
-      next.push({
-        id: "draft_" + Math.random().toString(36).slice(2, 10),
-        file,
-        previewUrl,
-        widthPx,
-        heightPx,
-        widthCm: 10,
-        count: 1,
-      });
-    }
-    setDrafts((prev) => [...prev, ...next]);
-  }, []);
+  // Designs already on the sheet: the guide adds to them.
+  const existing = useMemo(() => images.filter((img) => img.placed), [images]);
+  const adding = existing.length > 0;
 
-  /** Film length these designs need at the chosen sizes and counts. */
-  const plan = useMemo(() => {
-    const items: { id: string; w: number; h: number }[] = [];
-    for (const d of drafts) {
-      const w = d.widthCm * 10;
-      const h = (d.heightPx / d.widthPx) * w;
-      for (let i = 0; i < d.count; i++) {
-        items.push({ id: `${d.id}_${i}`, w, h });
-      }
-    }
-    if (items.length === 0) return null;
-    const neededMm = requiredHeightMm(items, SHEET_WIDTH_MM, gapMm);
-    const sheet = smallestSheetFor(neededMm);
-    const tooBig = neededMm > SHEET_SIZES[SHEET_SIZES.length - 1]!.heightMm;
-    return { neededMm, sheet, tooBig, total: items.length };
-  }, [drafts, gapMm]);
+  const update = useCallback(
+    (id: string, patch: Partial<Draft>) =>
+      setDrafts((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d))),
+    [],
+  );
 
-  const handleBuild = async () => {
-    if (drafts.length === 0 || !plan) return;
-    setBusy("Laddar upp...");
+  /* ── Uploads: a small queue, started as soon as files are picked ── */
 
-    try {
-      let gsId = gangSheetId;
-      gsId = await ensureGangSheet(
+  const queueRef = useRef<Draft[]>([]);
+  const runningRef = useRef(0);
+  const sheetIdRef = useRef<Promise<string> | null>(null);
+
+  const sheetId = useCallback(() => {
+    if (!sheetIdRef.current) {
+      sheetIdRef.current = ensureGangSheet(
         sessionId,
-        plan.sheet.widthMm,
-        plan.sheet.heightMm,
+        sheetSize.widthMm,
+        sheetSize.heightMm,
         filmType,
         gangSheetId,
-      );
-      if (gsId !== gangSheetId) setGangSheetId(gsId);
+      ).then((id) => {
+        if (id !== gangSheetId) setGangSheetId(id);
+        return id;
+      });
+    }
+    return sheetIdRef.current;
+  }, [sessionId, sheetSize, filmType, gangSheetId, setGangSheetId]);
 
+  const takeOffBackground = useCallback(
+    async (draftId: string, dbId: string) => {
+      update(draftId, { bgBusy: true });
+      try {
+        const result = await removeBg(dbId);
+        if (!result?.bgRemovedUrl) throw new Error("no result");
+        update(draftId, { bgRemovedUrl: absolute(result.bgRemovedUrl), useBgRemoved: true, bgBusy: false });
+      } catch {
+        update(draftId, { useBgRemoved: false, bgBusy: false });
+      }
+    },
+    [update],
+  );
+
+  const pump = useCallback(() => {
+    while (runningRef.current < PARALLEL_UPLOADS && queueRef.current.length > 0) {
+      const draft = queueRef.current.shift()!;
+      runningRef.current++;
+      (async () => {
+        try {
+          const gsId = await sheetId();
+          const result = await uploadImage(draft.file, sessionId, gsId);
+          const uploaded: Uploaded = {
+            ...result,
+            id: result.id,
+            imageId: result.imageId || result.id,
+            thumbnailUrl: absolute(result.thumbnailUrl),
+            originalUrl: absolute(result.originalUrl),
+            filename: result.filename || draft.file.name,
+          };
+          const white = Boolean(result.hasWhiteBackground) && !result.hasAlpha;
+          setDrafts((prev) =>
+            prev.map((d) =>
+              d.id === draft.id
+                ? {
+                    ...d,
+                    status: "ready",
+                    uploaded,
+                    // The server's pixels are the truth — EPS and PDF can't
+                    // be measured in the browser, and SVGs come back drawn.
+                    widthPx: result.width || d.widthPx,
+                    heightPx: result.height || d.heightPx,
+                    previewUrl: d.previewUrl || uploaded.thumbnailUrl,
+                    useBgRemoved: white,
+                  }
+                : d,
+            ),
+          );
+          for (const w of result.warnings ?? []) showToast(w, "warning");
+          if (white) void takeOffBackground(draft.id, result.id);
+        } catch (err) {
+          update(draft.id, { status: "failed", error: (err as Error).message });
+        } finally {
+          runningRef.current--;
+          pump();
+        }
+      })();
+    }
+  }, [sessionId, sheetId, takeOffBackground, update]);
+
+  const readFiles = useCallback(
+    async (files: FileList) => {
+      const next: Draft[] = [];
+      for (const file of Array.from(files)) {
+        const blobUrl = URL.createObjectURL(file);
+        // Read pixels locally so sizing advice appears before the upload is done.
+        const dims = await readPixels(blobUrl);
+        next.push({
+          id: "draft_" + Math.random().toString(36).slice(2, 10),
+          file,
+          blobUrl,
+          previewUrl: dims.w ? blobUrl : "",
+          widthPx: dims.w || 1000,
+          heightPx: dims.h || 1000,
+          widthCm: 10,
+          count: 1,
+          vector: VECTOR_EXT.test(file.name),
+          status: "uploading",
+          useBgRemoved: false,
+        });
+      }
+      setDrafts((prev) => [...prev, ...next]);
+      queueRef.current.push(...next);
+      pump();
+    },
+    [pump],
+  );
+
+  /* ── Plan: film for what is on the sheet plus what is being added ── */
+
+  const plan = useMemo(() => {
+    const items: { id: string; w: number; h: number }[] = existing.map((img) => {
+      const b = imageBbox(img);
+      return { id: img.id, w: b.w, h: b.h };
+    });
+    let total = 0;
+    for (const d of drafts) {
+      if (d.status === "failed") continue;
+      const w = d.widthCm * 10;
+      const h = (d.heightPx / d.widthPx) * w;
+      for (let i = 0; i < d.count; i++) items.push({ id: `${d.id}_${i}`, w, h });
+      total += d.count;
+    }
+    if (total === 0) return null;
+    const neededMm = requiredHeightMm(items, SHEET_WIDTH_MM, gapMm);
+    let sheet = smallestSheetFor(neededMm);
+    // Never shorter than the sheet designs already sit on.
+    if (adding && sheet.heightMm < sheetSize.heightMm) {
+      sheet = SHEET_SIZES.find((s) => s.key === sheetSize.key) ?? sheet;
+    }
+    const tooBig = neededMm > SHEET_SIZES[SHEET_SIZES.length - 1]!.heightMm;
+    return { neededMm, sheet, tooBig, total, price: getSheetPrice(sheet.key) };
+  }, [drafts, existing, adding, gapMm, sheetSize]);
+
+  const uploading = drafts.filter((d) => d.status === "uploading").length;
+  const ready = drafts.filter((d) => d.status === "ready");
+  const failed = drafts.filter((d) => d.status === "failed");
+
+  const handleBuild = async () => {
+    if (ready.length === 0 || !plan || uploading > 0) return;
+    setBusy("Placerar motiven...");
+    try {
       // Pick the film length first — placement depends on it.
-      setSheetSize(plan.sheet);
+      if (!adding || plan.sheet.heightMm > sheetSize.heightMm) setSheetSize(plan.sheet);
 
-      const base = getAppProxyUrl();
-      for (let i = 0; i < drafts.length; i++) {
-        const d = drafts[i]!;
-        setBusy(`Laddar upp ${i + 1}/${drafts.length}: ${d.file.name}`);
-        const result = await uploadImage(d.file, sessionId, gsId || "");
-
-        const thumbUrl = result.thumbnailUrl?.startsWith("/")
-          ? base + result.thumbnailUrl
-          : result.thumbnailUrl;
-        const origUrl = result.originalUrl?.startsWith("/")
-          ? base + result.originalUrl
-          : result.originalUrl;
-
+      for (const d of ready) {
+        const u = d.uploaded!;
         const widthMm = d.widthCm * 10;
-        const ratio = (result.height || d.heightPx) / (result.width || d.widthPx);
-
+        const ratio = (u.height || d.heightPx) / (u.width || d.widthPx);
+        const bgOff = d.useBgRemoved && Boolean(d.bgRemovedUrl);
         const image: EditorImage = {
-          id: result.imageId || result.id,
-          dbId: result.id,
+          id: u.imageId,
+          dbId: u.id,
           groupId: "grp_" + Math.random().toString(36).slice(2, 10),
-          filename: result.filename || d.file.name,
-          thumbnailUrl: thumbUrl,
-          originalUrl: origUrl,
-          widthPx: result.width,
-          heightPx: result.height,
-          dpiX: result.dpiX || 72,
-          dpiY: result.dpiY || 72,
+          filename: u.filename,
+          thumbnailUrl: u.thumbnailUrl,
+          originalUrl: u.originalUrl,
+          widthPx: u.width,
+          heightPx: u.height,
+          dpiX: u.dpiX || 72,
+          dpiY: u.dpiY || 72,
           positionX: EDGE_MARGIN_MM,
           positionY: EDGE_MARGIN_MM,
           displayWidth: widthMm,
@@ -179,30 +304,34 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
           flipY: false,
           quantity: 1,
           marginMm: gapMm,
-          bgRemoved: result.hasAlpha || false,
-          hasWhiteBackground: result.hasWhiteBackground || false,
+          bgRemoved: bgOff || Boolean(u.hasAlpha),
+          bgRemovedUrl: bgOff ? d.bgRemovedUrl : undefined,
+          hasWhiteBackground: Boolean(u.hasWhiteBackground) && !bgOff,
           placed: true,
         };
         addImage(image);
-
-        if (d.count > 1) {
-          setBusy(`Placerar ${d.count} kopior...`);
-          // Ask groupKey for the key rather than assuming it — copies are
-          // grouped by database row, not by the id generated here.
-          setGroupCount(groupKey(image), d.count);
-        }
+        // Ask groupKey for the key rather than assuming it — copies are
+        // grouped by database row, not by the id generated here.
+        if (d.count > 1) setGroupCount(groupKey(image), d.count);
       }
 
-      setBusy("Ordnar arket...");
-      arrangeAll();
+      // A fresh sheet gets the server's tight nesting; designs added to a
+      // sheet already in progress find free room on their own, and the
+      // whole sheet is only re-arranged if something ended up overlapping.
+      const state = useEditorStore.getState();
+      const stats = computeSheetStats(state.images, state.sheetSize);
+      if (!adding || !stats.ready) {
+        setBusy("Ordnar arket...");
+        await arrangeSheet();
+      }
 
-      const after = groupImages(useEditorStore.getState().images);
-      const placedCount = after.reduce((n, g) => n + g.count, 0);
-      if (placedCount < plan.total) {
-        showToast(
-          `${plan.total - placedCount} kopior fick inte plats — välj ett längre ark.`,
-          "warning",
-        );
+      const placedCount = groupImages(useEditorStore.getState().images).reduce((n, g) => n + g.count, 0);
+      const expected = existing.length + ready.reduce((n, d) => n + d.count, 0);
+      if (placedCount < expected) {
+        showToast(`${expected - placedCount} kopior fick inte plats — lägg dem på ett nytt ark.`, "warning");
+      }
+      if (failed.length > 0) {
+        showToast(`${failed.length} fil${failed.length > 1 ? "er" : ""} kunde inte laddas upp och lades inte till.`, "error");
       }
       onClose();
     } catch (err) {
@@ -212,44 +341,54 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
     }
   };
 
-  // Every preview holds a blob alive until it is revoked.
+  // Every local preview holds a blob alive until it is revoked.
   const draftsRef = useRef<Draft[]>([]);
   draftsRef.current = drafts;
   useEffect(
     () => () => {
-      for (const d of draftsRef.current) URL.revokeObjectURL(d.previewUrl);
+      for (const d of draftsRef.current) URL.revokeObjectURL(d.blobUrl);
     },
     [],
   );
 
-  const update = (id: string, patch: Partial<Draft>) =>
-    setDrafts((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)));
+  const applyToAll = (patch: Partial<Pick<Draft, "widthCm" | "count">>) =>
+    setDrafts((prev) => prev.map((d) => ({ ...d, ...patch })));
+
+  const buildLabel = busy
+    ? busy
+    : uploading > 0
+      ? `Laddar upp ${drafts.length - uploading}/${drafts.length}...`
+      : adding
+        ? "Lägg till på arket"
+        : "Bygg mitt ark";
+  const canBuild = Boolean(plan) && ready.length > 0 && uploading === 0 && !busy;
 
   return (
     <div style={S.backdrop}>
       <div style={S.modal} className="gs-wizard">
         <div style={S.head}>
           <div>
-            <h2 style={S.title}>Bygg ditt gang sheet</h2>
+            <h2 style={S.title}>{adding ? "Lägg till motiv" : "Bygg ditt gang sheet"}</h2>
             <p style={S.sub}>
-              Ladda upp, säg hur stort och hur många — vi räknar ut hur mycket
-              film du behöver.
+              {adding
+                ? "Välj filerna, säg hur stora och hur många — vi lägger dem på arket och gör det längre om det behövs."
+                : "Ladda upp, säg hur stort och hur många — vi räknar ut hur mycket film du behöver."}
             </p>
           </div>
-          <button onClick={onClose} style={S.skip} title="Hoppa över och placera själv">
-            Placera själv →
+          <button onClick={onClose} style={S.skip} title={adding ? "Stäng" : "Hoppa över och placera själv"}>
+            {adding ? "Stäng" : "Placera själv →"}
           </button>
         </div>
 
         <div style={S.body}>
           {/* Step 1 — upload */}
-          <Step n={1} title="Ladda upp dina designs" done={drafts.length > 0} />
+          <Step n={1} title="Ladda upp dina motiv — välj gärna alla på en gång" done={drafts.length > 0} />
           <div
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();
-              if (e.dataTransfer.files.length) readFiles(e.dataTransfer.files);
+              if (e.dataTransfer.files.length) void readFiles(e.dataTransfer.files);
             }}
             style={S.drop}
           >
@@ -259,16 +398,19 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
               multiple
               accept="image/png,image/jpeg,image/svg+xml,image/tiff,image/webp,application/pdf,.eps,.ai"
               style={{ display: "none" }}
-              onChange={(e) => e.target.files && readFiles(e.target.files)}
+              onChange={(e) => {
+                if (e.target.files?.length) void readFiles(e.target.files);
+                e.target.value = "";
+              }}
             />
             <div style={S.dropPlus}>+</div>
             <p style={S.dropTitle}>Dra filer hit eller klicka</p>
-            <p style={S.dropHint}>PNG, JPG, SVG, TIFF, PDF, EPS — max 500 MB</p>
+            <p style={S.dropHint}>PNG, JPG, SVG, TIFF, PDF, EPS — markera flera filer samtidigt</p>
           </div>
 
           {/* A finished 58 cm sheet does not need building — hand them to
               the upload flow instead of making them lay it out again. */}
-          {hasUploadFlow && (
+          {hasUploadFlow && !adding && (
             <p style={S.readyHint}>
               Har du redan ett färdigt ark på 58 cm bredd?{" "}
               <button onClick={openUploadFlow} style={S.readyLink}>
@@ -277,10 +419,11 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
             </p>
           )}
 
-          {/* Step 2 + 3 — size and count per design */}
+          {/* Step 2 — size and count, for all at once or one by one */}
           {drafts.length > 0 && (
             <>
-              <Step n={2} title="Hur stort och hur många?" done={false} />
+              <Step n={2} title="Hur stora och hur många?" done={false} />
+              {drafts.length > 1 && <BulkBar onApply={applyToAll} />}
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {drafts.map((d) => (
                   <DraftRow
@@ -289,7 +432,8 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
                     gapMm={gapMm}
                     onChange={(patch) => update(d.id, patch)}
                     onRemove={() => {
-                      URL.revokeObjectURL(d.previewUrl);
+                      URL.revokeObjectURL(d.blobUrl);
+                      queueRef.current = queueRef.current.filter((q) => q.id !== d.id);
                       setDrafts((prev) => prev.filter((x) => x.id !== d.id));
                     }}
                   />
@@ -304,7 +448,9 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
           {plan ? (
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={S.planMain}>
-                {plan.total} motiv → <strong>{plan.sheet.label}</strong>
+                {adding ? `${existing.length} + ${plan.total}` : plan.total} motiv →{" "}
+                <strong>{plan.sheet.label.replace(/ \(.*\)$/, "")}</strong>
+                {plan.price !== null && <span style={{ color: theme.textMuted }}> · {plan.price} kr</span>}
               </p>
               <p style={S.planSub}>
                 {plan.tooBig
@@ -314,22 +460,82 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
             </div>
           ) : (
             <p style={{ ...S.planSub, flex: 1 }}>
-              Ladda upp minst en design för att komma igång.
+              Ladda upp minst ett motiv för att komma igång.
             </p>
           )}
           <button
-            onClick={handleBuild}
-            disabled={!plan || busy !== null}
+            onClick={() => void handleBuild()}
+            disabled={!canBuild}
             style={{
               ...S.cta,
-              background: plan && !busy ? theme.accent : theme.bgInput,
-              color: plan && !busy ? "#fff" : theme.textDim,
-              cursor: plan && !busy ? "pointer" : "not-allowed",
+              background: canBuild ? theme.accent : theme.bgInput,
+              color: canBuild ? "#fff" : theme.textDim,
+              cursor: canBuild ? "pointer" : "not-allowed",
             }}
           >
-            {busy ?? "Bygg mitt ark"}
+            {buildLabel}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** One width and count for every design — the "50 logos at 8 cm" case. */
+function BulkBar({ onApply }: { onApply: (patch: { widthCm?: number; count?: number }) => void }) {
+  const [width, setWidth] = useState("");
+  const [count, setCount] = useState("");
+  const apply = () => {
+    const w = parseFloat(width.replace(",", "."));
+    const c = parseInt(count, 10);
+    onApply({
+      ...(Number.isFinite(w) && w > 0 ? { widthCm: Math.min(58, Math.max(1, w)) } : {}),
+      ...(Number.isFinite(c) && c > 0 ? { count: Math.min(5000, c) } : {}),
+    });
+  };
+  return (
+    <div style={S.bulk}>
+      <span style={S.bulkTitle}>Samma för alla</span>
+      <div style={S.presets}>
+        {SIZE_PRESETS.map((p) => (
+          <button
+            key={p.label}
+            onClick={() => {
+              setWidth(String(p.cm));
+              onApply({ widthCm: p.cm });
+            }}
+            style={{ ...S.preset, borderColor: theme.border, background: theme.bgCard, color: theme.textMuted }}
+          >
+            {p.label} {String(p.cm).replace(".", ",")} cm
+          </button>
+        ))}
+      </div>
+      <div style={S.fields}>
+        <Field label="Bredd (cm)">
+          <input
+            type="number"
+            min={1}
+            max={58}
+            step={0.5}
+            value={width}
+            placeholder="t.ex. 8"
+            onChange={(e) => setWidth(e.target.value)}
+            style={S.input}
+          />
+        </Field>
+        <Field label="Antal av varje">
+          <input
+            type="number"
+            min={1}
+            value={count}
+            placeholder="t.ex. 20"
+            onChange={(e) => setCount(e.target.value)}
+            style={S.input}
+          />
+        </Field>
+        <button onClick={apply} style={S.bulkApply}>
+          Använd på alla
+        </button>
       </div>
     </div>
   );
@@ -349,7 +555,9 @@ function DraftRow({
   const widthMm = draft.widthCm * 10;
   const heightMm = (draft.heightPx / draft.widthPx) * widthMm;
   const dpi = calculateDisplayDpi(draft.widthPx, widthMm);
-  const warning = dpiWarning(dpi);
+  const warning = draft.vector || draft.status !== "ready" ? null : dpiWarning(dpi);
+  // Largest width that still prints sharp, for a one-click fix.
+  const sharpCm = Math.floor((draft.widthPx / DPI_THRESHOLDS.good) * 2.54 * 2) / 2;
 
   // How many of this design alone would fill one metre — the answer to
   // "how many do I get for the minimum order?"
@@ -360,86 +568,148 @@ function DraftRow({
     gapMm,
   ).total;
 
+  const bgOff = draft.useBgRemoved && draft.bgRemovedUrl;
+  const thumb = bgOff ? draft.bgRemovedUrl! : draft.previewUrl || draft.uploaded?.thumbnailUrl || "";
+
   return (
-    <div style={S.row}>
-      <img src={draft.previewUrl} alt="" style={S.thumb} />
+    <div style={{ ...S.row, borderColor: draft.status === "failed" ? theme.danger : theme.border }}>
+      <div style={S.thumbWrap}>
+        {thumb ? <img src={thumb} alt="" style={S.thumb} /> : <span style={S.thumbEmpty}>{draft.file.name.split(".").pop()?.toUpperCase()}</span>}
+        {draft.status === "uploading" && <span style={S.thumbBusy}><Spinner /></span>}
+      </div>
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={S.rowHead}>
           <span style={S.rowName}>{draft.file.name}</span>
+          <span style={{ ...S.status, color: draft.status === "failed" ? theme.danger : draft.status === "ready" ? theme.success : theme.textDim }}>
+            {draft.status === "uploading" ? "Laddar upp…" : draft.status === "ready" ? "✓" : "Misslyckades"}
+          </span>
           <button onClick={onRemove} style={S.rowRemove} title="Ta bort">
             ×
           </button>
         </div>
 
-        <div style={S.presets}>
-          {SIZE_PRESETS.map((p) => {
-            const active = Math.abs(p.cm - draft.widthCm) < 0.05;
-            return (
-              <button
-                key={p.label}
-                onClick={() => onChange({ widthCm: p.cm })}
-                style={{
-                  ...S.preset,
-                  borderColor: active ? theme.accent : theme.border,
-                  background: active ? theme.accentBg : theme.bgCard,
-                  color: active ? theme.accent : theme.textMuted,
-                  fontWeight: active ? 600 : 400,
-                }}
-              >
-                {p.label}
-              </button>
-            );
-          })}
-        </div>
+        {draft.status === "failed" ? (
+          <p style={S.warn}>Filen kunde inte laddas upp. Prova att spara den som PNG och ladda upp igen.</p>
+        ) : (
+          <>
+            <div style={S.presets}>
+              {SIZE_PRESETS.map((p) => {
+                const active = Math.abs(p.cm - draft.widthCm) < 0.05;
+                return (
+                  <button
+                    key={p.label}
+                    onClick={() => onChange({ widthCm: p.cm })}
+                    style={{
+                      ...S.preset,
+                      borderColor: active ? theme.accent : theme.border,
+                      background: active ? theme.accentBg : theme.bgCard,
+                      color: active ? theme.accent : theme.textMuted,
+                      fontWeight: active ? 600 : 400,
+                    }}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
 
-        <div style={S.fields}>
-          <Field label="Bredd (cm)">
-            <input
-              type="number"
-              min={1}
-              max={58}
-              step={0.5}
-              value={draft.widthCm}
-              onChange={(e) =>
-                onChange({
-                  widthCm: Math.min(58, Math.max(1, parseFloat(e.target.value) || 1)),
-                })
-              }
-              style={S.input}
-            />
-          </Field>
-          <Field label="Antal">
-            <input
-              type="number"
-              min={1}
-              max={500}
-              value={draft.count}
-              onChange={(e) =>
-                onChange({ count: Math.max(1, parseInt(e.target.value) || 1) })
-              }
-              style={S.input}
-            />
-          </Field>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <span style={S.fieldLabel}>Blir</span>
-            <p style={S.computed}>
-              {draft.widthCm.toFixed(1)} × {(heightMm / 10).toFixed(1)} cm
-              <span style={{ color: getDpiColor(dpi), fontWeight: 600, marginLeft: 6 }}>
-                {dpi} DPI
-              </span>
+            <div style={S.fields}>
+              <Field label="Bredd (cm)">
+                <input
+                  type="number"
+                  min={1}
+                  max={58}
+                  step={0.5}
+                  value={draft.widthCm}
+                  onChange={(e) =>
+                    onChange({
+                      widthCm: Math.min(58, Math.max(1, parseFloat(e.target.value) || 1)),
+                    })
+                  }
+                  style={S.input}
+                />
+              </Field>
+              <Field label="Antal">
+                <input
+                  type="number"
+                  min={1}
+                  max={5000}
+                  value={draft.count}
+                  onChange={(e) =>
+                    onChange({ count: Math.max(1, parseInt(e.target.value) || 1) })
+                  }
+                  style={S.input}
+                />
+              </Field>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span style={S.fieldLabel}>Blir</span>
+                <p style={S.computed}>
+                  {draft.widthCm.toFixed(1)} × {(heightMm / 10).toFixed(1)} cm
+                  {draft.status === "ready" &&
+                    (draft.vector ? (
+                      <span style={{ color: theme.success, fontWeight: 600, marginLeft: 6 }}>Vektor</span>
+                    ) : (
+                      <span style={{ color: getDpiColor(dpi), fontWeight: 600, marginLeft: 6 }}>
+                        {dpi} DPI
+                      </span>
+                    ))}
+                </p>
+              </div>
+            </div>
+
+            <p style={S.hint}>
+              {perMetre > 0
+                ? `Ca ${perMetre} st ryms på 1 meter film.`
+                : "Motivet är för stort för arkets bredd."}
             </p>
-          </div>
-        </div>
-
-        <p style={S.hint}>
-          {perMetre > 0
-            ? `Ca ${perMetre} st ryms på 1 meter film.`
-            : "Motivet är för stort för arkets bredd."}
-        </p>
-        {warning && <p style={S.warn}>⚠ {warning}</p>}
+            {warning && (
+              <p style={S.warn}>
+                ⚠ {warning}
+                {sharpCm >= 1 && sharpCm < draft.widthCm && (
+                  <>
+                    {" "}
+                    <button onClick={() => onChange({ widthCm: sharpCm })} style={S.inlineLink}>
+                      Använd {String(sharpCm).replace(".", ",")} cm
+                    </button>
+                  </>
+                )}
+              </p>
+            )}
+            {draft.bgBusy && <p style={S.note}>Tar bort vit bakgrund…</p>}
+            {draft.bgRemovedUrl && !draft.bgBusy && (
+              <p style={S.note}>
+                {draft.useBgRemoved
+                  ? "Vit bakgrund borttagen — annars trycks den som en vit ruta."
+                  : "Den vita bakgrunden behålls och trycks som vitt."}{" "}
+                <button
+                  onClick={() => onChange({ useBgRemoved: !draft.useBgRemoved })}
+                  style={S.inlineLink}
+                >
+                  {draft.useBgRemoved ? "Behåll bakgrunden" : "Ta bort den"}
+                </button>
+              </p>
+            )}
+          </>
+        )}
       </div>
     </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      style={{
+        width: 16,
+        height: 16,
+        border: `2px solid ${theme.accent}40`,
+        borderTopColor: theme.accent,
+        borderRadius: "50%",
+        animation: "gs-spin 0.8s linear infinite",
+        display: "inline-block",
+      }}
+    />
   );
 }
 
@@ -461,7 +731,7 @@ function Step({ n, title, done }: { n: number; title: string; done: boolean }) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ width: 88 }}>
+    <div style={{ width: 96 }}>
       <span style={S.fieldLabel}>{label}</span>
       {children}
     </div>
@@ -573,13 +843,69 @@ const S: Record<string, React.CSSProperties> = {
     background: theme.bgCard,
   },
   thumb: {
+    width: "100%",
+    height: "100%",
+    objectFit: "contain",
+  },
+  thumbWrap: {
+    position: "relative",
     width: 56,
     height: 56,
-    objectFit: "contain",
-    borderRadius: theme.radiusSm,
-    background: theme.bgInput,
     flexShrink: 0,
+    borderRadius: theme.radiusSm,
+    // Checks show what is transparent — the point of removing a background.
+    background: "repeating-conic-gradient(#e5e5e5 0% 25%, #fff 0% 50%) 50%/10px 10px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
   },
+  thumbEmpty: { fontSize: 10, fontWeight: 700, color: theme.textDim },
+  thumbBusy: {
+    position: "absolute",
+    inset: 0,
+    background: "rgba(255,255,255,0.6)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  status: { fontSize: theme.fontSize.labelMd, flexShrink: 0 },
+  bulk: {
+    padding: 12,
+    border: `1px dashed ${theme.accent}`,
+    borderRadius: theme.radius,
+    background: theme.accentBg,
+  },
+  bulkTitle: {
+    fontSize: theme.fontSize.bodySm,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.text,
+  },
+  bulkApply: {
+    alignSelf: "flex-end",
+    padding: "8px 12px",
+    border: "none",
+    borderRadius: 6,
+    background: theme.accent,
+    color: "#fff",
+    fontSize: theme.fontSize.bodySm,
+    fontFamily: theme.fontFamily,
+    fontWeight: theme.fontWeight.semibold,
+    cursor: "pointer",
+  },
+  note: { margin: "4px 0 0", fontSize: theme.fontSize.labelMd, color: theme.textMuted },
+  inlineLink: {
+    border: "none",
+    background: "transparent",
+    padding: 0,
+    color: theme.accent,
+    fontSize: theme.fontSize.labelMd,
+    fontFamily: theme.fontFamily,
+    fontWeight: theme.fontWeight.semibold,
+    cursor: "pointer",
+    textDecoration: "underline",
+  },
+
   rowHead: { display: "flex", alignItems: "center", gap: 8 },
   rowName: {
     flex: 1,

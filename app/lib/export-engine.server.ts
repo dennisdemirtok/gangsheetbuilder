@@ -45,7 +45,8 @@ export async function exportGangSheet(gangSheetId: string): Promise<{
 
     // Use bg-removed version if available, otherwise original.
     // Vector originals (EPS/AI/PS) are resolved to their rasterized PNG.
-    const imageUrl = image.bgRemovedUrl || image.originalUrl;
+    // The background-free version only when the customer chose it.
+    const imageUrl = image.bgRemoved && image.bgRemovedUrl ? image.bgRemovedUrl : image.originalUrl;
 
     // Extract the R2 key from the URL
     const key = resolveRasterKey(extractR2Key(imageUrl));

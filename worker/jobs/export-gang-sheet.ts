@@ -178,7 +178,10 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
     }
 
     // Vector originals (EPS/AI/PS) are resolved to their rasterized PNG.
-    const imageKey = resolveRasterKey(image.bgRemovedUrl || image.originalUrl);
+    // The background-free version only when the customer chose it.
+    const imageKey = resolveRasterKey(
+      image.bgRemoved && image.bgRemovedUrl ? image.bgRemovedUrl : image.originalUrl,
+    );
     const buffer = await downloadFromR2(imageKey);
 
     const targetWidth = mmToPx(image.displayWidth);

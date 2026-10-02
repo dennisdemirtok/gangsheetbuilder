@@ -100,6 +100,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
               flipY: img.flipY || false,
               quantity: placements ? placements.length : img.quantity || 1,
               placementsJson: placements ?? Prisma.DbNull,
+              // Which version prints: the editor says whether the customer
+              // kept the background-free one. Older editors don't send it.
+              ...(typeof img.useBgRemoved === "boolean" ? { bgRemoved: img.useBgRemoved } : {}),
             },
           });
         } catch (imgErr) {
