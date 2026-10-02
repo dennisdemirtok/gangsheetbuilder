@@ -18,7 +18,7 @@ const extensionAssets = {
       if (!/^[\w.-]+$/.test(name)) return next();
       const file = path.join(dir, name);
       if (!fs.existsSync(file)) return next();
-      res.setHeader("Content-Type", name.endsWith(".woff2") ? "font/woff2" : "application/octet-stream");
+      res.setHeader("Content-Type", name.endsWith(".json") ? "application/json" : "application/octet-stream");
       fs.createReadStream(file).pipe(res);
     });
   },

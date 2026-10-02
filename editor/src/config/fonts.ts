@@ -4,10 +4,13 @@
  * The old list named fonts the page never loaded — Bebas Neue, Montserrat,
  * Lobster and the rest all drew in the browser's fallback, so the text a
  * customer picked was not the text that printed. These ship with the editor
- * (font-<id>.woff2 next to editor.iife.js on Shopify's CDN) and are loaded
- * before anything is drawn. One face each, Latin with åäö, all free for
- * commercial use: SIL OFL 1.1 or Apache 2.0, from Google Fonts via
- * Fontsource, each file carrying its licence in its own name table.
+ * on Shopify's CDN and are loaded before anything is drawn. One face each,
+ * Latin with åäö, all free for commercial use: SIL OFL 1.1 or Apache 2.0,
+ * from Google Fonts via Fontsource.
+ *
+ * Theme app extensions only take .js/.json/.css/images/.wasm as assets, so
+ * each font is font-<id>.json next to editor.iife.js:
+ * { family, copyright, license, woff2: <base64 of the .woff2 file> }.
  */
 
 export type FontCategory = "bold" | "sport" | "script" | "fun" | "retro";
@@ -90,8 +93,18 @@ const BUNDLE_URL: string | null = (() => {
 })();
 
 function fontUrl(font: TextFont): string {
-  const file = `font-${font.id}.woff2`;
+  const file = `font-${font.id}.json`;
   return BUNDLE_URL ? new URL(file, BUNDLE_URL).href : `/ext-assets/${file}`;
+}
+
+async function fetchFontData(font: TextFont): Promise<ArrayBuffer> {
+  const res = await fetch(fontUrl(font));
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const { woff2 } = (await res.json()) as { woff2: string };
+  const raw = atob(woff2);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes.buffer;
 }
 
 const loads = new Map<string, Promise<boolean>>();
@@ -100,19 +113,20 @@ const loads = new Map<string, Promise<boolean>>();
 export function loadFont(font: TextFont): Promise<boolean> {
   let pending = loads.get(font.id);
   if (!pending) {
-    const face = new FontFace(fontFamily(font), `url("${fontUrl(font)}") format("woff2")`);
-    pending = face.load().then(
-      (loaded) => {
-        document.fonts.add(loaded);
-        return true;
-      },
-      (err) => {
-        console.warn("[GS] Font failed to load:", font.id, err);
-        // Let the next attempt try again rather than remember the failure.
-        loads.delete(font.id);
-        return false;
-      },
-    );
+    pending = fetchFontData(font)
+      .then((data) => new FontFace(fontFamily(font), data).load())
+      .then(
+        (loaded) => {
+          document.fonts.add(loaded);
+          return true;
+        },
+        (err) => {
+          console.warn("[GS] Font failed to load:", font.id, err);
+          // Let the next attempt try again rather than remember the failure.
+          loads.delete(font.id);
+          return false;
+        },
+      );
     loads.set(font.id, pending);
   }
   return pending;
