@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useEditorStore } from "../../store/editorStore";
-import { getAppProxyUrl } from "../../services/api";
+import { buildPlacementsPayload, getAppProxyUrl } from "../../services/api";
 import { theme } from "../../styles/theme";
 
 /**
@@ -11,7 +11,7 @@ import { theme } from "../../styles/theme";
 export function DownloadButton() {
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState("");
-  const { images, sheetSize, sessionId, gangSheetId } = useEditorStore();
+  const { images, sheetSize, sessionId, gangSheetId, filmType } = useEditorStore();
 
   const handleDownload = async () => {
     if (images.length === 0) return;
@@ -23,26 +23,16 @@ export function DownloadButton() {
 
       // Step 1: Save current state to backend
       setProgress("Sparar layout...");
+      // The same payload as the cart: one entry per design with every
+      // copy's place. One entry per copy made the copies overwrite each
+      // other and wiped the saved placements.
       if (gangSheetId) {
         await fetch(`${base}/api/gang-sheet/${gangSheetId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            widthMm: sheetSize.widthMm,
-            heightMm: sheetSize.heightMm,
-            images: images.map((img) => ({
-              id: img.dbId || img.id,
-              positionX: img.positionX,
-              positionY: img.positionY,
-              displayWidth: img.displayWidth,
-              displayHeight: img.displayHeight,
-              rotation: img.rotation,
-              flipX: img.flipX,
-              flipY: img.flipY,
-              quantity: img.quantity,
-              marginMm: img.marginMm ?? 5,
-            })),
-          }),
+          body: JSON.stringify(
+            buildPlacementsPayload(images.filter((img) => img.placed), sheetSize, filmType),
+          ),
         });
       }
 
