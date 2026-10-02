@@ -52,6 +52,7 @@ export interface WebhookOrder {
   phone?: string | null;
   financial_status?: string | null;
   payment_terms?: unknown;
+  tags?: string | null;
   company?: { id?: number; location_id?: number } | null;
   customer?: { first_name?: string | null; last_name?: string | null } | null;
   shipping_address?: WebhookAddress | null;
@@ -59,10 +60,15 @@ export interface WebhookOrder {
   line_items: WebhookLineItem[];
 }
 
-/** A B2B order paid by invoice: it has payment terms or belongs to a company. */
+/**
+ * An order paid by invoice: it has payment terms, belongs to a company, or is
+ * tagged "faktura" (a private customer on invoice, entered by hand — payment
+ * terms can only be added after such an order exists).
+ */
 export function isInvoiceOrder(order: WebhookOrder): boolean {
   const paid = order.financial_status === "paid" || order.financial_status === "partially_refunded";
-  return !paid && (Boolean(order.payment_terms) || Boolean(order.company));
+  const tagged = (order.tags || "").split(",").some((t) => t.trim().toLowerCase() === "faktura");
+  return !paid && (Boolean(order.payment_terms) || Boolean(order.company) || tagged);
 }
 
 export async function intakeOrder(
