@@ -40,6 +40,12 @@ async function renderPreview(buffer: Buffer, ext: string): Promise<{ png: Buffer
       const meta = await sharp(raster).metadata();
       return { png: raster, widthPx: meta.width || 0, heightPx: meta.height || 0 };
     }
+    if (ext === "svg") {
+      // The server's libvips is built without SVG support; resvg renders it.
+      const { Resvg } = await import("@resvg/resvg-js");
+      const png = new Resvg(buffer, { fitTo: { mode: "width", value: 1600 } }).render().asPng();
+      return { png: Buffer.from(png), widthPx: 0, heightPx: 0 };
+    }
     const meta = await sharp(buffer, { limitInputPixels: false }).metadata();
     return { png: buffer, widthPx: meta.width || 0, heightPx: meta.height || 0 };
   } catch (error) {
