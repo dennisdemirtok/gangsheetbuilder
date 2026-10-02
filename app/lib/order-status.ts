@@ -26,7 +26,14 @@ interface StatusInfo {
   hint: string;
 }
 
-export const ORDER_STATUS: Record<OrderStatus, StatusInfo> = {
+/**
+ * Not a production step but a hold: the shop has asked the customer
+ * something (a broken file, a missing size) and waits for the answer. Set by
+ * hand on the order page; shown instead of the production status.
+ */
+export type DisplayStatus = OrderStatus | "awaiting";
+
+export const ORDER_STATUS: Record<DisplayStatus, StatusInfo> = {
   draft: {
     label: "Draft",
     tone: undefined,
@@ -58,11 +65,16 @@ export const ORDER_STATUS: Record<OrderStatus, StatusInfo> = {
     tone: undefined,
     hint: "On its way to the customer.",
   },
+  awaiting: {
+    label: "Waiting on customer",
+    tone: "attention",
+    hint: "Waiting for the customer to reply.",
+  },
 };
 
 export function statusInfo(status: string): StatusInfo {
   return (
-    ORDER_STATUS[status as OrderStatus] ?? {
+    ORDER_STATUS[status as DisplayStatus] ?? {
       label: status,
       tone: undefined,
       hint: "",
@@ -78,11 +90,16 @@ export const OPEN_STATUSES: OrderStatus[] = [
   "printed",
 ];
 
-/** Filter options for the order list, in workflow order. */
+/**
+ * Tabs of the order list. Every order is under exactly one of them. "To do"
+ * is what the shop acts on: ready to print and not waiting on the customer.
+ * It used to be everything not shipped, which listed orders sitting with the
+ * print shop as if something had to be done about them.
+ */
 export const STATUS_FILTERS: { label: string; value: string }[] = [
-  { label: "To do", value: "open" },
+  { label: "To do", value: "exported" },
+  { label: "Waiting on customer", value: "awaiting" },
   { label: "Preparing file", value: "pending" },
-  { label: "Ready to print", value: "exported" },
   { label: "With print shop", value: "downloaded" },
   { label: "Printed", value: "printed" },
   { label: "Shipped", value: "shipped" },

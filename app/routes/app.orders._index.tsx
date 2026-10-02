@@ -36,7 +36,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const url = new URL(request.url);
   // The shop opens this to see what still needs doing, not the archive.
-  const statusFilter = url.searchParams.get("status") || "open";
+  const statusFilter = url.searchParams.get("status") || "exported";
   const query = (url.searchParams.get("q") || "").trim();
   const page = Math.max(1, parseInt(url.searchParams.get("page") || "1") || 1);
 
@@ -48,7 +48,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       query,
       page,
       pageSize: PAGE_SIZE,
-      oldestFirst: statusFilter === "open",
+      oldestFirst: ["open", "exported", "awaiting", "downloaded", "printed"].includes(statusFilter),
     }),
     orderStatusCounts(session.shop),
   ]);
@@ -246,15 +246,17 @@ export default function OrdersPage() {
               title={
                 query
                   ? "No matching orders"
-                  : statusFilter === "open"
-                    ? "All caught up"
-                    : "No orders here"
+                  : statusFilter === "exported"
+                    ? "Nothing to print"
+                    : statusFilter === "awaiting"
+                      ? "Not waiting on anyone"
+                      : "No orders here"
               }
               description={
                 query
                   ? "Try another order number or name."
-                  : statusFilter === "open"
-                    ? "New orders appear here as soon as they are paid."
+                  : statusFilter === "exported"
+                    ? "Orders appear here when their files are ready."
                     : undefined
               }
               withIllustration

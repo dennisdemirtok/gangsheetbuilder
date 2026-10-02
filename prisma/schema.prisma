@@ -80,6 +80,9 @@ model GangSheet {
   sentToPrintShopTo String?   @map("sent_to_print_shop_to")
   /// When the customer was told production has started — sent once.
   productionMailSentAt DateTime? @map("production_mail_sent_at")
+  /// Set while the shop waits for the customer (e.g. to fix a file); on every job of the order.
+  awaitingCustomerSince DateTime? @map("awaiting_customer_since")
+  awaitingCustomerNote  String?   @map("awaiting_customer_note")
   /// Shopify fulfillment carrying the tracking to the customer, or why it failed.
   shopifyFulfillmentId String? @map("shopify_fulfillment_id")
   fulfillmentError  String?  @map("fulfillment_error")

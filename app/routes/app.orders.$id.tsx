@@ -96,6 +96,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   ]);
 
   const orderStatus = orderStatusOf(jobs);
+  const onHold = jobs.find((j) => j.awaitingCustomerSince);
+  const awaiting =
+    onHold && orderStatus !== "shipped"
+      ? { since: formatDateTime(onHold.awaitingCustomerSince!), note: onHold.awaitingCustomerNote }
+      : null;
 
   const shipping = summary
     ? {
@@ -120,6 +125,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   return json({
     gangSheet: { ...gangSheet, status: orderStatus, notes },
     orderStatus,
+    awaiting,
     orderedAt: formatDateTime(gangSheet.createdAt),
     hasLabel: Boolean(gangSheet.shippingLabelKey),
     shipping,
@@ -384,11 +390,35 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     ? { shopDomain: session.shop, shopifyOrderId: gangSheet.shopifyOrderId }
     : { id: gangSheet.id };
 
-  if (action === "mark_printed") {
+  // Moving the order on means the customer has answered.
+  const resume = () =>
+    prisma.gangSheet.updateMany({
+      where: { ...wholeOrder, awaitingCustomerSince: { not: null } },
+      data: { awaitingCustomerSince: null, awaitingCustomerNote: null },
+    });
+
+  if (action === "set_awaiting") {
+    const note = String(formData.get("note") || "").trim().slice(0, 500);
+    await prisma.gangSheet.updateMany({
+      where: { ...wholeOrder, status: { not: "shipped" } },
+      data: { awaitingCustomerSince: new Date(), awaitingCustomerNote: note || null },
+    });
+    await prisma.gangSheetNote.create({
+      data: { gangSheetId: gangSheet.id, author: session.shop, body: `Waiting on customer${note ? `: ${note}` : ""}` },
+    });
+    return json({ success: true, notice: "Marked as waiting on customer" });
+  } else if (action === "clear_awaiting") {
+    await resume();
+    await prisma.gangSheetNote.create({
+      data: { gangSheetId: gangSheet.id, author: session.shop, body: "Customer replied" },
+    });
+    return json({ success: true, notice: "Back in the queue" });
+  } else if (action === "mark_printed") {
     await prisma.gangSheet.updateMany({
       where: { ...wholeOrder, status: { not: "shipped" } },
       data: { status: "printed" },
     });
+    await resume();
   } else if (action === "mark_shipped") {
     const tracking = String(formData.get("trackingNumber") || "");
     if (!gangSheet.shopifyOrderId) {
@@ -404,6 +434,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       trackingNumber: tracking,
       notifyCustomer: formData.get("notifyCustomer") === "1",
     });
+    await resume();
     return json(
       result.ok
         ? { success: true, notice: result.notified ? "Marked as shipped · customer emailed the tracking." : "Marked as shipped." }
@@ -468,6 +499,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       notifyCustomer: formData.get("notifyCustomer") === "1",
     });
     if (!sent.ok) return json({ errors: sent.errors });
+    await resume();
     return json({
       success: true,
       errors: sent.errors,
@@ -508,11 +540,11 @@ interface ShippingAddress {
 }
 
 export default function OrderDetailPage() {
-  const { gangSheet, orderStatus, orderedAt, hasLabel, shipping, jobs } =
+  const { gangSheet, orderStatus, awaiting, orderedAt, hasLabel, shipping, jobs } =
     useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const address = (gangSheet.shippingAddress as ShippingAddress | null) || null;
-  const status = statusInfo(orderStatus);
+  const status = statusInfo(awaiting ? "awaiting" : orderStatus);
   const hasFiles = jobs.some((j) => j.hasFile);
   const missing = jobs.filter((j) => j.missingFile).length;
   const lowRes = jobs.filter((j) => j.dpi != null && j.dpi < 200).length;
@@ -609,9 +641,27 @@ export default function OrderDetailPage() {
                 <Text as="h2" variant="headingMd">
                   Next step
                 </Text>
-                <Text as="p" variant="bodyMd">
-                  {nextStep}
-                </Text>
+                {awaiting ? (
+                  <Banner
+                    tone="warning"
+                    title={`Waiting on the customer since ${awaiting.since}`}
+                  >
+                    <BlockStack gap="200">
+                      {awaiting.note && <Text as="p">{awaiting.note}</Text>}
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        The order is out of the To do list until they reply.
+                      </Text>
+                      <statusFetcher.Form method="post">
+                        <input type="hidden" name="action" value="clear_awaiting" />
+                        <Button submit loading={statusBusy}>Customer replied</Button>
+                      </statusFetcher.Form>
+                    </BlockStack>
+                  </Banner>
+                ) : (
+                  <Text as="p" variant="bodyMd">
+                    {nextStep}
+                  </Text>
+                )}
                 {lowRes > 0 && (
                   <Banner tone="warning">
                     {`${lowRes} motif${lowRes > 1 ? "s have" : " has"} under 200 DPI at the ordered size and may print blurry.`}
@@ -646,6 +696,8 @@ export default function OrderDetailPage() {
                     booked={gangSheet.shippingStatus === "booked"}
                   />
                 )}
+
+                {!awaiting && orderStatus !== "shipped" && orderStatus !== "draft" && <AwaitingButton />}
 
                 {orderStatus === "shipped" && (
                   <BlockStack gap="100">
@@ -926,6 +978,57 @@ function ReplaceFileButton({ jobId, label }: { jobId: string; label: string }) {
         {label}
       </Button>
     </>
+  );
+}
+
+/**
+ * Put the order on hold while the customer fixes something. A note says
+ * what was asked, so whoever opens the order later knows what to look for.
+ */
+function AwaitingButton() {
+  const fetcher = useFetcher<{ success?: boolean; notice?: string }>();
+  const shopify = useAppBridge();
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState("");
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.success) {
+      setOpen(false);
+      setNote("");
+      if (fetcher.data.notice) shopify.toast.show(fetcher.data.notice);
+    }
+  }, [fetcher.state, fetcher.data, shopify]);
+
+  return (
+    <Popover
+      active={open}
+      onClose={() => setOpen(false)}
+      activator={
+        <Button variant="plain" onClick={() => setOpen((v) => !v)}>
+          Waiting on customer…
+        </Button>
+      }
+    >
+      <Box padding="400" minWidth="300px">
+        <fetcher.Form method="post">
+          <input type="hidden" name="action" value="set_awaiting" />
+          <FormLayout>
+            <TextField
+              label="What are we waiting for?"
+              name="note"
+              value={note}
+              onChange={setNote}
+              placeholder="e.g. Asked for the logo as a vector file"
+              multiline={2}
+              autoComplete="off"
+            />
+            <Button submit variant="primary" loading={fetcher.state !== "idle"}>
+              Mark as waiting on customer
+            </Button>
+          </FormLayout>
+        </fetcher.Form>
+      </Box>
+    </Popover>
   );
 }
 

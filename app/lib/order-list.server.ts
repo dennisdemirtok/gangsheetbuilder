@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import prisma from "../db.server";
-import type { OrderStatus } from "./order-status";
+import type { DisplayStatus, OrderStatus } from "./order-status";
 
 /**
  * The print shop works per Shopify order, not per print job.
@@ -37,6 +37,7 @@ function ordersCte(shopDomain: string) {
              max(customer_name) AS customer_name,
              count(*)::int AS jobs,
              ${RANK_SQL}::int AS rank,
+             bool_or(awaiting_customer_since IS NOT NULL) AS awaiting,
              (array_agg(id ORDER BY created_at))[1] AS first_id
       FROM gangsheet_gang_sheet
       WHERE shop_domain = ${shopDomain} AND shopify_order_id IS NOT NULL
@@ -51,15 +52,23 @@ export interface OrderRow {
   orderName: string | null;
   customerName: string | null;
   jobs: number;
-  status: OrderStatus;
+  status: DisplayStatus;
 }
 
-/** "open" = anything not shipped yet; "all"; or one status. */
+/**
+ * "all"; "open" = anything not shipped; "awaiting" = on hold for the
+ * customer; or one production status. An order on hold is listed under
+ * "awaiting" only, so it does not show up as ready to print meanwhile.
+ */
 function statusFilter(status: string) {
   if (status === "all") return Prisma.sql`TRUE`;
   if (status === "open") return Prisma.sql`rank BETWEEN 1 AND 4`;
+  if (status === "awaiting") return Prisma.sql`awaiting AND rank BETWEEN 1 AND 4`;
   const rank = RANK[status as OrderStatus];
-  return rank === undefined ? Prisma.sql`TRUE` : Prisma.sql`rank = ${rank}`;
+  if (rank === undefined) return Prisma.sql`TRUE`;
+  return rank === RANK.shipped
+    ? Prisma.sql`rank = ${rank}`
+    : Prisma.sql`rank = ${rank} AND NOT awaiting`;
 }
 
 export async function listOrders(options: {
@@ -81,7 +90,7 @@ export async function listOrders(options: {
 
   const [rows, total] = await Promise.all([
     prisma.$queryRaw<
-      { order_id: string; first_id: string; created_at: Date; order_name: string | null; customer_name: string | null; jobs: number; rank: number }[]
+      { order_id: string; first_id: string; created_at: Date; order_name: string | null; customer_name: string | null; jobs: number; rank: number; awaiting: boolean }[]
     >`${ordersCte(shopDomain)}
       SELECT * FROM o ${where}
       ORDER BY created_at ${order}
@@ -98,20 +107,22 @@ export async function listOrders(options: {
       orderName: r.order_name,
       customerName: r.customer_name,
       jobs: r.jobs,
-      status: STATUS_BY_RANK[r.rank] ?? "pending",
+      status: r.awaiting && r.rank < RANK.shipped ? "awaiting" : STATUS_BY_RANK[r.rank] ?? "pending",
     })),
     total: total[0]?.n ?? 0,
   };
 }
 
-/** Orders per status, plus "open" and "all", for tabs and the queue strip. */
+/** Orders per tab (see statusFilter), plus "open" and "all". */
 export async function orderStatusCounts(shopDomain: string): Promise<Record<string, number>> {
-  const rows = await prisma.$queryRaw<{ rank: number; n: number }[]>`${ordersCte(shopDomain)}
-    SELECT rank, count(*)::int AS n FROM o GROUP BY rank`;
-  const counts: Record<string, number> = { all: 0, open: 0 };
-  for (const { rank, n } of rows) {
+  const rows = await prisma.$queryRaw<{ rank: number; awaiting: boolean; n: number }[]>`${ordersCte(shopDomain)}
+    SELECT rank, awaiting, count(*)::int AS n FROM o GROUP BY rank, awaiting`;
+  const counts: Record<string, number> = { all: 0, open: 0, awaiting: 0 };
+  for (const { rank, awaiting, n } of rows) {
     const status = STATUS_BY_RANK[rank];
-    if (status) counts[status] = n;
+    const onHold = awaiting && rank >= 1 && rank <= 4;
+    const key = onHold ? "awaiting" : status;
+    if (key) counts[key] = (counts[key] ?? 0) + n;
     counts.all += n;
     if (rank >= 1 && rank <= 4) counts.open += n;
   }

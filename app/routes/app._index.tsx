@@ -51,9 +51,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       select: { shopifyOrderId: true },
       distinct: ["shopifyOrderId"],
     }),
-    // What to work on, oldest first: the order they get printed in.
-    listOrders({ shopDomain, status: "open", pageSize: 6, oldestFirst: true }),
+    // What to act on, oldest first: ready to print and not on hold. Orders
+    // with the print shop used to be listed too, with nothing to do about them.
+    listOrders({ shopDomain, status: "exported", pageSize: 6, oldestFirst: true }),
   ]);
+  const sales = await salesSince(admin, thirtyDaysAgo);
 
   const jobs = await withOrderDetails(
     admin,
@@ -66,6 +68,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     queue: {
       pending: counts.pending ?? 0,
       exported: counts.exported ?? 0,
+      awaiting: counts.awaiting ?? 0,
       downloaded: counts.downloaded ?? 0,
       printed: counts.printed ?? 0,
     },
@@ -73,6 +76,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       orders: new Set(month.map((j) => j.shopifyOrderId)).size,
       metres: month.reduce((sum, job) => sum + filmMetres(job), 0),
       shipped: shippedThisMonth.length,
+      sales,
     },
     upNext: upNext.rows.map((row) => {
       const own = jobs.filter((j) => j.shopifyOrderId === row.orderId);
@@ -90,30 +94,86 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
+/**
+ * Sales of the whole shop (not only print orders) since a date, as Shopify
+ * counts "Total sales": what customers are charged, incl. VAT and shipping,
+ * after edits and refunds. Cancelled and test orders are left out. Null when
+ * Shopify cannot be reached, so the dashboard still loads.
+ */
+async function salesSince(
+  admin: { graphql: (query: string, options?: { variables?: Record<string, unknown> }) => Promise<Response> },
+  since: Date,
+): Promise<{ total: number; exVat: number; currency: string } | null> {
+  try {
+    let total = 0;
+    let tax = 0;
+    let currency = "SEK";
+    let after: string | null = null;
+    for (let page = 0; page < 20; page++) {
+      const res = await admin.graphql(
+        `#graphql
+        query SalesSince($q: String!, $after: String) {
+          orders(first: 250, after: $after, query: $q) {
+            nodes {
+              test
+              cancelledAt
+              currentTotalPriceSet { shopMoney { amount currencyCode } }
+              currentTotalTaxSet { shopMoney { amount } }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }`,
+        { variables: { q: `created_at:>=${since.toISOString()}`, after } },
+      );
+      const body = await res.json();
+      const orders = body.data?.orders;
+      if (!orders) return null;
+      for (const o of orders.nodes) {
+        if (o.test || o.cancelledAt) continue;
+        total += parseFloat(o.currentTotalPriceSet.shopMoney.amount);
+        tax += parseFloat(o.currentTotalTaxSet?.shopMoney.amount ?? "0");
+        currency = o.currentTotalPriceSet.shopMoney.currencyCode;
+      }
+      if (!orders.pageInfo.hasNextPage) break;
+      after = orders.pageInfo.endCursor;
+    }
+    return { total, exVat: total - tax, currency };
+  } catch (error) {
+    console.error("[dashboard] Could not sum sales:", error);
+    return null;
+  }
+}
+
+const money = (amount: number, currency: string) =>
+  amount.toLocaleString("sv-SE", { style: "currency", currency, maximumFractionDigits: 0 });
+
 /** The steps a paid sheet moves through, in the order the shop works them. */
 const STEPS = [
   { status: "pending", title: "Preparing file", hint: "Generated automatically" },
   { status: "exported", title: "Ready to print", hint: "Send to the print shop" },
-  { status: "downloaded", title: "With print shop", hint: "Mark as printed when done" },
-  { status: "printed", title: "Printed", hint: "Book pickup and ship" },
+  { status: "awaiting", title: "Waiting on customer", hint: "On hold until they reply" },
+  { status: "downloaded", title: "With print shop", hint: "Being printed" },
+  { status: "printed", title: "Printed", hint: "Ships at pickup" },
 ] as const;
 
 export default function Dashboard() {
   const { queue, month, upNext } = useLoaderData<typeof loader>();
-  const toDo = queue.pending + queue.exported + queue.downloaded + queue.printed;
+  const subtitle = [
+    queue.exported === 0 ? "Nothing to print" : `${plural(queue.exported, "order")} ready to print`,
+    queue.awaiting > 0 ? `${queue.awaiting} waiting on customer` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <Page
-      title="Print queue"
-      subtitle={toDo === 0 ? "All caught up" : `${plural(toDo, "order")} to handle`}
-    >
+    <Page title="Print queue" subtitle={subtitle}>
       <TitleBar title="Gang Sheet Builder" />
       <BlockStack gap="400">
         {/* One strip, left to right in the order a job moves. Eight equal
             number cards used to give "Designs uploaded" the same weight as
             the orders waiting to be printed. */}
         <Card padding="0">
-          <InlineGrid columns={{ xs: 2, md: 4 }}>
+          <InlineGrid columns={{ xs: 2, md: 5 }}>
             {STEPS.map((step, i) => (
               <QueueStep
                 key={step.status}
@@ -144,8 +204,8 @@ export default function Dashboard() {
               {upNext.length === 0 ? (
                 <Box padding="400" paddingBlockStart="0">
                   <Text as="p" variant="bodyMd" tone="subdued">
-                    Nothing waiting. New orders appear here as soon as they are
-                    paid.
+                    Nothing ready to print. Orders appear here when their files
+                    are ready.
                   </Text>
                 </Box>
               ) : (
@@ -203,6 +263,16 @@ export default function Dashboard() {
                   />
                   <Metric label="Shipped" value={String(month.shipped)} />
                 </BlockStack>
+                {month.sales && (
+                  <Box borderBlockStartWidth="025" borderColor="border-secondary" paddingBlockStart="300">
+                    <BlockStack gap="100">
+                      <Metric label="Sales" value={money(month.sales.total, month.sales.currency)} />
+                      <Text as="p" variant="bodyXs" tone="subdued">
+                        {`${money(month.sales.exVat, month.sales.currency)} excl. VAT · all shop orders incl. shipping`}
+                      </Text>
+                    </BlockStack>
+                  </Box>
+                )}
                 <InlineStack>
                   <Button variant="plain" url="/app/statistics">
                     View statistics
@@ -233,9 +303,10 @@ function QueueStep({
   count: number;
   last: boolean;
 }) {
-  // Only steps that wait on the print shop draw the eye; files being
-  // generated need nothing from them.
-  const needsAction = count > 0 && status !== "pending";
+  // Only what the shop acts on draws the eye: orders ready to print, and
+  // orders on hold for a customer (in a calmer colour).
+  const needsAction = count > 0 && status === "exported";
+  const onHold = count > 0 && status === "awaiting";
 
   return (
     <Link
@@ -245,7 +316,7 @@ function QueueStep({
       <Box
         padding="400"
         minHeight="100%"
-        background={needsAction ? "bg-surface-success" : undefined}
+        background={needsAction ? "bg-surface-success" : onHold ? "bg-surface-caution" : undefined}
         borderInlineEndWidth={last ? undefined : "025"}
         borderColor="border-secondary"
       >
@@ -256,7 +327,7 @@ function QueueStep({
           <Text
             as="p"
             variant="heading2xl"
-            tone={count === 0 ? "subdued" : needsAction ? "success" : undefined}
+            tone={count === 0 ? "subdued" : needsAction ? "success" : onHold ? "caution" : undefined}
           >
             {count}
           </Text>
