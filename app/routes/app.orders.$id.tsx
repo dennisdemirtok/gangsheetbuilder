@@ -18,6 +18,7 @@ import {
   Checkbox,
   Popover,
   FormLayout,
+  Modal,
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -616,6 +617,10 @@ export default function OrderDetailPage() {
   }, [orderStatus]);
 
   const statusBusy = statusFetcher.state !== "idle";
+  // Any order not yet shipped can be put on hold while the customer answers.
+  const canHold = orderStatus !== "shipped" && orderStatus !== "draft";
+  const [holdOpen, setHoldOpen] = useState(false);
+  const clearAwaiting = () => statusFetcher.submit({ action: "clear_awaiting" }, { method: "post" });
   const downloadAllLabel = jobs.length > 1 ? `Download all files (${jobs.length})` : "Download file";
 
   return (
@@ -624,12 +629,20 @@ export default function OrderDetailPage() {
       title={orderLabel(gangSheet)}
       titleMetadata={<Badge tone={status.tone}>{status.label}</Badge>}
       subtitle={[gangSheet.customerName, `Ordered ${orderedAt}`].filter(Boolean).join(" · ")}
-      secondaryActions={
-        gangSheet.shopifyOrderId
+      secondaryActions={[
+        ...(canHold
+          ? [
+              awaiting
+                ? { content: "Customer replied", onAction: clearAwaiting, loading: statusBusy }
+                : { content: "Waiting on customer", onAction: () => setHoldOpen(true) },
+            ]
+          : []),
+        ...(gangSheet.shopifyOrderId
           ? [{ content: "Open in Shopify", url: `shopify://admin/orders/${gangSheet.shopifyOrderId}` }]
-          : undefined
-      }
+          : []),
+      ]}
     >
+      <AwaitingModal open={holdOpen} onClose={() => setHoldOpen(false)} />
       <TitleBar title={orderLabel(gangSheet)} />
       {zoom && <Lightbox {...zoom} onClose={() => setZoom(null)} />}
       <Layout>
@@ -697,7 +710,11 @@ export default function OrderDetailPage() {
                   />
                 )}
 
-                {!awaiting && orderStatus !== "shipped" && orderStatus !== "draft" && <AwaitingButton />}
+                {!awaiting && canHold && (
+                  <InlineStack>
+                    <Button onClick={() => setHoldOpen(true)}>Waiting on customer</Button>
+                  </InlineStack>
+                )}
 
                 {orderStatus === "shipped" && (
                   <BlockStack gap="100">
@@ -985,50 +1002,50 @@ function ReplaceFileButton({ jobId, label }: { jobId: string; label: string }) {
  * Put the order on hold while the customer fixes something. A note says
  * what was asked, so whoever opens the order later knows what to look for.
  */
-function AwaitingButton() {
+function AwaitingModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const fetcher = useFetcher<{ success?: boolean; notice?: string }>();
   const shopify = useAppBridge();
-  const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
 
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.success) {
-      setOpen(false);
+      onClose();
       setNote("");
       if (fetcher.data.notice) shopify.toast.show(fetcher.data.notice);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetcher.state, fetcher.data, shopify]);
 
   return (
-    <Popover
-      active={open}
-      onClose={() => setOpen(false)}
-      activator={
-        <Button variant="plain" onClick={() => setOpen((v) => !v)}>
-          Waiting on customer…
-        </Button>
-      }
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Waiting on customer"
+      primaryAction={{
+        content: "Mark as waiting",
+        loading: fetcher.state !== "idle",
+        onAction: () => fetcher.submit({ action: "set_awaiting", note }, { method: "post" }),
+      }}
+      secondaryActions={[{ content: "Cancel", onAction: onClose }]}
     >
-      <Box padding="400" minWidth="300px">
-        <fetcher.Form method="post">
-          <input type="hidden" name="action" value="set_awaiting" />
-          <FormLayout>
-            <TextField
-              label="What are we waiting for?"
-              name="note"
-              value={note}
-              onChange={setNote}
-              placeholder="e.g. Asked for the logo as a vector file"
-              multiline={2}
-              autoComplete="off"
-            />
-            <Button submit variant="primary" loading={fetcher.state !== "idle"}>
-              Mark as waiting on customer
-            </Button>
-          </FormLayout>
-        </fetcher.Form>
-      </Box>
-    </Popover>
+      <Modal.Section>
+        <BlockStack gap="300">
+          <Text as="p">
+            The order leaves To do until the customer replies. Click Customer
+            replied when they do; sending the order to the print shop also
+            clears it.
+          </Text>
+          <TextField
+            label="What are we waiting for?"
+            value={note}
+            onChange={setNote}
+            placeholder="e.g. Asked for the logo as a vector file"
+            multiline={2}
+            autoComplete="off"
+          />
+        </BlockStack>
+      </Modal.Section>
+    </Modal>
   );
 }
 

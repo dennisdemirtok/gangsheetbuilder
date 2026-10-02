@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import type { LoaderFunctionArgs } from "@remix-run/node";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useRevalidator, useSearchParams } from "@remix-run/react";
+import { useFetcher, useLoaderData, useRevalidator, useSearchParams } from "@remix-run/react";
 import {
   Page,
   Card,
@@ -18,6 +18,7 @@ import {
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 import {
   STATUS_FILTERS,
   formatDate,
@@ -85,6 +86,40 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 };
 
+/** Bulk hold / release for the selected orders (Shopify order ids). */
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const form = await request.formData();
+  const intent = String(form.get("intent") || "");
+  const orderIds = String(form.get("orders") || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter((id) => /^\d+$/.test(id))
+    .slice(0, 100);
+  if (orderIds.length === 0 || !["set_awaiting", "clear_awaiting"].includes(intent)) {
+    return json({ updated: 0 });
+  }
+  const hold = intent === "set_awaiting";
+  const { count } = await prisma.gangSheet.updateMany({
+    where: {
+      shopDomain: session.shop,
+      shopifyOrderId: { in: orderIds },
+      status: { not: "shipped" },
+      ...(hold ? {} : { awaitingCustomerSince: { not: null } }),
+    },
+    data: hold
+      ? { awaitingCustomerSince: new Date() }
+      : { awaitingCustomerSince: null, awaitingCustomerNote: null },
+  });
+  // Report orders, not jobs.
+  const orders = await prisma.gangSheet.findMany({
+    where: { shopDomain: session.shop, shopifyOrderId: { in: orderIds } },
+    select: { shopifyOrderId: true },
+    distinct: ["shopifyOrderId"],
+  });
+  return json({ updated: count > 0 ? orders.length : 0 });
+};
+
 export default function OrdersPage() {
   const { orders, totalCount, counts, page, statusFilter, query } =
     useLoaderData<typeof loader>();
@@ -148,6 +183,18 @@ export default function OrdersPage() {
       setDownloading(false);
     }
   };
+
+  /** Put the selected orders on hold for the customer, or take them off it. */
+  const holdFetcher = useFetcher<{ updated?: number }>();
+  const setHold = (intent: "set_awaiting" | "clear_awaiting") => {
+    holdFetcher.submit({ intent, orders: selectedResources.join(",") }, { method: "post" });
+    clearSelection();
+  };
+  useEffect(() => {
+    if (holdFetcher.state === "idle" && holdFetcher.data?.updated !== undefined) {
+      shopify.toast.show(`${holdFetcher.data.updated} order${holdFetcher.data.updated === 1 ? "" : "s"} updated`);
+    }
+  }, [holdFetcher.state, holdFetcher.data, shopify]);
 
   const rowMarkup = orders.map((order, index) => (
     <IndexTable.Row
@@ -232,6 +279,10 @@ export default function OrdersPage() {
               onAction: downloadSelected,
               disabled: downloading,
             },
+          ]}
+          bulkActions={[
+            { content: "Mark as waiting on customer", onAction: () => setHold("set_awaiting") },
+            { content: "Customer replied", onAction: () => setHold("clear_awaiting") },
           ]}
           headings={[
             { title: "Order" },
