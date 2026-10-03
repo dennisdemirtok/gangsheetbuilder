@@ -13,8 +13,6 @@ export interface Style {
   id: string;
   label: string;
   fontId: string;
-  /** Gets an outline in the contrasting colour when picked. */
-  outlined?: boolean;
 }
 
 export const NAME_STYLES: Style[] = [
@@ -26,8 +24,10 @@ export const NAME_STYLES: Style[] = [
 
 export const NUMBER_STYLES: Style[] = [
   { id: "standard", label: "Standard", fontId: "anton" },
-  { id: "retro", label: "Retro", fontId: "graduate", outlined: true },
-  { id: "sport", label: "Sport", fontId: "rokkitt", outlined: true },
+  // Block figures with a flagged 1, as on the catalogue's retro numbers.
+  // Graduate (still the College letters) draws its zero with a dot inside.
+  { id: "retro", label: "Retro", fontId: "bungee" },
+  { id: "sport", label: "Sport", fontId: "rokkitt" },
   { id: "kantig", label: "Kantig", fontId: "big-shoulders-display" },
   { id: "teknisk", label: "Teknisk", fontId: "barlow-semi-condensed" },
   { id: "liga", label: "Liga", fontId: "saira-condensed" },
@@ -66,8 +66,13 @@ export const OUTLINES: { value: string; label: string }[] = [
   { value: "#ffffff", label: "Vit" },
 ];
 
-/** Outline thickness as a share of the font size. */
-export const OUTLINE_WIDTH = 0.07;
+/**
+ * Outline thickness as a share of the font size: about 2.5 % of the
+ * figures' height, as on TransferCraft's own number transfers (a thin
+ * edge, about 6 mm on a 25 cm number). 0.07 drew ten per cent, a band
+ * thick enough to change the shape of the numbers.
+ */
+export const OUTLINE_WIDTH = 0.018;
 
 export const NAME_SIZES_CM = [5, 7];
 export const NUMBER_SIZES_CM = [5, 7, 10, 20, 25];

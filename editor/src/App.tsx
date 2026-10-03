@@ -1,10 +1,9 @@
 import { Wordmark } from "./components/Brand/Wordmark";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GangSheetCanvas } from "./components/Canvas/GangSheetCanvas";
-import { TabContent, TABS, type TabKey } from "./components/LeftSidebar/LeftSidebar";
+import { TextTab } from "./components/LeftSidebar/TextTab";
 import { BuilderPanel } from "./components/LeftSidebar/BuilderPanel";
-import { ImageUploader } from "./components/ImagePanel/ImageUploader";
-import { ImageList } from "./components/ImagePanel/ImageList";
+import { MobileRoster } from "./components/ImagePanel/MobileRoster";
 import { NamesModal } from "./names/NamesModal";
 import { useSheetStats } from "./utils/sheetStats";
 import { Toolbar } from "./components/Toolbar/Toolbar";
@@ -15,10 +14,11 @@ import { DownloadButton } from "./components/PriceDisplay/DownloadButton";
 import { SheetManager } from "./components/SheetManager/SheetManager";
 import { SheetInsight } from "./components/SheetInsight/SheetInsight";
 import { StartWizard } from "./components/StartWizard/StartWizard";
-import { useEditorStore, getSheetsTotalPrice, groupKey, groupImages } from "./store/editorStore";
+import { useEditorStore, getSheetsTotalPrice, groupKey, groupImages, type EditorImage } from "./store/editorStore";
 import { redo, undo, useHistory } from "./store/history";
 import { getPricing, setAppProxyUrl } from "./services/api";
 import { theme } from "./styles/theme";
+import { cmText } from "./utils/units";
 
 const MOBILE_QUERY = "(max-width: 900px)";
 
@@ -231,14 +231,54 @@ function DesktopShell({
 
 /* ─────────────────────────── Mobile ──────────────────────────── */
 
-/** Undo on the phone, where there is no keyboard: shown once there is something to undo. */
-function MobileUndo() {
-  const { canUndo } = useHistory();
-  if (!canUndo) return null;
+const HEADER_ICON = {
+  undo: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M9 14 4 9l5-5" />
+      <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+    </svg>
+  ),
+  redo: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="m15 14 5-5-5-5" />
+      <path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
+    </svg>
+  ),
+};
+
+/** Undo and redo on the phone, where there is no keyboard. */
+function MobileHistory() {
+  const { canUndo, canRedo } = useHistory();
+  const button = (label: string, icon: React.ReactNode, onClick: () => void, enabled: boolean) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!enabled}
+      aria-label={label}
+      title={label}
+      style={{
+        width: 38,
+        height: 34,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 0,
+        border: "1px solid rgba(255,255,255,0.15)",
+        borderRadius: theme.radiusSm,
+        background: "transparent",
+        color: "#ffffff",
+        opacity: enabled ? 1 : 0.35,
+        cursor: enabled ? "pointer" : "default",
+      }}
+    >
+      {icon}
+    </button>
+  );
   return (
-    <HeaderButton onClick={undo} title="Ångra">
-      ↶
-    </HeaderButton>
+    <div style={{ display: "flex", gap: 6 }}>
+      {button("Ångra", HEADER_ICON.undo, undo, canUndo)}
+      {button("Gör om", HEADER_ICON.redo, redo, canRedo)}
+    </div>
   );
 }
 
@@ -246,8 +286,9 @@ function MobileUndo() {
  * Phones got the desktop grid squeezed into 375 px: the layout overflowed
  * to ~900 px wide and 1570 px tall inside a 100vh box with no scrolling,
  * so the price and "Lägg i varukorg" were simply unreachable. This shell
- * is built for the small screen instead — canvas front and centre, the
- * panels in a drawer, and checkout always visible at the bottom.
+ * is built for the small screen instead — the canvas on top, and below it
+ * a sheet that pulls up into the list of designs, with the cart always at
+ * the bottom.
  */
 function MobileShell({
   wizard,
@@ -258,14 +299,36 @@ function MobileShell({
   onReset: () => void;
   onRestartWizard: () => void;
 }) {
-  const [drawer, setDrawer] = useState<"roster" | "text" | null>(null);
+  /** The designs list, pulled up over the lower part of the canvas. */
+  const [open, setOpen] = useState(false);
+  const [textOpen, setTextOpen] = useState(false);
   const [namesOpen, setNamesOpen] = useState(false);
-  const { images, sheets, prices, sheetSize, filmType, activeSheetIndex } = useEditorStore();
+  const { images, sheets, prices, sheetSize, filmType, activeSheetIndex, selectedImageId } = useEditorStore();
   const stats = useSheetStats();
   const designs = groupImages(images).length;
   const total = getSheetsTotalPrice(sheets, prices, sheetSize, filmType, activeSheetIndex, images.length);
   const errors = stats.issues.filter((i) => i.severity === "error").length;
   const metres = (sheetSize.heightMm / 1000).toLocaleString("sv-SE", { maximumFractionDigits: 1 });
+  const selected = images.find((i) => i.id === selectedImageId) ?? null;
+  // "Text" is always a new text. With a text picked it used to open that
+  // one for editing, and what was typed ran on after its words.
+  const newText = () => {
+    useEditorStore.getState().selectImage(null);
+    setTextOpen(true);
+  };
+
+  // Pull the sheet up or push it down by its top edge.
+  const dragFrom = useRef<number | null>(null);
+  const onPointerDown = (e: React.PointerEvent) => {
+    dragFrom.current = e.clientY;
+  };
+  const onPointerUp = (e: React.PointerEvent) => {
+    if (dragFrom.current === null) return;
+    const dy = e.clientY - dragFrom.current;
+    dragFrom.current = null;
+    if (dy < -24) setOpen(true);
+    else if (dy > 24) setOpen(false);
+  };
 
   return (
     <div
@@ -277,9 +340,11 @@ function MobileShell({
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        background: theme.bg,
+        // The canvas colour, so the sheet's rounded top corners show.
+        background: theme.bgCanvas,
         color: theme.text,
         overflow: "hidden",
+        position: "relative",
       }}
     >
       {/* Compact header */}
@@ -296,160 +361,385 @@ function MobileShell({
       >
         <Wordmark />
         <div style={{ flex: 1 }} />
-        <MobileUndo />
+        <MobileHistory />
         <HeaderButton onClick={closeEditor} title="Stäng" strong>
           ✕
         </HeaderButton>
       </header>
 
-      {/* Canvas */}
+      {/* Canvas — with the list pulled up it is a preview of the sheet, and
+          its zoom and view buttons would sit on what little shows of it. */}
       <main style={{ ...canvasStyle, flex: 1, minHeight: 0 }}>
-        <GangSheetCanvas />
-        {wizard}
+        <GangSheetCanvas hideControls={open} />
       </main>
 
-      {/* Drawer */}
-      {drawer && (
-        <div style={mob.drawerBackdrop} onClick={() => setDrawer(null)}>
+      {/* The sheet: summary (or the design picked), the list when pulled up, the cart. */}
+      <section style={{ ...mob.sheet, ...(open ? mob.sheetOpen : null) }}>
+        <div style={mob.sheetTop} onPointerDown={onPointerDown} onPointerUp={onPointerUp}>
+          <button
+            type="button"
+            onClick={() => setOpen(!open)}
+            style={mob.grabberHit}
+            aria-label={open ? "Dölj motiven" : "Visa motiven"}
+          >
+            <span style={mob.grabber} />
+          </button>
+          {selected && !open ? (
+            <SelectionRow image={selected} onEditText={() => setTextOpen(true)} />
+          ) : (
+            <button type="button" onClick={() => setOpen(!open)} style={mob.summary} aria-expanded={open}>
+              <span style={{ ...mob.chevron, transform: open ? "rotate(180deg)" : "none" }}>{CHEVRON_UP}</span>
+              <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
+                <span style={mob.summaryMain}>
+                  {designs ? `${designs} motiv · ${images.length} st` : "Inga motiv ännu"}
+                </span>
+                <span style={mob.summarySub}>
+                  {open ? "Tryck för att dölja" : designs ? "Tryck för att se och ändra" : "Lägg till motiv för att börja"}
+                </span>
+              </span>
+              <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+                <span style={mob.summaryMain}>
+                  {metres} m · {total !== null ? `${total} kr` : "—"}
+                </span>
+                {designs > 0 && (
+                  <span style={{ fontSize: 12, fontWeight: 600, color: errors ? theme.danger : theme.success }}>
+                    {errors ? `${errors} att åtgärda` : "Redo för tryck"}
+                  </span>
+                )}
+              </span>
+            </button>
+          )}
+        </div>
+
+        {open ? (
+          <div style={mob.sheetBody}>
+            <MobileSheetTabs />
+            <div style={mob.listHead}>
+              <span style={mob.sectionHead}>Dina motiv</span>
+              <span style={{ fontSize: 12, color: theme.textMuted }}>
+                58 × {Math.round(sheetSize.heightMm / 10)} cm
+              </span>
+            </div>
+            <MobileRoster />
+            <button type="button" onClick={onRestartWizard} style={mob.addButton}>
+              ＋ Lägg till motiv
+            </button>
+            <div style={mob.toolGrid}>
+              <button type="button" onClick={newText} style={mob.action}>
+                T&nbsp; Text
+              </button>
+              <button type="button" onClick={() => setNamesOpen(true)} style={mob.action}>
+                Namn &amp; nr
+              </button>
+            </div>
+            <ArrangeButton />
+            <SheetInsight />
+            <PriceDisplay />
+            <SheetManager />
+            <DownloadButton />
+            <button type="button" onClick={onReset} style={mob.resetButton}>
+              Rensa arket och börja om
+            </button>
+          </div>
+        ) : (
+          <div style={mob.actions}>
+            <button type="button" onClick={onRestartWizard} style={{ ...mob.action, ...mob.actionPrimary }}>
+              ＋ Motiv
+            </button>
+            <button type="button" onClick={newText} style={mob.action}>
+              T&nbsp; Text
+            </button>
+            <button type="button" onClick={() => setNamesOpen(true)} style={mob.action}>
+              Namn &amp; nr
+            </button>
+          </div>
+        )}
+
+        <div style={mob.cta}>
+          <AddToCartButton />
+        </div>
+      </section>
+
+      {/* The text tool: a form, so it gets a drawer of its own. */}
+      {textOpen && (
+        <div style={mob.drawerBackdrop} onClick={() => setTextOpen(false)}>
           <div style={mob.drawer} onClick={(e) => e.stopPropagation()}>
             <div style={mob.grabberRow}>
               <div style={mob.grabber} />
-              <button onClick={() => setDrawer(null)} style={mob.drawerClose}>
+              <button onClick={() => setTextOpen(false)} style={mob.drawerClose}>
                 Klar
               </button>
             </div>
             <div style={mob.drawerBody}>
-              {drawer === "roster" ? (
-                <div style={{ padding: theme.space.lg, display: "flex", flexDirection: "column", gap: theme.space.lg }}>
-                  <PriceDisplay />
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <div style={mob.sectionHead}>Dina motiv{designs ? ` (${designs})` : ""}</div>
-                    <ImageUploader compact />
-                    <ImageList />
-                  </div>
-                  <ArrangeButton />
-                  <SheetInsight />
-                  <SheetManager />
-                  <DownloadButton />
-                  <button onClick={onReset} style={mob.resetButton}>
-                    Rensa arket och börja om
-                  </button>
-                </div>
-              ) : (
-                <TabContent tab="text" />
-              )}
+              <TextTab onDone={() => setTextOpen(false)} />
             </div>
           </div>
         </div>
       )}
       {namesOpen && <NamesModal onClose={() => setNamesOpen(false)} />}
 
-      {/* Bottom: the sheet in one line, what to add, and the cart. */}
-      <nav style={mob.bar}>
-        <button type="button" onClick={() => setDrawer(drawer === "roster" ? null : "roster")} style={mob.summary}>
-          <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, minWidth: 0 }}>
-            <span style={{ fontWeight: 700, fontSize: 14, color: theme.text }}>
-              {designs ? `${designs} motiv · ${images.length} st` : "Inga motiv ännu"}
-            </span>
-            <span style={{ fontSize: 12, color: theme.textMuted }}>
-              {designs ? "Tryck för att visa och ändra" : "Lägg till motiv för att börja"}
-            </span>
-          </span>
-          <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-            <span style={{ fontWeight: 700, fontSize: 14, color: theme.text }}>
-              {metres} m · {total !== null ? `${total} kr` : "—"}
-            </span>
-            {designs > 0 && (
-              <span style={{ fontSize: 12, fontWeight: 600, color: errors ? theme.danger : theme.success }}>
-                {errors ? `${errors} att åtgärda` : "Redo för tryck"}
-              </span>
-            )}
-          </span>
-        </button>
-        <div style={mob.actions}>
-          <button type="button" onClick={onRestartWizard} style={{ ...mob.action, ...mob.actionPrimary }}>
-            ＋ Motiv
-          </button>
-          <button type="button" onClick={() => setDrawer(drawer === "text" ? null : "text")} style={mob.action}>
-            T Text
-          </button>
-          <button type="button" onClick={() => setNamesOpen(true)} style={mob.action}>
-            Namn &amp; nr
-          </button>
-        </div>
-        <div style={{ padding: "0 12px 12px" }}>
-          <AddToCartButton />
-        </div>
-      </nav>
+      {/* The guide gets the whole screen: inside the canvas it had a third
+          of it, over a greyed-out cart it could not use yet. */}
+      {wizard}
 
       <GlobalStyles />
     </div>
   );
 }
 
-const sheetIcon = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M9 7h6M9 12h6M9 17h3"/></svg>`;
+const CHEVRON_UP = (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="m6 15 6-6 6 6" />
+  </svg>
+);
 
-function MobileTab({
-  icon,
-  label,
-  active,
-  badge,
-  onClick,
-}: {
-  icon: string;
-  label: string;
-  active: boolean;
-  badge?: number;
-  onClick: () => void;
-}) {
+/**
+ * The design picked on the sheet, with what a phone needs most: turn it,
+ * one more, remove it. There was no way to do any of that on a phone
+ * except opening the list and finding the design again.
+ */
+function SelectionRow({ image, onEditText }: { image: EditorImage; onEditText: () => void }) {
+  const { images, updateGroup, duplicateImage, removeGroup, selectImage } = useEditorStore();
+  const key = groupKey(image);
+  const count = images.filter((i) => groupKey(i) === key).length;
+  const name = image.text?.text ? `"${image.text.text.replace(/\s+/g, " ").trim()}"` : image.filename;
+  const icon = (d: string) => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d={d} />
+    </svg>
+  );
   return (
-    <button
-      onClick={onClick}
-      style={{
-        flex: 1,
-        padding: "8px 2px 6px",
-        border: "none",
-        background: active ? theme.accentBg : "transparent",
-        color: active ? theme.accent : theme.textMuted,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: 2,
-        cursor: "pointer",
-        position: "relative",
-        fontFamily: theme.fontFamily,
-      }}
-    >
-      <span dangerouslySetInnerHTML={{ __html: icon }} />
-      <span style={{ fontSize: 10, fontWeight: active ? 600 : 400 }}>{label}</span>
-      {badge !== undefined && (
-        <span
-          style={{
-            position: "absolute",
-            top: 4,
-            right: "50%",
-            marginRight: -22,
-            minWidth: 16,
-            height: 16,
-            padding: "0 4px",
-            borderRadius: 8,
-            background: theme.accent,
-            color: "#fff",
-            fontSize: 9,
-            fontWeight: 700,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          {badge}
-        </span>
+    <div style={mob.selRow}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <p style={{ ...mob.summaryMain, margin: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</p>
+        <p style={{ ...mob.summarySub, margin: "2px 0 0" }}>
+          {cmText(image.displayWidth)} × {cmText(image.displayHeight)} cm{count > 1 ? ` · ${count} st` : ""}
+        </p>
+      </div>
+      {image.text && (
+        <button type="button" onClick={onEditText} style={mob.selButton} aria-label="Ändra texten" title="Ändra texten">
+          {icon("M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4")}
+        </button>
       )}
-    </button>
+      <button
+        type="button"
+        onClick={() => updateGroup(key, { rotation: (image.rotation + 90) % 360 })}
+        style={mob.selButton}
+        aria-label="Rotera 90°"
+        title="Rotera 90°"
+      >
+        {icon("M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7")}
+      </button>
+      <button type="button" onClick={() => duplicateImage(image.id)} style={mob.selButton} aria-label="En till" title="En till">
+        {icon("M8 8h12v12H8zM4 16V4h12M14 11v6M11 14h6")}
+      </button>
+      <button
+        type="button"
+        onClick={() => removeGroup(key)}
+        style={{ ...mob.selButton, color: theme.danger }}
+        aria-label="Ta bort"
+        title="Ta bort motivet och alla kopior"
+      >
+        {icon("M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3")}
+      </button>
+      <button type="button" onClick={() => selectImage(null)} style={mob.selDone}>
+        Klar
+      </button>
+    </div>
+  );
+}
+
+/** Sheet tabs when there is more than one, as on the order: Ark 1, Ark 2 … */
+function MobileSheetTabs() {
+  const { sheets, activeSheetIndex, switchSheet, addSheet } = useEditorStore();
+  if (sheets.length < 2) return null;
+  return (
+    <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 2 }}>
+      {sheets.map((sheet, idx) => {
+        const active = idx === activeSheetIndex;
+        return (
+          <button
+            key={sheet.id}
+            type="button"
+            onClick={() => switchSheet(idx)}
+            style={{
+              ...mob.tab,
+              background: active ? theme.secondary : theme.bg,
+              color: active ? "#ffffff" : theme.text,
+              borderColor: active ? theme.secondary : theme.borderStrong,
+            }}
+          >
+            {sheet.name || `Ark ${idx + 1}`}
+          </button>
+        );
+      })}
+      <button type="button" onClick={addSheet} style={{ ...mob.tab, borderStyle: "dashed", color: theme.textMuted }}>
+        ＋ Ark
+      </button>
+    </div>
   );
 }
 
 const mob: Record<string, React.CSSProperties> = {
+  sheet: {
+    flexShrink: 0,
+    display: "flex",
+    flexDirection: "column",
+    background: theme.bg,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    boxShadow: "0 -6px 24px rgba(16, 24, 40, 0.10)",
+    position: "relative",
+    zIndex: 8,
+    paddingBottom: "env(safe-area-inset-bottom, 0px)",
+  },
+  sheetOpen: { height: "70%", maxHeight: "calc(100% - 140px)" },
+  sheetTop: { flexShrink: 0, touchAction: "none" },
+  grabberHit: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    height: 16,
+    padding: 0,
+    border: "none",
+    background: "transparent",
+    cursor: "pointer",
+  },
+  grabber: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    background: "rgba(0, 0, 0, 0.18)",
+    margin: "0 auto",
+  },
+  summary: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+    padding: "2px 16px 12px 12px",
+    border: "none",
+    background: "transparent",
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+    textAlign: "left",
+    color: theme.text,
+  },
+  chevron: {
+    width: 28,
+    height: 28,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: "50%",
+    background: theme.bgInput,
+    color: theme.text,
+    transition: "transform 0.2s",
+  },
+  summaryMain: { fontWeight: 700, fontSize: 14.5, color: theme.text },
+  summarySub: { fontSize: 12, color: theme.textMuted },
+  selRow: { display: "flex", alignItems: "center", gap: 6, padding: "2px 12px 12px 16px" },
+  selButton: {
+    width: 38,
+    height: 38,
+    flexShrink: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
+    border: `1px solid ${theme.borderStrong}`,
+    borderRadius: 12,
+    background: theme.bg,
+    color: theme.text,
+    cursor: "pointer",
+  },
+  selDone: {
+    height: 38,
+    flexShrink: 0,
+    padding: "0 14px",
+    border: "none",
+    borderRadius: 12,
+    background: theme.secondary,
+    color: "#ffffff",
+    fontSize: 13,
+    fontWeight: 600,
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+  },
+  sheetBody: {
+    flex: 1,
+    minHeight: 0,
+    overflowY: "auto",
+    padding: "4px 14px 14px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 12,
+    borderTop: `1px solid ${theme.border}`,
+    paddingTop: 12,
+  },
+  listHead: { display: "flex", alignItems: "baseline", justifyContent: "space-between" },
+  tab: {
+    flexShrink: 0,
+    padding: "7px 14px",
+    border: "1px solid",
+    borderRadius: 999,
+    fontSize: 13,
+    fontWeight: 600,
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+  },
+  addButton: {
+    width: "100%",
+    padding: "13px",
+    border: `1.5px dashed ${theme.accent}`,
+    borderRadius: theme.radius,
+    background: theme.accentBg,
+    color: theme.accent,
+    fontSize: 14.5,
+    fontWeight: 700,
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+  },
+  toolGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
+  actions: {
+    display: "grid",
+    gridTemplateColumns: "1.2fr 1fr 1fr",
+    gap: 8,
+    padding: "0 12px 4px",
+  },
+  action: {
+    padding: "11px 6px",
+    border: `1px solid ${theme.borderStrong}`,
+    borderRadius: 12,
+    background: theme.bg,
+    color: theme.text,
+    fontFamily: theme.fontFamily,
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  actionPrimary: { background: theme.secondary, borderColor: theme.secondary, color: "#fff" },
+  cta: { flexShrink: 0, padding: "10px 12px 12px" },
+  sectionHead: {
+    fontSize: theme.fontSize.labelMd,
+    fontWeight: theme.fontWeight.semibold,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    color: theme.textMuted,
+  },
+  resetButton: {
+    padding: "10px",
+    border: `1px solid ${theme.border}`,
+    borderRadius: theme.radius,
+    background: "transparent",
+    color: theme.textMuted,
+    fontSize: theme.fontSize.bodySm,
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+  },
   drawerBackdrop: {
     position: "absolute",
     inset: 0,
@@ -475,13 +765,6 @@ const mob: Record<string, React.CSSProperties> = {
     padding: "8px 12px 4px",
     position: "relative",
   },
-  grabber: {
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    background: theme.borderStrong,
-    margin: "0 auto",
-  },
   drawerClose: {
     position: "absolute",
     right: 12,
@@ -496,59 +779,6 @@ const mob: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   drawerBody: { flex: 1, overflow: "auto", display: "flex", flexDirection: "column", minHeight: 0 },
-  bar: {
-    flexShrink: 0,
-    background: theme.bg,
-    borderTop: `1px solid ${theme.border}`,
-    boxShadow: "0 -2px 12px rgba(0,0,0,0.06)",
-    paddingBottom: "env(safe-area-inset-bottom, 0px)",
-  },
-  tabRow: { display: "flex", borderBottom: `1px solid ${theme.border}` },
-  summary: {
-    width: "100%",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    padding: "10px 14px",
-    border: "none",
-    borderBottom: `1px solid ${theme.border}`,
-    background: theme.bg,
-    fontFamily: theme.fontFamily,
-    cursor: "pointer",
-    textAlign: "left",
-  },
-  actions: { display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 8, padding: "10px 12px" },
-  action: {
-    padding: "10px 6px",
-    border: `1px solid ${theme.borderStrong}`,
-    borderRadius: 12,
-    background: theme.bg,
-    color: theme.text,
-    fontFamily: theme.fontFamily,
-    fontSize: 13.5,
-    fontWeight: 600,
-    cursor: "pointer",
-    whiteSpace: "nowrap",
-  },
-  actionPrimary: { background: theme.secondary, borderColor: theme.secondary, color: "#fff" },
-  sectionHead: {
-    fontSize: theme.fontSize.labelMd,
-    fontWeight: theme.fontWeight.semibold,
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
-    color: theme.textMuted,
-  },
-  resetButton: {
-    padding: "10px",
-    border: `1px solid ${theme.border}`,
-    borderRadius: theme.radius,
-    background: "transparent",
-    color: theme.textMuted,
-    fontSize: theme.fontSize.bodySm,
-    fontFamily: theme.fontFamily,
-    cursor: "pointer",
-  },
 };
 
 /* ───────────────────────── Shared bits ───────────────────────── */

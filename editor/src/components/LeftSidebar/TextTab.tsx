@@ -64,7 +64,12 @@ const DEFAULT_SPEC: TextSpec = {
 /** Widest that prints: the film is 58 cm with 5 mm kept free each side. */
 const MAX_WIDTH_CM = 57;
 
-export function TextTab() {
+/**
+ * `onDone`: called once a text is on the sheet. The phone closes its
+ * drawer there, so the customer sees the text land instead of the same
+ * form still filled in, inviting a second tap and a duplicate.
+ */
+export function TextTab({ onDone }: { onDone?: () => void } = {}) {
   const images = useEditorStore((s) => s.images);
   const selectedImageId = useEditorStore((s) => s.selectedImageId);
   const canvasBg = useEditorStore((s) => s.canvasBg);
@@ -188,6 +193,7 @@ export function TextTab() {
         });
         showToast("Texten ligger på arket.", "success");
       }
+      onDone?.();
     } catch (err) {
       showToast(`Kunde inte lägga till texten: ${(err as Error).message}`, "error");
     } finally {

@@ -869,7 +869,7 @@ export const useEditorStore = create<EditorState>()(
       setUploading: (val) => set({ isUploading: val }),
       setAutoBuilding: (val) => set({ isAutoBuilding: val }),
       setSaving: (val) => set({ isSaving: val }),
-      setZoom: (zoom) => set({ zoom: Math.max(0.25, Math.min(8, zoom)) }),
+      setZoom: (zoom) => set({ zoom: Math.max(0.05, Math.min(8, zoom)) }),
       setShowDpiOverlay: (val) => set({ showDpiOverlay: val }),
 
       setPrices: (prices) => {

@@ -7,7 +7,7 @@ export const theme = {
   // Backgrounds
   bg: "#ffffff",
   bgSidebar: "#fafafa",
-  bgCanvas: "#f5f5f5",
+  bgCanvas: "#eef0f2",
   bgCard: "#ffffff",
   bgInput: "#f5f5f5",
   bgGlass: "rgba(255, 255, 255, 0.85)",

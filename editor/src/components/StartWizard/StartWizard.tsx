@@ -452,7 +452,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
   const canBuild = Boolean(plan) && ready.length > 0 && uploading === 0 && !busy;
 
   return (
-    <div style={S.backdrop}>
+    <div style={{ ...S.backdrop, ...(isMobile ? { top: 52, padding: 8 } : null) }}>
       <div style={{ ...S.modal, maxWidth: showPreview ? 900 : 640 }} className="gs-wizard">
         <div style={S.head}>
           <div>
@@ -479,7 +479,9 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
               e.preventDefault();
               if (e.dataTransfer.files.length) void readFiles(e.dataTransfer.files);
             }}
-            style={S.drop}
+            // Once there are files, one line: the big box pushed the sizes
+            // half a phone screen down.
+            style={drafts.length > 0 ? S.dropCompact : S.drop}
           >
             <input
               ref={fileInputRef}
@@ -492,14 +494,20 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
                 e.target.value = "";
               }}
             />
-            <div style={S.dropPlus}>+</div>
-            <p style={S.dropTitle}>Dra filer hit eller klicka</p>
-            <p style={S.dropHint}>PNG, JPG, SVG, TIFF, PDF, EPS — markera flera filer samtidigt</p>
+            {drafts.length > 0 ? (
+              <span style={S.dropCompactText}>＋ Lägg till fler filer</span>
+            ) : (
+              <>
+                <div style={S.dropPlus}>+</div>
+                <p style={S.dropTitle}>Dra filer hit eller klicka</p>
+                <p style={S.dropHint}>PNG, JPG, SVG, TIFF, PDF, EPS — markera flera filer samtidigt</p>
+              </>
+            )}
           </div>
 
           {/* A finished 58 cm sheet does not need building — hand them to
               the upload flow instead of making them lay it out again. */}
-          {hasUploadFlow && !adding && (
+          {hasUploadFlow && !adding && drafts.length === 0 && (
             <p style={S.readyHint}>
               Har du redan ett färdigt ark på 58 cm bredd?{" "}
               <button onClick={openUploadFlow} style={S.readyLink}>
@@ -544,8 +552,10 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
         )}
         </div>
 
-        {/* Footer — the plan */}
-        <div style={S.foot}>
+        {/* Footer — the plan. On a phone the button gets the full width
+            below it; beside it, "3 motiv → 1 meter · 200 kr" broke over
+            three lines. */}
+        <div style={{ ...S.foot, ...(isMobile ? S.footStacked : null) }}>
           {plan ? (
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={S.planMain}>
@@ -779,7 +789,10 @@ function DraftRow({
                   style={S.input}
                 />
               </Field>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              {/* Room for "5,5 × 5,5 cm 206 DPI" on one line, or a line of its
+                  own below: squeezed beside the fields on a phone it broke
+                  into one word per line. */}
+              <div style={{ flex: "1 1 150px", minWidth: 150 }}>
                 <span style={S.fieldLabel}>Blir</span>
                 <p style={S.computed}>
                   {cmText(widthMm)} × {cmText(heightMm)} cm
@@ -881,7 +894,7 @@ function Step({ n, title, done }: { n: number; title: string; done: boolean }) {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ width: 96 }}>
+    <div style={{ flex: "1 1 96px", maxWidth: 140, minWidth: 0 }}>
       <span style={S.fieldLabel}>{label}</span>
       {children}
     </div>
@@ -979,6 +992,19 @@ const S: Record<string, React.CSSProperties> = {
     textAlign: "center",
     cursor: "pointer",
     background: theme.bgCard,
+  },
+  dropCompact: {
+    border: `1.5px dashed ${theme.borderStrong}`,
+    borderRadius: theme.radius,
+    padding: "11px 12px",
+    textAlign: "center",
+    cursor: "pointer",
+    background: theme.bgCard,
+  },
+  dropCompactText: {
+    fontSize: theme.fontSize.bodyMd,
+    fontWeight: theme.fontWeight.semibold,
+    color: theme.accent,
   },
   dropPlus: {
     width: 40,
@@ -1155,6 +1181,7 @@ const S: Record<string, React.CSSProperties> = {
     gap: 12,
     background: theme.bgSidebar,
   },
+  footStacked: { flexDirection: "column", alignItems: "stretch", gap: 10, padding: "12px 16px 14px" },
   planMain: { margin: 0, fontSize: theme.fontSize.bodyMd, color: theme.text },
   planSub: { margin: "2px 0 0", fontSize: theme.fontSize.labelMd, color: theme.textMuted },
   cta: {

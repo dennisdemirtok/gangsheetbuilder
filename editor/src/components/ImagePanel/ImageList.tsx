@@ -60,7 +60,7 @@ export function ImageList() {
  * by one was the step customers skipped — and a white box prints as a
  * white box.
  */
-function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
+export function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
   const updateGroup = useEditorStore((s) => s.updateGroup);
   const [busy, setBusy] = useState(false);
   // bgRemoved is also set for files that came in transparent — an EPS
@@ -130,6 +130,43 @@ function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
   );
 }
 
+/** Take the white background off a design, on every copy. Throws when it fails. */
+export async function removeGroupBackground(
+  group: ImageGroup,
+  updateGroup: (groupId: string, updates: Partial<EditorImage>) => void,
+) {
+  const image = group.master;
+  const result = await removeBg(image.dbId || image.id);
+  const base = getAppProxyUrl();
+  const bgUrl = result.bgRemovedUrl.startsWith("/") ? base + result.bgRemovedUrl : result.bgRemovedUrl;
+  updateGroup(group.groupId, { bgRemoved: true, bgRemovedUrl: bgUrl, hasWhiteBackground: false });
+}
+
+/** Trim the empty margin around a design, on every copy. Throws when it fails. */
+export async function cropGroup(
+  group: ImageGroup,
+  updateGroup: (groupId: string, updates: Partial<EditorImage>) => void,
+) {
+  const image = group.master;
+  const base = getAppProxyUrl();
+  const res = await fetch(`${base}/api/crop`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageId: image.dbId || image.id }),
+  });
+  const data = await res.json();
+  if (!data.croppedUrl) return;
+  const url = data.croppedUrl.startsWith("/") ? base + data.croppedUrl : data.croppedUrl;
+  updateGroup(group.groupId, {
+    thumbnailUrl: url,
+    originalUrl: url,
+    widthPx: data.width,
+    heightPx: data.height,
+    displayWidth: data.displayWidthMm || image.displayWidth,
+    displayHeight: data.displayHeightMm || image.displayHeight,
+  });
+}
+
 function GroupItem({
   group,
   isSelected,
@@ -178,16 +215,7 @@ function GroupItem({
   const handleRemoveBg = async () => {
     setIsRemovingBg(true);
     try {
-      const result = await removeBg(image.dbId || image.id);
-      const base = getAppProxyUrl();
-      const bgUrl = result.bgRemovedUrl.startsWith("/")
-        ? base + result.bgRemovedUrl
-        : result.bgRemovedUrl;
-      updateGroup(group.groupId, {
-        bgRemoved: true,
-        bgRemovedUrl: bgUrl,
-        hasWhiteBackground: false,
-      });
+      await removeGroupBackground(group, updateGroup);
     } catch {
       alert("Bakgrundsbortagning misslyckades");
     } finally {
@@ -446,26 +474,7 @@ function GroupItem({
               label="Beskär"
               onClick={async () => {
                 try {
-                  const base = getAppProxyUrl();
-                  const res = await fetch(`${base}/api/crop`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ imageId: image.dbId || image.id }),
-                  });
-                  const data = await res.json();
-                  if (data.croppedUrl) {
-                    const url = data.croppedUrl.startsWith("/")
-                      ? base + data.croppedUrl
-                      : data.croppedUrl;
-                    updateGroup(group.groupId, {
-                      thumbnailUrl: url,
-                      originalUrl: url,
-                      widthPx: data.width,
-                      heightPx: data.height,
-                      displayWidth: data.displayWidthMm || image.displayWidth,
-                      displayHeight: data.displayHeightMm || image.displayHeight,
-                    });
-                  }
+                  await cropGroup(group, updateGroup);
                 } catch {
                   alert("Beskärning misslyckades");
                 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, Control, FabricImage, FabricObject, Rect, FabricText, ActiveSelection, config, util } from "fabric";
 import { useEditorStore } from "../../store/editorStore";
 import {
@@ -93,24 +93,87 @@ const BACKDROPS: { id: string; label: string; color: string }[] = [
 ];
 
 const CHECKS: React.CSSProperties = {
-  // Mid-grey checks: white logos vanished on a white one, and DTF
-  // prints white as often as any colour.
+  // Light checks read as film rather than as a grey box. The squares are
+  // small so a white logo still shows its edge against the grey ones;
+  // "Plaggfärg" puts it on a dark shirt to check it properly.
   backgroundImage:
-    "linear-gradient(45deg, #b4b4b4 25%, transparent 25%), " +
-    "linear-gradient(-45deg, #b4b4b4 25%, transparent 25%), " +
-    "linear-gradient(45deg, transparent 75%, #b4b4b4 75%), " +
-    "linear-gradient(-45deg, transparent 75%, #b4b4b4 75%)",
-  backgroundSize: "24px 24px",
-  backgroundPosition: "0 0, 0 12px, 12px -12px, -12px 0px",
-  backgroundColor: "#cdcdcd",
+    "linear-gradient(45deg, #e2e4e8 25%, transparent 25%), " +
+    "linear-gradient(-45deg, #e2e4e8 25%, transparent 25%), " +
+    "linear-gradient(45deg, transparent 75%, #e2e4e8 75%), " +
+    "linear-gradient(-45deg, transparent 75%, #e2e4e8 75%)",
+  backgroundSize: "20px 20px",
+  backgroundPosition: "0 0, 0 10px, 10px -10px, -10px 0px",
+  backgroundColor: "#ffffff",
 };
 
-function backdropStyle(bg: string): React.CSSProperties {
-  if (bg === "checks" || !/^#[0-9a-f]{6}$/i.test(bg)) return CHECKS;
+/**
+ * Room kept free around the sheet when it is fitted to the view: the
+ * rulers along the top and left and, on a phone, the controls along the
+ * bottom. The sheet used to fill the whole height there, so "Plaggfärg",
+ * "DPI-kvalitet" and the zoom sat on top of its last 10 cm.
+ */
+function viewInsets(mobile: boolean) {
+  return mobile
+    ? { top: 32, right: 14, bottom: 76, left: 30 }
+    : { top: 40, right: 40, bottom: 40, left: 40 };
+}
+
+/** One zoom step: the same feel at 30 % as at 300 %. */
+const ZOOM_STEP = 1.25;
+
+/**
+ * The checks once there is white on the sheet: on the light ones a white
+ * name or logo all but disappears, and DTF prints white as often as any
+ * colour. Still lighter than the mid-grey the sheet used to have always.
+ */
+const CHECKS_FOR_WHITE: React.CSSProperties = {
+  ...CHECKS,
+  backgroundImage:
+    "linear-gradient(45deg, #c3c8cf 25%, transparent 25%), " +
+    "linear-gradient(-45deg, #c3c8cf 25%, transparent 25%), " +
+    "linear-gradient(45deg, transparent 75%, #c3c8cf 75%), " +
+    "linear-gradient(-45deg, transparent 75%, #c3c8cf 75%)",
+  backgroundColor: "#d5d9de",
+};
+
+function backdropStyle(bg: string, whiteArt: boolean): React.CSSProperties {
+  if (bg === "checks" || !/^#[0-9a-f]{6}$/i.test(bg)) return whiteArt ? CHECKS_FOR_WHITE : CHECKS;
   return { backgroundImage: "none", backgroundColor: bg };
 }
 
-export function GangSheetCanvas() {
+function isLightColor(hex: string | undefined): boolean {
+  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return false;
+  const n = parseInt(hex.slice(1), 16);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255 > 0.85;
+}
+
+/** Artwork URL → mostly white (or a white box)? Measured once per file. */
+const MOSTLY_WHITE = new Map<string, boolean>();
+
+/** Most of the inked pixels near white. Null when the image can't be read (no CORS). */
+function measureMostlyWhite(el: CanvasImageSource): boolean | null {
+  try {
+    const c = document.createElement("canvas");
+    c.width = 32;
+    c.height = 32;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(el, 0, 0, 32, 32);
+    const d = ctx.getImageData(0, 0, 32, 32).data;
+    let inked = 0;
+    let white = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3]! < 128) continue;
+      inked++;
+      if ((0.2126 * d[i]! + 0.7152 * d[i + 1]! + 0.0722 * d[i + 2]!) / 255 > 0.85) white++;
+    }
+    return inked > 0 && white / inked > 0.5;
+  } catch {
+    return null;
+  }
+}
+
+export function GangSheetCanvas({ hideControls = false }: { hideControls?: boolean } = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<Canvas | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -129,9 +192,13 @@ export function GangSheetCanvas() {
   const drawnZoomRef = useRef<number>(1);
   /** Where a zoom should stay put (screen point), set by pinch and wheel. */
   const zoomAnchorRef = useRef<{ x: number; y: number } | null>(null);
+  /** A zoom the canvas set up itself and already drew, until the store has it. */
+  const startZoomRef = useRef<number | null>(null);
   /** baseSizeRef as state, for what renders from it (the rulers). */
   const [base, setBase] = useState<{ w: number; h: number }>({ w: 1, h: 1 });
   const [overflowCount, setOverflowCount] = useState(0);
+  /** Bumped when an artwork has been measured for white. */
+  const [whiteMeasured, setWhiteMeasured] = useState(0);
 
   const {
     sheetSize,
@@ -148,21 +215,61 @@ export function GangSheetCanvas() {
     setCanvasBg,
   } = useEditorStore();
 
+  // White on the sheet: texts and names know their colour, artwork is measured.
+  const whiteArt = useMemo(
+    () =>
+      images.some((img) => {
+        if (!img.placed) return false;
+        if (img.text) {
+          const darkEdge = img.text.outline > 0 && !isLightColor(img.text.outlineColor);
+          return isLightColor(img.text.color) && !darkEdge;
+        }
+        return MOSTLY_WHITE.get(img.bgRemovedUrl || img.thumbnailUrl) === true;
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [images, whiteMeasured],
+  );
+
   // Collision + out-of-bounds state, recomputed whenever anything moves.
   const stats = useSheetStats();
   const isMobile = useIsMobile();
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
+  const insets = viewInsets(isMobile);
+
+  /**
+   * Zooms that fit the view as it is now: the whole sheet, or its width
+   * (designs at a readable size, scrolling down the length). Measured on
+   * demand — the view shrinks when the phone's design list is open.
+   */
+  const fitZooms = () => {
+    const box = containerRef.current;
+    const b = baseSizeRef.current;
+    if (!box) return { whole: 1, width: 1 };
+    const ins = viewInsets(isMobileRef.current);
+    const w = Math.max(1, box.clientWidth - ins.left - ins.right);
+    const h = Math.max(1, box.clientHeight - ins.top - ins.bottom);
+    return { whole: Math.min(w / b.w, h / b.h), width: w / b.w };
+  };
 
   // Initialize canvas
   useEffect(() => {
     if (!canvasRef.current || !containerRef.current) return;
 
     const container = containerRef.current;
-    const scaleFactor = calculateScaleFactor(
-      sheetSize.widthMm,
-      sheetSize.heightMm,
-      container.clientWidth,
-      container.clientHeight,
-    );
+    const mobile = isMobileRef.current;
+    const ins = viewInsets(mobile);
+    // A phone measures from the width alone: 100 % is the sheet's width
+    // filling the screen, at any length and whether or not the design list
+    // is pulled up over the view while the sheet is set up.
+    const scaleFactor = mobile
+      ? Math.max(1, container.clientWidth - ins.left - ins.right) / sheetSize.widthMm
+      : calculateScaleFactor(
+          sheetSize.widthMm,
+          sheetSize.heightMm,
+          container.clientWidth,
+          container.clientHeight,
+        );
     scaleRef.current = scaleFactor;
 
     const canvasWidth = mmToCanvasPx(sheetSize.widthMm, scaleFactor);
@@ -178,8 +285,27 @@ export function GangSheetCanvas() {
     fabricRef.current = canvas;
     baseSizeRef.current = { w: canvasWidth, h: canvasHeight };
     setBase({ w: canvasWidth, h: canvasHeight });
-    drawnZoomRef.current = useEditorStore.getState().zoom;
-    applyZoom(canvas, baseSizeRef.current, drawnZoomRef.current);
+    if (mobile) {
+      // The whole sheet when it shows at a size you can work with (a
+      // metre), else its width (2 m and up would be a narrow strip):
+      // logos you can see, scrolling down the length. The width stays put
+      // when the sheet grows, instead of the sheet shrinking under you.
+      const viewH = Math.max(1, container.clientHeight - ins.top - ins.bottom);
+      const whole = Math.min(1, viewH / canvasHeight);
+      const start = whole >= 0.7 ? whole : 1;
+      drawnZoomRef.current = start;
+      applyZoom(canvas, baseSizeRef.current, start);
+      container.scrollTop = 0;
+      container.scrollLeft = 0;
+      if (Math.abs(useEditorStore.getState().zoom - start) > 1e-3) {
+        // The zoom effect below would first redraw at the zoom from before.
+        startZoomRef.current = start;
+        setZoom(start);
+      }
+    } else {
+      drawnZoomRef.current = useEditorStore.getState().zoom;
+      applyZoom(canvas, baseSizeRef.current, drawnZoomRef.current);
+    }
 
     // Events
     canvas.on("selection:created", (e) => {
@@ -409,6 +535,10 @@ export function GangSheetCanvas() {
       loadImage(url).then(
         async (fabricImg) => {
           if (isStale()) return;
+          if (!img.text && !MOSTLY_WHITE.has(url)) {
+            MOSTLY_WHITE.set(url, measureMostlyWhite(fabricImg.getElement()) ?? false);
+            setWhiteMeasured((n) => n + 1);
+          }
           const displayW = mmToCanvasPx(img.displayWidth, scaleFactor);
           const displayH = mmToCanvasPx(img.displayHeight, scaleFactor);
 
@@ -623,6 +753,11 @@ export function GangSheetCanvas() {
     const container = containerRef.current;
     const wrapper = container?.querySelector(".gs-canvas-wrapper") as HTMLElement | null;
     if (!canvas || !container || !wrapper) return;
+    if (startZoomRef.current !== null) {
+      // Already drawn by the set-up; ignore the zoom from before it.
+      if (Math.abs(zoom - startZoomRef.current) < 1e-3) startZoomRef.current = null;
+      return;
+    }
     const prev = drawnZoomRef.current;
     if (Math.abs(prev - zoom) < 1e-3) return;
 
@@ -642,6 +777,53 @@ export function GangSheetCanvas() {
     container.scrollTop += after.top + sy * zoom - anchor.y;
   }, [zoom]);
 
+  // Picked in a list, or let go with "Klar": show it on the sheet too. The
+  // handles used to follow only taps on the canvas itself.
+  useEffect(() => {
+    const canvas = fabricRef.current;
+    if (!canvas || rebuildingRef.current) return;
+    const active = canvas.getActiveObject();
+    if (active instanceof ActiveSelection) {
+      if (active.getObjects().some((o) => getObjData(o)?.imageId === selectedImageId)) return;
+    } else if ((getObjData(active)?.imageId ?? null) === selectedImageId) {
+      return;
+    }
+    if (!selectedImageId) {
+      canvas.discardActiveObject();
+    } else {
+      const obj = canvas.getObjects().find((o) => getObjData(o)?.imageId === selectedImageId && o.selectable);
+      if (!obj) return;
+      canvas.setActiveObject(obj);
+    }
+    canvas.requestRenderAll();
+  }, [selectedImageId]);
+
+  // A design picked in the phone's list may be off screen — the view is
+  // small there, and smaller still with the list open. Bring it into view.
+  useEffect(() => {
+    if (!isMobile || !selectedImageId) return;
+    const container = containerRef.current;
+    const wrapper = container?.querySelector(".gs-canvas-wrapper") as HTMLElement | null;
+    const img = useEditorStore.getState().images.find((i) => i.id === selectedImageId);
+    if (!container || !wrapper || !img) return;
+    const pxPerMm = (baseSizeRef.current.w * drawnZoomRef.current) / sheetSize.widthMm;
+    const { bboxW, bboxH } = rotatedBboxMm(img.displayWidth, img.displayHeight, img.rotation);
+    const left = wrapper.offsetLeft + img.positionX * pxPerMm;
+    const top = wrapper.offsetTop + img.positionY * pxPerMm;
+    const ins = viewInsets(true);
+    const visible =
+      top >= container.scrollTop &&
+      top + bboxH * pxPerMm <= container.scrollTop + container.clientHeight - ins.bottom &&
+      left >= container.scrollLeft &&
+      left + bboxW * pxPerMm <= container.scrollLeft + container.clientWidth;
+    if (visible) return;
+    container.scrollTo({
+      top: Math.max(0, top - ins.top),
+      left: Math.max(0, left - ins.left),
+      behavior: "smooth",
+    });
+  }, [isMobile, selectedImageId, sheetSize]);
+
   return (
     <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", background: theme.bgCanvas }}>
     <div
@@ -652,7 +834,8 @@ export function GangSheetCanvas() {
         display: "flex",
         background: theme.bgCanvas,
         overflow: "auto",
-        padding: 24,
+        overflowAnchor: "none",
+        padding: isMobile ? `${insets.top}px ${insets.right}px ${insets.bottom}px ${insets.left}px` : 24,
         // Pinching zooms the sheet (handled above), never the page.
         touchAction: "pan-x pan-y",
       }}
@@ -665,10 +848,10 @@ export function GangSheetCanvas() {
           position: "relative",
           margin: "auto",
           flexShrink: 0,
-          boxShadow: theme.shadowLg,
+          boxShadow: SHEET_FRAME,
           borderRadius: 0,
           lineHeight: 0,
-          ...backdropStyle(canvasBg),
+          ...backdropStyle(canvasBg, whiteArt),
         }}
       >
         <canvas ref={canvasRef} />
@@ -681,29 +864,48 @@ export function GangSheetCanvas() {
         overflowCount={overflowCount}
         issues={stats.issues}
         onTidy={() => void arrangeSheet()}
+        compact={isMobile}
       />
 
-      <div style={CORNER}>
-        <BackdropPicker value={canvasBg} onChange={setCanvasBg} collapsible={isMobile} />
-        <DpiLegend
-          visible={showDpiOverlay}
-          onToggle={() => setShowDpiOverlay(!showDpiOverlay)}
+      {hideControls ? null : isMobile ? (
+        // One button for how the sheet is shown; open, it floats above the
+        // controls instead of covering the bottom of the sheet for good.
+        <ViewMenu
+          bg={canvasBg}
+          onBg={setCanvasBg}
+          dpi={showDpiOverlay}
+          onDpi={setShowDpiOverlay}
         />
-      </div>
+      ) : (
+        <div style={CORNER}>
+          <BackdropPicker value={canvasBg} onChange={setCanvasBg} />
+          <DpiLegend
+            visible={showDpiOverlay}
+            onToggle={() => setShowDpiOverlay(!showDpiOverlay)}
+          />
+        </div>
+      )}
 
       {/* Zoom, the whole sheet, or its width filling the view. */}
-      <ZoomControls
+      {!hideControls && <ZoomControls
         zoom={zoom}
         onChange={setZoom}
         onFitWidth={() => {
-          const box = containerRef.current;
-          if (!box) return;
-          setZoom((box.clientWidth - 48) / Math.max(1, baseSizeRef.current.w));
+          // Keep what is at the top of the view at the top; zooming about
+          // the middle pushed the first row of designs out of sight.
+          const box = containerRef.current?.getBoundingClientRect();
+          if (box) zoomAnchorRef.current = { x: box.left, y: box.top };
+          setZoom(fitZooms().width);
         }}
-      />
+        onFitWhole={() => setZoom(fitZooms().whole)}
+        bottom={isMobile ? 16 : 12}
+      />}
     </div>
   );
 }
+
+/** A thin edge and a soft shadow: the film lifted off the table. */
+const SHEET_FRAME = "0 0 0 1px rgba(16, 24, 40, 0.16), 0 8px 24px rgba(16, 24, 40, 0.10)";
 
 /**
  * Centimetre rulers along the top and left of the sheet, so a 9 cm chest
@@ -759,7 +961,7 @@ function Rulers({ widthMm, heightMm, pxPerMm }: { widthMm: number; heightMm: num
   );
 }
 
-const ZOOM_MIN = 0.25;
+const ZOOM_MIN = 0.05;
 const ZOOM_MAX = 8;
 
 /** Bottom-left of the canvas: the backdrop picker above the DPI legend. */
@@ -773,211 +975,278 @@ const CORNER: React.CSSProperties = {
   zIndex: 5,
 };
 
+/** Floating controls over the canvas: light, like the sheet they sit on. */
 const PANEL: React.CSSProperties = {
-  background: "rgba(25, 28, 30, 0.88)",
-  backdropFilter: "blur(12px)",
+  background: "rgba(255, 255, 255, 0.97)",
+  border: `1px solid ${theme.border}`,
+  boxShadow: "0 4px 16px rgba(16, 24, 40, 0.12)",
   borderRadius: theme.radius,
+  color: theme.text,
 };
 
-function BackdropPicker({
-  value,
-  onChange,
-  collapsible,
-}: {
-  value: string;
-  onChange: (bg: string) => void;
-  /** Phones: one small button until tapped — open, it covered the sheet. */
-  collapsible?: boolean;
-}) {
-  const [open, setOpen] = useState(!collapsible);
-  const custom = value !== "checks" && !BACKDROPS.some((b) => b.id === value);
-  const pick = (bg: string) => {
-    onChange(bg);
-    if (collapsible) setOpen(false);
-  };
-  const current =
-    value === "checks"
-      ? { ...CHECKS, backgroundSize: "8px 8px", backgroundPosition: "0 0, 0 4px, 4px -4px, -4px 0px" }
-      : { background: value };
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        style={{
-          ...PANEL,
-          alignSelf: "flex-start",
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "6px 12px",
-          border: "none",
-          color: "#ffffff",
-          fontFamily: theme.fontFamily,
-          fontSize: theme.fontSize.labelMd,
-          fontWeight: theme.fontWeight.semibold,
-          cursor: "pointer",
-        }}
-      >
-        <span style={{ ...SWATCH, ...current, cursor: "inherit" }} />
-        Plaggfärg
-      </button>
-    );
-  }
-
-  return (
-    <div
-      style={{
-        ...PANEL,
-        padding: "8px 10px",
-        fontFamily: theme.fontFamily,
-        color: "#ffffff",
-        display: "flex",
-        flexDirection: "column",
-        gap: 6,
-      }}
-    >
-      <span style={{ fontSize: theme.fontSize.labelMd, fontWeight: theme.fontWeight.semibold }}>
-        Visa på plaggfärg
-      </span>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxWidth: 196 }}>
-        {BACKDROPS.map((b) => {
-          const active = value === b.id;
-          return (
-            <button
-              key={b.id}
-              type="button"
-              title={b.label}
-              aria-label={b.label}
-              aria-pressed={active}
-              onClick={() => pick(b.id)}
-              style={{
-                ...SWATCH,
-                ...(b.id === "checks" ? { ...CHECKS, backgroundSize: "8px 8px", backgroundPosition: "0 0, 0 4px, 4px -4px, -4px 0px" } : { background: b.color }),
-                boxShadow: active ? `0 0 0 2px rgba(25,28,30,1), 0 0 0 4px ${theme.accent}` : "none",
-              }}
-            />
-          );
-        })}
-        <label
-          title="Egen färg"
-          style={{
-            ...SWATCH,
-            position: "relative",
-            background: custom
-              ? value
-              : "conic-gradient(#e53935, #fdd835, #43a047, #1e88e5, #8e24aa, #e53935)",
-            boxShadow: custom ? `0 0 0 2px rgba(25,28,30,1), 0 0 0 4px ${theme.accent}` : "none",
-            cursor: "pointer",
-          }}
-        >
-          <input
-            type="color"
-            aria-label="Egen färg"
-            value={custom ? value : "#ffffff"}
-            onChange={(e) => onChange(e.target.value)}
-            onBlur={() => collapsible && setOpen(false)}
-            style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%" }}
-          />
-        </label>
-      </div>
-    </div>
-  );
-}
+const PANEL_TITLE: React.CSSProperties = {
+  fontSize: theme.fontSize.labelMd,
+  fontWeight: theme.fontWeight.semibold,
+  color: theme.text,
+};
 
 const SWATCH: React.CSSProperties = {
-  width: 18,
-  height: 18,
+  width: 24,
+  height: 24,
   borderRadius: "50%",
-  border: "1px solid rgba(255,255,255,0.35)",
+  border: "1px solid rgba(0,0,0,0.15)",
   padding: 0,
   cursor: "pointer",
   flexShrink: 0,
 };
 
-function DpiLegend({
-  visible,
-  onToggle,
-}: {
-  visible: boolean;
-  onToggle: () => void;
-}) {
-  const levels = [
-    {
-      label: `${DPI_LEVEL_LABELS.optimal} ≥ ${DPI_THRESHOLDS.optimal} DPI`,
-      color: DPI_LEVEL_COLORS.optimal,
-    },
-    {
-      label: `${DPI_LEVEL_LABELS.good} ≥ ${DPI_THRESHOLDS.good} DPI`,
-      color: DPI_LEVEL_COLORS.good,
-    },
-    {
-      label: `${DPI_LEVEL_LABELS.low} ≥ ${DPI_THRESHOLDS.low} DPI`,
-      color: DPI_LEVEL_COLORS.low,
-    },
-    {
-      label: `${DPI_LEVEL_LABELS.bad} < ${DPI_THRESHOLDS.low} DPI`,
-      color: DPI_LEVEL_COLORS.bad,
-    },
-  ];
+function swatchFill(bg: string): React.CSSProperties {
+  if (bg !== "checks") return { background: bg };
+  return { ...CHECKS, backgroundSize: "8px 8px", backgroundPosition: "0 0, 0 4px, 4px -4px, -4px 0px" };
+}
 
+/** The garment colours to show the sheet on, plus one of your own. */
+function BackdropSwatches({ value, onChange }: { value: string; onChange: (bg: string) => void }) {
+  const custom = value !== "checks" && !BACKDROPS.some((b) => b.id === value);
+  const ring = `0 0 0 2px #ffffff, 0 0 0 4px ${theme.accent}`;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      {BACKDROPS.map((b) => {
+        const active = value === b.id;
+        return (
+          <button
+            key={b.id}
+            type="button"
+            title={b.label}
+            aria-label={b.label}
+            aria-pressed={active}
+            onClick={() => onChange(b.id)}
+            style={{ ...SWATCH, ...swatchFill(b.id === "checks" ? "checks" : b.color), boxShadow: active ? ring : "none" }}
+          />
+        );
+      })}
+      <label
+        title="Egen färg"
+        style={{
+          ...SWATCH,
+          position: "relative",
+          background: custom ? value : "conic-gradient(#e53935, #fdd835, #43a047, #1e88e5, #8e24aa, #e53935)",
+          boxShadow: custom ? ring : "none",
+        }}
+      >
+        <input
+          type="color"
+          aria-label="Egen färg"
+          value={custom ? value : "#ffffff"}
+          onChange={(e) => onChange(e.target.value)}
+          style={{ position: "absolute", inset: 0, opacity: 0, cursor: "pointer", width: "100%", height: "100%" }}
+        />
+      </label>
+    </div>
+  );
+}
+
+/** The computer's picker: always open beside the sheet, where there is room. */
+function BackdropPicker({ value, onChange }: { value: string; onChange: (bg: string) => void }) {
   return (
     <div
       style={{
         ...PANEL,
-        padding: visible ? "10px 14px" : "6px 12px",
-        fontSize: theme.fontSize.labelSm,
+        padding: "10px 12px",
         fontFamily: theme.fontFamily,
-        color: "#ffffff",
-        alignSelf: "flex-start",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        maxWidth: 224,
       }}
     >
-      <label
+      <span style={PANEL_TITLE}>Visa på plaggfärg</span>
+      <BackdropSwatches value={value} onChange={onChange} />
+    </div>
+  );
+}
+
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <label
+      style={{
+        position: "relative",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 12,
+        cursor: "pointer",
+        fontSize: theme.fontSize.labelMd,
+        fontWeight: theme.fontWeight.semibold,
+        color: theme.text,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {label}
+      <span
+        aria-hidden
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          cursor: "pointer",
-          marginBottom: visible ? 8 : 0,
-          fontWeight: theme.fontWeight.semibold,
-          fontSize: theme.fontSize.labelMd,
-          color: "#ffffff",
-          whiteSpace: "nowrap",
+          position: "relative",
+          width: 34,
+          height: 20,
+          borderRadius: 10,
+          background: checked ? theme.accent : "rgba(0,0,0,0.18)",
+          transition: "background 0.15s",
+          flexShrink: 0,
         }}
       >
-        <input
-          type="checkbox"
-          checked={visible}
-          onChange={onToggle}
-          style={{ accentColor: theme.accent }}
+        <span
+          style={{
+            position: "absolute",
+            top: 2,
+            left: checked ? 16 : 2,
+            width: 16,
+            height: 16,
+            borderRadius: "50%",
+            background: "#ffffff",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.25)",
+            transition: "left 0.15s",
+          }}
         />
-        DPI-kvalitet
-      </label>
-      {visible && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-          {levels.map((l) => (
-            <div
-              key={l.label}
-              style={{ display: "flex", alignItems: "center", gap: 6 }}
-            >
-              <div
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        style={{ position: "absolute", opacity: 0, width: 1, height: 1, margin: 0 }}
+      />
+    </label>
+  );
+}
+
+function DpiLevels() {
+  const levels = [
+    { label: `${DPI_LEVEL_LABELS.optimal} ≥ ${DPI_THRESHOLDS.optimal} DPI`, color: DPI_LEVEL_COLORS.optimal },
+    { label: `${DPI_LEVEL_LABELS.good} ≥ ${DPI_THRESHOLDS.good} DPI`, color: DPI_LEVEL_COLORS.good },
+    { label: `${DPI_LEVEL_LABELS.low} ≥ ${DPI_THRESHOLDS.low} DPI`, color: DPI_LEVEL_COLORS.low },
+    { label: `${DPI_LEVEL_LABELS.bad} < ${DPI_THRESHOLDS.low} DPI`, color: DPI_LEVEL_COLORS.bad },
+  ];
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {levels.map((l) => (
+        <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 10, height: 10, borderRadius: 3, background: l.color, flexShrink: 0 }} />
+          <span style={{ color: theme.textMuted, fontSize: theme.fontSize.labelSm }}>{l.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DpiLegend({ visible, onToggle }: { visible: boolean; onToggle: () => void }) {
+  return (
+    <div
+      style={{
+        ...PANEL,
+        padding: "8px 12px",
+        fontFamily: theme.fontFamily,
+        alignSelf: "flex-start",
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+      }}
+    >
+      <Toggle label="DPI-kvalitet" checked={visible} onChange={() => onToggle()} />
+      {visible && <DpiLevels />}
+    </div>
+  );
+}
+
+/**
+ * The phone's one button for how the sheet is shown: garment colour and
+ * the DPI check. Two dark panels used to sit on the bottom of the sheet.
+ */
+function ViewMenu({
+  bg,
+  onBg,
+  dpi,
+  onDpi,
+}: {
+  bg: string;
+  onBg: (bg: string) => void;
+  dpi: boolean;
+  onDpi: (on: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      {open && <div aria-hidden onClick={() => setOpen(false)} style={{ position: "absolute", inset: 0, zIndex: 6 }} />}
+      <div
+        style={{
+          position: "absolute",
+          left: 12,
+          bottom: 16,
+          zIndex: 7,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-start",
+          gap: 8,
+        }}
+      >
+        {open && (
+          <div
+            style={{
+              ...PANEL,
+              width: 236,
+              padding: 12,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+              fontFamily: theme.fontFamily,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <span style={PANEL_TITLE}>Visa på plaggfärg</span>
+              <BackdropSwatches value={bg} onChange={onBg} />
+            </div>
+            <div style={{ height: 1, background: theme.border }} />
+            <Toggle label="Visa DPI-kvalitet" checked={dpi} onChange={onDpi} />
+            {dpi && <DpiLevels />}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          style={{
+            ...PANEL,
+            height: 46,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "0 14px 0 11px",
+            fontFamily: theme.fontFamily,
+            fontSize: theme.fontSize.labelLg,
+            fontWeight: theme.fontWeight.semibold,
+            cursor: "pointer",
+          }}
+        >
+          <span style={{ position: "relative", display: "flex" }}>
+            <span style={{ ...SWATCH, width: 22, height: 22, ...swatchFill(bg), cursor: "inherit" }} />
+            {dpi && (
+              <span
                 style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: 2,
-                  background: l.color,
-                  flexShrink: 0,
+                  position: "absolute",
+                  top: -2,
+                  right: -3,
+                  width: 9,
+                  height: 9,
+                  borderRadius: "50%",
+                  background: theme.accent,
+                  border: "1.5px solid #ffffff",
                 }}
               />
-              <span style={{ color: "rgba(255,255,255,0.75)", fontSize: theme.fontSize.labelXs }}>
-                {l.label}
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+            )}
+          </span>
+          Visning
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -990,10 +1259,13 @@ function CanvasAlerts({
   overflowCount,
   issues,
   onTidy,
+  compact,
 }: {
   overflowCount: number;
   issues: { severity: "error" | "warning"; message: string }[];
   onTidy: () => void;
+  /** A phone: edge to edge, so the text gets the width it needs. */
+  compact?: boolean;
 }) {
   const errors = issues.filter((i) => i.severity === "error");
   const hasOverflow = overflowCount > 0;
@@ -1003,14 +1275,15 @@ function CanvasAlerts({
     <div
       style={{
         position: "absolute",
-        top: 12,
-        left: "50%",
-        transform: "translateX(-50%)",
+        top: compact ? 8 : 12,
+        left: compact ? 8 : "50%",
+        right: compact ? 8 : undefined,
+        transform: compact ? undefined : "translateX(-50%)",
         display: "flex",
         flexDirection: "column",
         gap: 6,
         zIndex: 6,
-        maxWidth: "92%",
+        maxWidth: compact ? undefined : "92%",
       }}
     >
       {hasOverflow && (
@@ -1080,69 +1353,111 @@ function Alert({
 }
 
 
-/** Zoom for the phone shell, which has no toolbar to put it in. */
+const ICON = {
+  zoomOut: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="M7.5 10.5h6M20 20l-4.5-4.5" />
+    </svg>
+  ),
+  zoomIn: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="M7.5 10.5h6M10.5 7.5v6M20 20l-4.5-4.5" />
+    </svg>
+  ),
+  fitWidth: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3.5 5v14M20.5 5v14M7.5 12h9M10 9l-3 3 3 3M14 9l3 3-3 3" />
+    </svg>
+  ),
+  fitWhole: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+    </svg>
+  ),
+};
+
+/**
+ * Zoom by steps, the whole sheet, or its width filling the view. Steps
+ * multiply, so a tap does as much at 30 % as at 300 %; the old ±25 points
+ * went from 25 % to 50 % in one tap and took ten taps to get anywhere big.
+ */
 function ZoomControls({
   zoom,
   onChange,
   onFitWidth,
+  onFitWhole,
+  bottom,
 }: {
   zoom: number;
   onChange: (z: number) => void;
   /** Zoom so the sheet's width fills the view (designs at a readable size). */
   onFitWidth: () => void;
+  onFitWhole: () => void;
+  bottom: number;
 }) {
   const btn: React.CSSProperties = {
-    width: 40,
-    height: 40,
+    width: 36,
+    height: 36,
     border: "none",
+    borderRadius: 10,
     background: "transparent",
-    color: "#fff",
-    fontSize: 20,
-    lineHeight: 1,
+    color: theme.text,
     cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
     fontFamily: theme.fontFamily,
   };
+  const atMin = zoom <= ZOOM_MIN + 1e-3;
+  const atMax = zoom >= ZOOM_MAX - 1e-3;
 
   return (
     <div
       style={{
+        ...PANEL,
         position: "absolute",
-        bottom: 12,
+        bottom,
         right: 12,
         display: "flex",
         alignItems: "center",
-        background: "rgba(25, 28, 30, 0.88)",
-        backdropFilter: "blur(12px)",
-        borderRadius: theme.radius,
+        gap: 2,
+        padding: 4,
         zIndex: 5,
-        overflow: "hidden",
       }}
     >
-      <button onClick={() => onChange(zoom - 0.25)} style={btn} aria-label="Zooma ut">
-        −
+      <button type="button" onClick={() => onChange(zoom / ZOOM_STEP)} disabled={atMin} style={{ ...btn, opacity: atMin ? 0.35 : 1 }} aria-label="Zooma ut" title="Zooma ut">
+        {ICON.zoomOut}
       </button>
       <button
-        onClick={() => onChange(1)}
+        type="button"
+        onClick={onFitWhole}
         style={{
           ...btn,
           width: "auto",
-          padding: "0 4px",
-          fontSize: theme.fontSize.labelMd,
-          color: "rgba(255,255,255,0.75)",
+          minWidth: 46,
+          padding: "0 2px",
+          fontSize: theme.fontSize.labelLg,
+          fontWeight: theme.fontWeight.semibold,
+          fontVariantNumeric: "tabular-nums",
+          color: theme.textMuted,
         }}
-        aria-label="Återställ zoom"
+        aria-label="Visa hela arket"
+        title="Visa hela arket"
       >
         {Math.round(zoom * 100)}%
       </button>
-      <button onClick={() => onChange(zoom + 0.25)} style={btn} aria-label="Zooma in">
-        +
+      <button type="button" onClick={() => onChange(zoom * ZOOM_STEP)} disabled={atMax} style={{ ...btn, opacity: atMax ? 0.35 : 1 }} aria-label="Zooma in" title="Zooma in">
+        {ICON.zoomIn}
       </button>
-      <span style={{ width: 1, height: 20, background: "rgba(255,255,255,0.2)" }} />
-      <button onClick={() => onChange(1)} style={{ ...btn, fontSize: 15 }} title="Visa hela arket" aria-label="Visa hela arket">
-        ⤢
+      <span style={{ width: 1, height: 22, background: theme.border, margin: "0 2px" }} />
+      <button type="button" onClick={onFitWidth} style={btn} title="Fyll bredden" aria-label="Fyll bredden">
+        {ICON.fitWidth}
       </button>
-      <button onClick={onFitWidth} style={{ ...btn, fontSize: 16 }} title="Fyll bredden" aria-label="Fyll bredden">
-        ↔
+      <button type="button" onClick={onFitWhole} style={btn} title="Visa hela arket" aria-label="Visa hela arket">
+        {ICON.fitWhole}
       </button>
     </div>
   );

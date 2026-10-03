@@ -103,15 +103,10 @@ export function NamesNumbers({
   const fromPrice = prices.size ? Math.min(...[...prices.values()].map((p) => p.price)) : null;
   const priceOf = (kind: "name" | "number", cm: number) => prices.get(priceKey(kind, cm))?.price ?? null;
 
-  const pickStyle = (kind: "name" | "number", style: Style) => {
-    if (kind === "name") update({ nameStyle: style.id });
-    else
-      update({
-        numberStyle: style.id,
-        // Retro and Sport numbers are outlined in the contrasting colour.
-        ...(style.outlined && look.outline === "none" ? { outline: contrastOf(look.color) } : {}),
-      });
-  };
+  // A style is only the letterforms: the outline stays what the customer
+  // chose under "Kontur". Picking Retro or Sport used to switch one on.
+  const pickStyle = (kind: "name" | "number", style: Style) =>
+    update(kind === "name" ? { nameStyle: style.id } : { numberStyle: style.id });
 
   const setRow = (id: string, patch: Partial<Row>) => setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
 
@@ -420,10 +415,7 @@ function StylePicker({
                   fontFamily: `"${fontFamily(fontById(s.fontId))}", sans-serif`,
                   fontSize: 26,
                   lineHeight: 1.1,
-                  // Outlined styles as they print: light figures with a dark edge.
-                  color: s.outlined ? "#fff" : INK,
-                  WebkitTextStroke: s.outlined ? `1.4px ${INK}` : undefined,
-                  paintOrder: s.outlined ? "stroke fill" : undefined,
+                  color: INK,
                 }}
               >
                 {sample}
@@ -490,7 +482,9 @@ function RosterTable({
 }) {
   const showName = setup !== "numbers";
   const showNumber = setup !== "names";
-  const cols = [showName ? "minmax(0, 1fr)" : "", showNumber ? "72px" : "", "104px", "28px"].filter(Boolean).join(" ");
+  // Narrow number and count columns: three digits and a stepper need no
+  // more, and on a phone the name field got 70 px ("Anderss").
+  const cols = [showName ? "minmax(0, 1fr)" : "", showNumber ? "56px" : "", "92px", "24px"].filter(Boolean).join(" ");
   return (
     <div>
       <div style={{ ...S.tableHead, gridTemplateColumns: cols }}>
@@ -743,7 +737,7 @@ const S: Record<string, React.CSSProperties> = {
   row: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" },
   fieldLabel: { fontSize: 13, fontWeight: 600, minWidth: 60 },
   segmented: { display: "inline-flex", padding: 3, gap: 3, borderRadius: 10, background: SOFT },
-  segment: { border: "none", background: "transparent", padding: "7px 14px", borderRadius: 8, cursor: "pointer", font: "inherit", fontSize: 13, color: MUTED },
+  segment: { border: "none", background: "transparent", padding: "7px 14px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: MUTED },
   segmentOn: { background: "#fff", color: INK, fontWeight: 600, boxShadow: "0 1px 3px rgba(0,0,0,0.1)" },
   chip: {
     display: "flex",
@@ -762,7 +756,7 @@ const S: Record<string, React.CSSProperties> = {
   },
   chipOn: { background: INK, borderColor: INK, color: "#fff", fontWeight: 600 },
   tabs: { display: "flex", gap: 4, padding: 3, borderRadius: 10, background: SOFT, marginBottom: 12 },
-  tab: { flex: 1, border: "none", background: "transparent", padding: "8px 6px", borderRadius: 8, cursor: "pointer", font: "inherit", fontSize: 13, color: MUTED },
+  tab: { flex: 1, border: "none", background: "transparent", padding: "8px 6px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontSize: 13, color: MUTED },
   tabOn: { background: "#fff", color: INK, fontWeight: 600, boxShadow: "0 1px 3px rgba(0,0,0,0.1)" },
   tableHead: { display: "grid", gap: 6, fontSize: 11.5, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6, padding: "0 2px" },
   input: {
@@ -778,8 +772,8 @@ const S: Record<string, React.CSSProperties> = {
     minWidth: 0,
   },
   stepper: { display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid rgba(0,0,0,0.16)", borderRadius: 10, padding: 2, height: 42, boxSizing: "border-box" },
-  stepBtn: { width: 30, height: 34, border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: INK, font: "inherit" },
-  remove: { width: 28, height: 28, border: "none", background: "transparent", color: "#a1a1a6", fontSize: 20, cursor: "pointer", padding: 0 },
+  stepBtn: { width: 28, height: 34, border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: INK, fontFamily: "inherit", padding: 0 },
+  remove: { width: 24, height: 28, border: "none", background: "transparent", color: "#a1a1a6", fontSize: 20, cursor: "pointer", padding: 0 },
   secondaryBtn: {
     border: `1px solid rgba(0,0,0,0.16)`,
     background: "#fff",
