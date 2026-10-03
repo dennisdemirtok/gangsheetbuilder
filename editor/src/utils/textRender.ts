@@ -39,6 +39,14 @@ const REF = 200;
 const MAX_PIXELS = 16_000_000;
 const MAX_SIDE = 12_000;
 
+/**
+ * The thinnest outline line a DTF print holds through the press and the
+ * wash. Outlines are shares of the font size, so on a 5 cm number the
+ * Digital hairline came out 0.6 mm and a double outline's outer line
+ * 0.9 mm; such lines are drawn this thick, bigger numbers keep their own.
+ */
+export const MIN_LINE_MM = 1;
+
 interface Laid {
   lines: { text: string; x: number; y: number }[];
   /** Ink box at REF size, outline included. */
@@ -188,6 +196,38 @@ export async function renderTextForPrint(
 }
 
 /**
+ * `spec` with no line of its outline thinner than MIN_LINE_MM when the
+ * font is `fontMm` tall: the line, and a double outline's gap and inner
+ * line. The same spec back when every line is thick enough already.
+ */
+function printable(spec: TextSpec, fontMm: number): TextSpec {
+  if (spec.outline <= 0) return spec;
+  const min = MIN_LINE_MM / fontMm;
+  const at = (share: number | undefined) => (share !== undefined && share > 0 && share < min ? min : share);
+  const outline = at(spec.outline)!;
+  const outlineGap = at(spec.outlineGap);
+  const inlineWidth = at(spec.inlineWidth);
+  if (outline === spec.outline && outlineGap === spec.outlineGap && inlineWidth === spec.inlineWidth) return spec;
+  return { ...spec, outline, outlineGap, inlineWidth };
+}
+
+/**
+ * Laid out for letters `heightMm` tall, the outline made printable for
+ * that size. `letters` is the letters' height at REF size, outline left out.
+ */
+async function layoutAtHeight(
+  spec: TextSpec,
+  heightMm: number,
+): Promise<{ laid: Laid; spec: TextSpec; letters: number } | null> {
+  const plain = await layout(spec);
+  if (!plain) return null;
+  const letters = Math.max(1, plain.h - plain.outline * 2);
+  const printed = printable(spec, (heightMm / letters) * REF);
+  const laid = printed === spec ? plain : await layout(printed);
+  return laid ? { laid, spec: printed, letters } : null;
+}
+
+/**
  * Text for print by letter height: names and numbers are ordered as "7 cm"
  * or "25 cm" tall. The letters (not the outline around them) are
  * `heightMm` high; the outline adds to the piece. `mmPerPx` as above.
@@ -196,9 +236,9 @@ export async function renderTextAtHeight(
   spec: TextSpec,
   heightMm: number,
 ): Promise<{ canvas: HTMLCanvasElement; mmPerPx: number; widthMm: number; heightMm: number } | null> {
-  const laid = await layout(spec);
-  if (!laid) return null;
-  const letters = Math.max(1, laid.h - laid.outline * 2);
+  const at = await layoutAtHeight(spec, heightMm);
+  if (!at) return null;
+  const { laid, letters } = at;
   const targetPx = (heightMm / 25.4) * 300;
   const scale = Math.min(
     targetPx / letters,
@@ -206,7 +246,7 @@ export async function renderTextAtHeight(
     MAX_SIDE / laid.h,
     Math.sqrt(MAX_PIXELS / (laid.w * laid.h)),
   );
-  const canvas = draw(laid, spec, scale);
+  const canvas = draw(laid, at.spec, scale);
   if (!canvas) return null;
   const mmPerPx = heightMm / (letters * scale);
   return { canvas, mmPerPx, widthMm: laid.w * scale * mmPerPx, heightMm: laid.h * scale * mmPerPx };
@@ -217,10 +257,10 @@ export async function measureTextAtHeight(
   spec: TextSpec,
   heightMm: number,
 ): Promise<{ widthMm: number; heightMm: number } | null> {
-  const laid = await layout(spec);
-  if (!laid) return null;
-  const mmPerRef = heightMm / Math.max(1, laid.h - laid.outline * 2);
-  return { widthMm: laid.w * mmPerRef, heightMm: laid.h * mmPerRef };
+  const at = await layoutAtHeight(spec, heightMm);
+  if (!at) return null;
+  const mmPerRef = heightMm / at.letters;
+  return { widthMm: at.laid.w * mmPerRef, heightMm: at.laid.h * mmPerRef };
 }
 
 /** Text for the preview, fitted inside maxW × maxH pixels. */

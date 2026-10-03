@@ -744,12 +744,16 @@ const S: Record<string, React.CSSProperties> = {
     flexDirection: "column",
     alignItems: "center",
     lineHeight: 1.25,
-    border: `1px solid ${LINE}`,
+    // Longhands only: chipOn changes the colour and the weight, and with the
+    // shorthands React left the last pick's black border on when it moved.
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: LINE,
     background: "#fff",
     borderRadius: 12,
     padding: "7px 14px",
     cursor: "pointer",
-    font: "inherit",
+    fontFamily: "inherit",
     fontSize: 13,
     color: INK,
     minWidth: 64,

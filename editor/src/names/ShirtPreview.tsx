@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from "react";
 import { fontById, fontFamily, loadFont } from "../config/fonts";
+import { MIN_LINE_MM } from "../utils/textRender";
 import { DOUBLE_OUTLINE, OUTLINE_WIDTH, styleById, type Look } from "./catalog";
 
 /**
@@ -21,6 +22,8 @@ export const SHIRT_COLORS: { value: string; label: string }[] = [
 
 // Shirt drawn in a 400 × 460 box; the back is ~52 cm across at the chest.
 const UNITS_PER_CM = 210 / 52;
+/** The thinnest outline line, as in print. */
+const MIN_LINE = (MIN_LINE_MM / 10) * UNITS_PER_CM;
 
 /**
  * How tall capitals or digits are against the font size, measured once per
@@ -151,6 +154,8 @@ function Lettering({
   text: string;
 }) {
   const clip = `nn-inline-${useId().replace(/[^a-zA-Z0-9-]/g, "")}`;
+  // A line of the outline, never thinner than it prints.
+  const line = (share: number) => Math.max(size * share, MIN_LINE);
   const common = {
     x: 200,
     y,
@@ -162,7 +167,7 @@ function Lettering({
   if (stroke === "none") return <text {...common} fill={fill}>{text}</text>;
   if (!double) {
     return (
-      <text {...common} fill={fill} stroke={stroke} strokeWidth={size * (width ?? OUTLINE_WIDTH) * 2} strokeLinejoin="round" paintOrder="stroke">
+      <text {...common} fill={fill} stroke={stroke} strokeWidth={line(width ?? OUTLINE_WIDTH) * 2} strokeLinejoin="round" paintOrder="stroke">
         {text}
       </text>
     );
@@ -170,16 +175,16 @@ function Lettering({
   const { outer, gap, inner } = DOUBLE_OUTLINE;
   return (
     <g>
-      <text {...common} fill={fill} stroke={stroke} strokeWidth={size * (outer + gap) * 2} strokeLinejoin="round" paintOrder="stroke">
+      <text {...common} fill={fill} stroke={stroke} strokeWidth={(line(outer) + line(gap)) * 2} strokeLinejoin="round" paintOrder="stroke">
         {text}
       </text>
-      <text {...common} fill={fill} stroke={fill} strokeWidth={size * gap * 2} strokeLinejoin="round" paintOrder="stroke">
+      <text {...common} fill={fill} stroke={fill} strokeWidth={line(gap) * 2} strokeLinejoin="round" paintOrder="stroke">
         {text}
       </text>
       <clipPath id={clip}>
         <text {...common}>{text}</text>
       </clipPath>
-      <text {...common} fill="none" stroke={stroke} strokeWidth={size * inner * 2} strokeLinejoin="round" clipPath={`url(#${clip})`}>
+      <text {...common} fill="none" stroke={stroke} strokeWidth={line(inner) * 2} strokeLinejoin="round" clipPath={`url(#${clip})`}>
         {text}
       </text>
     </g>

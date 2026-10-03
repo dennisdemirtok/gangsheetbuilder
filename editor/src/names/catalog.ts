@@ -41,6 +41,7 @@ export const NUMBER_STYLES: Style[] = [
   { id: "liga", label: "Liga", fontId: "tc-liga", outline: "double" },
   // Each segment outlined on its own with a hairline, as on the sample:
   // thicker, the lines of neighbouring segments ran together in the joins.
+  // Printed never thinner than MIN_LINE_MM, so 1 mm on 5 and 7 cm numbers.
   { id: "digital", label: "Digital", fontId: "tc-digital", outlineWidth: 0.008 },
 ];
 
@@ -87,7 +88,8 @@ export const OUTLINE_WIDTH = 0.018;
 /**
  * The double outline, measured on the sample sheet's outlined 7, as shares
  * of the font size: a 1.7 % line, a 2.3 % gap and a 2.9 % line inside the
- * figure (of its height).
+ * figure (of its height). No line prints thinner than MIN_LINE_MM
+ * (utils/textRender): on a 5 cm number the outer line is drawn 1 mm.
  */
 export const DOUBLE_OUTLINE = { outer: 0.012, gap: 0.016, inner: 0.02 };
 
