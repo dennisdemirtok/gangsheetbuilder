@@ -48,7 +48,23 @@ function useWide(ref: React.RefObject<HTMLElement | null>, min = 860) {
   return wide;
 }
 
-export function NamesNumbers({ prices }: { prices: PriceList }) {
+/**
+ * `mode="builder"`: the same steps inside the gang sheet builder. No piece
+ * prices there (the sheet is paid by length); the button puts the names
+ * and numbers on the sheet instead of in the cart.
+ */
+export function NamesNumbers({
+  prices,
+  mode = "product",
+  onAddToSheet,
+  onDone,
+}: {
+  prices: PriceList;
+  mode?: "product" | "builder";
+  onAddToSheet?: (graphics: Graphic[], onProgress: (p: OrderProgress) => void) => Promise<void>;
+  onDone?: () => void;
+}) {
+  const builder = mode === "builder";
   const rootRef = useRef<HTMLDivElement>(null);
   const wide = useWide(rootRef);
   const [look, setLook] = useState<Look>(DEFAULT_LOOK);
@@ -109,12 +125,20 @@ export function NamesNumbers({ prices }: { prices: PriceList }) {
     setTab("table");
   };
 
-  const canOrder = totals.pieces > 0 && totals.blocked.length === 0 && !progress;
+  // In the builder only pieces wider than the film stop the order.
+  const blocked = builder ? totals.blocked.filter((g) => g.tooWide) : totals.blocked;
+  const canOrder = totals.pieces > 0 && blocked.length === 0 && !progress;
   const order = async () => {
     if (!canOrder) return;
     setError(null);
     setProgress({ step: "draw", done: 0, total: graphics.length });
     try {
+      if (builder) {
+        await onAddToSheet?.(graphics, setProgress);
+        setAdded(true);
+        window.setTimeout(() => onDone?.(), 900);
+        return;
+      }
       await orderGraphics(graphics, look, filled, setProgress);
       setAdded(true);
       const root = (window as any).Shopify?.routes?.root || "/";
@@ -157,7 +181,7 @@ export function NamesNumbers({ prices }: { prices: PriceList }) {
         <div style={{ alignSelf: "stretch" }}>{preview}</div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-          {fromPrice !== null && (
+          {!builder && fromPrice !== null && (
             <div style={S.priceLead}>
               Från <strong>{kr(fromPrice)}</strong> per tryck · upp till 50 % mängdrabatt · exkl. moms
             </div>
@@ -220,13 +244,13 @@ export function NamesNumbers({ prices }: { prices: PriceList }) {
             {look.setup !== "numbers" && (
               <div style={S.row}>
                 <span style={S.fieldLabel}>Namn</span>
-                <Chips values={NAME_SIZES_CM} value={look.nameCm} onChange={(v) => update({ nameCm: v })} price={(v) => priceOf("name", v)} />
+                <Chips values={NAME_SIZES_CM} value={look.nameCm} onChange={(v) => update({ nameCm: v })} price={(v) => (builder ? null : priceOf("name", v))} />
               </div>
             )}
             {look.setup !== "names" && (
               <div style={{ ...S.row, marginTop: look.setup === "both" ? 10 : 0 }}>
                 <span style={S.fieldLabel}>Nummer</span>
-                <Chips values={NUMBER_SIZES_CM} value={look.numberCm} onChange={(v) => update({ numberCm: v })} price={(v) => priceOf("number", v)} />
+                <Chips values={NUMBER_SIZES_CM} value={look.numberCm} onChange={(v) => update({ numberCm: v })} price={(v) => (builder ? null : priceOf("number", v))} />
               </div>
             )}
             {look.setup !== "numbers" && (
@@ -299,6 +323,22 @@ export function NamesNumbers({ prices }: { prices: PriceList }) {
             )}
           </Step>
 
+          {builder ? (
+            <div style={S.summary}>
+              <div style={{ ...S.sumRow, fontSize: 14, color: MUTED, marginBottom: 12 }}>
+                <span>{totals.pieces} tryck läggs på arket</span>
+                <span>Arket växer om det behövs</span>
+              </div>
+              {blocked.length > 0 && (
+                <div style={{ ...S.error, marginTop: 0, marginBottom: 12 }}>
+                  {blocked.slice(0, 3).map((g) => `"${g.text}" blir bredare än filmen i ${g.heightCm} cm`).join(". ")}. Välj en mindre storlek.
+                </div>
+              )}
+              <button type="button" onClick={() => void order()} disabled={!canOrder} style={{ ...S.primary, ...(canOrder ? null : S.primaryOff) }}>
+                {progress ? "Lägger på arket…" : totals.pieces ? `Lägg ${totals.pieces} tryck på arket` : "Fyll i listan för att fortsätta"}
+              </button>
+            </div>
+          ) : (
           <Summary
             pieces={totals.pieces}
             subtotal={totals.subtotal}
@@ -312,12 +352,13 @@ export function NamesNumbers({ prices }: { prices: PriceList }) {
             onOrder={() => void order()}
             sticky={false}
           />
+          )}
           {error && <div style={S.error}>{error}</div>}
         </div>
       </div>
 
       {/* Phones: the total and the button stay in reach while the list grows. */}
-      {!wide && (
+      {!wide && !builder && (
         <div style={S.mobileBar}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 16 }}>{totals.pieces ? kr(Math.round(total * 100) / 100) : "—"}</div>
@@ -331,7 +372,7 @@ export function NamesNumbers({ prices }: { prices: PriceList }) {
         </div>
       )}
 
-      {progress && <ProgressModal progress={progress} added={added} />}
+      {progress && <ProgressModal progress={progress} added={added} builder={builder} />}
     </div>
   );
 }
@@ -607,20 +648,24 @@ function Summary({
   );
 }
 
-function ProgressModal({ progress, added }: { progress: OrderProgress; added: boolean }) {
+function ProgressModal({ progress, added, builder }: { progress: OrderProgress; added: boolean; builder: boolean }) {
   const steps: { id: OrderProgress["step"]; label: string }[] = [
     { id: "draw", label: "Ritar namn och nummer" },
     { id: "upload", label: `Sparar trycken${progress.total ? ` (${Math.min(progress.done, progress.total)} av ${progress.total})` : ""}` },
-    { id: "sheet", label: "Bygger tryckarket" },
-    { id: "cart", label: "Lägger i varukorgen" },
+    { id: "sheet", label: builder ? "Lägger dem på arket" : "Bygger tryckarket" },
+    ...(builder ? [] : [{ id: "cart" as const, label: "Lägger i varukorgen" }]),
   ];
   const at = added ? steps.length : steps.findIndex((s) => s.id === progress.step);
   const pct = added ? 100 : Math.round(((at + (progress.step === "upload" && progress.total ? progress.done / progress.total : 0)) / steps.length) * 100);
   return (
     <div style={S.backdrop}>
       <div role="dialog" aria-modal="true" aria-label="Lägger i varukorgen" style={S.modal}>
-        <h3 style={{ margin: "0 0 4px", fontSize: 17, color: added ? "#2e7d32" : INK }}>{added ? "Tillagt i varukorgen" : "Lägger i varukorgen"}</h3>
-        <p style={{ ...S.small, margin: "0 0 14px" }}>{added ? "Går till varukorgen…" : "Vi gör ett färdigt tryckark av din lista."}</p>
+        <h3 style={{ margin: "0 0 4px", fontSize: 17, color: added ? "#2e7d32" : INK }}>
+          {builder ? (added ? "Klart" : "Lägger på arket") : added ? "Tillagt i varukorgen" : "Lägger i varukorgen"}
+        </h3>
+        <p style={{ ...S.small, margin: "0 0 14px" }}>
+          {builder ? (added ? "Namnen och numren ligger på arket." : "Vi ritar varje namn och nummer i 300 DPI.") : added ? "Går till varukorgen…" : "Vi gör ett färdigt tryckark av din lista."}
+        </p>
         <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 10 }}>
           {steps.map((s, i) => (
             <li key={s.id} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 14, color: i < at ? "#2e7d32" : i === at ? INK : "#a1a1a6" }}>

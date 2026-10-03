@@ -596,6 +596,7 @@ function GlobalStyles() {
   return (
     <style>{`
       @keyframes gs-spin { to { transform: rotate(360deg); } }
+      @keyframes gs-nn-spin { to { transform: rotate(360deg); } }
       @keyframes gs-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
       @keyframes gs-toast-in {
         from { transform: translateY(-10px); opacity: 0; }

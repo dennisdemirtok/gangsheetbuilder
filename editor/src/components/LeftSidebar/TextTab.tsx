@@ -14,6 +14,7 @@ import { renderTextForPrint, renderTextPreview, type TextSpec } from "../../util
 import { showToast } from "../../utils/toast";
 import { theme } from "../../styles/theme";
 import { useIsMobile } from "../../utils/useIsMobile";
+import { NamesModal } from "../../names/NamesModal";
 
 /**
  * Text for the sheet: pick a font with your own words as the sample, a
@@ -91,6 +92,7 @@ export function TextTab() {
   const [widthCm, setWidthCm] = useState(20);
   const [category, setCategory] = useState<FontCategory | "all">("all");
   const [busy, setBusy] = useState(false);
+  const [namesOpen, setNamesOpen] = useState(false);
   const [, setFontsLoaded] = useState(0);
   const update = (patch: Partial<TextSpec>) => setSpec((s) => ({ ...s, ...patch }));
 
@@ -198,6 +200,19 @@ export function TextTab() {
     <>
       <div style={T.header}>{editing ? "Ändra text" : "Lägg till text"}</div>
       <div style={T.body}>
+        {/* A whole team at once: much quicker than one text at a time. */}
+        <button type="button" onClick={() => setNamesOpen(true)} style={T.namesCard}>
+          <span style={T.namesIcon}>
+            <span style={{ fontSize: 10, fontWeight: 800, lineHeight: 1 }}>NAMN</span>
+            <span style={{ fontSize: 17, fontWeight: 800, lineHeight: 1 }}>10</span>
+          </span>
+          <span style={{ display: "flex", flexDirection: "column", gap: 2, textAlign: "left" }}>
+            <span style={{ fontWeight: 700, color: theme.text }}>Namn och nummer</span>
+            <span style={{ fontSize: theme.fontSize.labelMd, color: theme.textMuted }}>Hela laget på en gång, från lista, Excel eller CSV</span>
+          </span>
+          <span style={{ marginLeft: "auto", color: theme.accent, fontSize: 18 }}>›</span>
+        </button>
+        {namesOpen && <NamesModal onClose={() => setNamesOpen(false)} />}
         {editing && (
           <div style={T.editingNote}>
             Du ändrar den markerade texten
@@ -526,6 +541,32 @@ const T: Record<string, React.CSSProperties> = {
     background: theme.accentBg,
     color: theme.text,
     fontSize: theme.fontSize.labelMd,
+  },
+  namesCard: {
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+    width: "100%",
+    padding: "12px 14px",
+    border: `1px solid ${theme.borderStrong}`,
+    borderRadius: 14,
+    background: "linear-gradient(135deg, #ffffff 0%, #fff5f5 100%)",
+    cursor: "pointer",
+    fontFamily: theme.fontFamily,
+    fontSize: theme.fontSize.bodySm,
+  },
+  namesIcon: {
+    width: 44,
+    height: 44,
+    flexShrink: 0,
+    borderRadius: 10,
+    background: theme.secondary,
+    color: "#fff",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
   },
   linkButton: {
     padding: 0,
