@@ -1,0 +1,68 @@
+{%- comment -%}
+  Namn och Siffror: the team names-and-numbers configurator, inline on the
+  product page. The prices are this product's own variants ("Namn 7 cm",
+  "Nummer 25 cm" …), rendered here so Shopify prices them for whoever is
+  looking — a B2B company sees its catalogue price without the app knowing.
+{%- endcomment -%}
+{%- assign nn_product = block.settings.product | default: product -%}
+<div
+  id="gs-nn-{{ block.id }}"
+  class="gs-nn-root"
+  data-app-proxy-url="/apps/gangsheet"
+  style="min-height: 560px; width: 100%;"
+  {{ block.shopify_attributes }}
+>
+  <script type="application/json" data-nn-variants>
+    [
+      {%- for variant in nn_product.variants -%}
+        {"id": {{ variant.id }}, "title": {{ variant.title | json }}, "price_cents": {{ variant.price }}, "available": {{ variant.available | json }}}{% unless forloop.last %},{% endunless %}
+      {%- endfor -%}
+    ]
+  </script>
+  <div style="display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 320px; color: #6b6b70; font-size: 14px;">
+    <span style="width: 18px; height: 18px; border-radius: 50%; border: 2px solid #dc2f3c; border-top-color: transparent; display: inline-block; animation: gs-nn-load 0.8s linear infinite;"></span>
+    Laddar…
+  </div>
+</div>
+
+<style>
+  @keyframes gs-nn-load { to { transform: rotate(360deg); } }
+  .gs-nn-root img, .gs-nn-root svg { max-width: none; }
+  .gs-nn-root button { font: inherit; }
+</style>
+
+<script>
+  (function () {
+    var el = document.getElementById('gs-nn-{{ block.id }}');
+    function mount() {
+      if (window.__gangsheetMountNames) window.__gangsheetMountNames(el);
+    }
+    if (window.__gangsheetMountNames) return mount();
+    var existing = document.querySelector('script[data-gs-bundle]');
+    if (existing) return existing.addEventListener('load', mount);
+    var s = document.createElement('script');
+    s.src = "{{ 'editor.iife.js' | asset_url }}";
+    s.async = true;
+    s.setAttribute('data-gs-bundle', '1');
+    s.onload = mount;
+    s.onerror = function () {
+      el.innerHTML = '<p style="padding:24px;text-align:center;color:#9a3412;">Kunde inte ladda. Ladda om sidan och försök igen.</p>';
+    };
+    document.head.appendChild(s);
+  })();
+</script>
+
+{% schema %}
+{
+  "name": "Namn och siffror",
+  "target": "section",
+  "settings": [
+    {
+      "type": "product",
+      "id": "product",
+      "label": "Produkt med storlekarna",
+      "info": "Lämnas tom används sidans produkt. Varianterna ska heta t.ex. \"Namn 7 cm\" och \"Nummer 25 cm\"."
+    }
+  ]
+}
+{% endschema %}

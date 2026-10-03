@@ -19,6 +19,7 @@ import {
   findUploadedFile,
   propertyMm,
   visibleProperties,
+  NAMES_NOTE,
   type LineProperty,
 } from "./print-jobs";
 
@@ -151,6 +152,14 @@ export async function intakeOrder(
       : Prisma.DbNull,
   };
 
+  /*
+   * Namn och Siffror: a team's names and numbers are one gang sheet, sold
+   * as a cart line per size ("Namn 7 cm × 15", "Nummer 25 cm × 15") that
+   * all point at it. The sheet is one job printed once, its pieces cut out;
+   * a line's quantity is pieces, not copies of the sheet.
+   */
+  const namesSheets = new Set<string>();
+
   // Each line item is handled on its own so one bad line cannot fail the
   // webhook — Shopify retries non-200 responses over and over.
   for (const lineItem of lineItems) {
@@ -171,6 +180,15 @@ export async function intakeOrder(
       };
 
       const gangSheetId = gangSheetIdOf(lineItem);
+      if (gangSheetId && (lineItem.properties || []).some((p) => p.name === "_nn")) {
+        if (namesSheets.has(gangSheetId)) continue;
+        namesSheets.add(gangSheetId);
+        lineDetails.lineQuantity = 1;
+        lineDetails.lineProperties = [
+          { name: NAMES_NOTE, value: "Klipp ut varje namn och nummer" },
+          ...(lineDetails.lineProperties as Array<{ name: string; value: string }>),
+        ] as Prisma.InputJsonArray;
+      }
       const jobId = gangSheetId
         ? await linkGangSheet(shop, gangSheetId, order.id)
         : await createFileJob(shop, order.id, lineItem);

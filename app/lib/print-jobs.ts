@@ -14,6 +14,12 @@
 
 export type PrintKind = "gang_sheet" | "cut";
 
+/**
+ * Note the order intake puts first on a Namn och Siffror sheet: the print
+ * shop prints the sheet once and cuts out every name and number.
+ */
+export const NAMES_NOTE = "Namn och siffror";
+
 export const DEFAULT_PRINT_TYPE = "DTF Transfer";
 
 /** Products that are sold alongside transfers but are not printed. */

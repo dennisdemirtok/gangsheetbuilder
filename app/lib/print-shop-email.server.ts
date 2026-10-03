@@ -3,7 +3,7 @@ import { downloadFile } from "./r2.server";
 import { fileLink, linkExpiry } from "./file-links.server";
 import { sendMail, mailFrom, type MailAttachment } from "./mailer.server";
 import { orderLabel, printFileName } from "./order-status";
-import type { LineProperty } from "./print-jobs";
+import { NAMES_NOTE, type LineProperty } from "./print-jobs";
 import { PACKAGE_CM, PICKUP_TIME, serviceLabel } from "./bws-shipping.server";
 
 /**
@@ -106,6 +106,13 @@ function jobFiles(sheets: Sheet[]): JobFile[] {
 function jobHeading(sheet: Sheet): { pl: string; en: string } {
   const qty = sheet.lineQuantity || 1;
   const size = `${cm(sheet.widthMm)} × ${cm(sheet.heightMm)} cm`;
+  // A team's names and numbers: one sheet, every piece cut out.
+  if (((sheet.lineProperties as LineProperty[] | null) || []).some((p) => p.name === NAMES_NOTE)) {
+    return {
+      pl: `Arkusz z imionami i numerami ${size} · wyciąć każdy element`,
+      en: `Names & numbers sheet ${size} · cut out each piece`,
+    };
+  }
   if (sheet.kind === "cut") {
     return {
       pl: `${qty} szt. · ${size} · wyciąć każdy motyw`,

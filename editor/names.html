@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Namn och Siffror — Preview</title>
+  <style>
+    body { margin: 0; font-family: Inter, system-ui, -apple-system, sans-serif; background: #fff; color: #18181b; }
+    .page { max-width: 1240px; margin: 0 auto; padding: 32px 20px 80px; }
+    h1 { font-size: 30px; margin: 0 0 6px; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>Namn och Siffror</h1>
+    <div id="nn-root" data-app-proxy-url="/apps/gangsheet">
+      <script type="application/json" data-nn-variants>[{"id": 910001, "title": "Namn 5 cm", "price_cents": 1900}, {"id": 910002, "title": "Namn 7 cm", "price_cents": 2900}, {"id": 910003, "title": "Nummer 5 cm", "price_cents": 800}, {"id": 910004, "title": "Nummer 7 cm", "price_cents": 1000}, {"id": 910005, "title": "Nummer 10 cm", "price_cents": 1500}, {"id": 910006, "title": "Nummer 20 cm", "price_cents": 3500}, {"id": 910007, "title": "Nummer 25 cm", "price_cents": 4500}]</script>
+    </div>
+  </div>
+  <script type="module">
+    // Local preview only: the app proxy and Shopify's cart are mocked.
+    const realFetch = window.fetch.bind(window);
+    const json = (body, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+    window.__nnUploads = [];
+    window.fetch = function (input, init) {
+      const url = typeof input === "string" ? input : input.url;
+      if (url.includes("/api/gang-sheet")) {
+        if (init && init.method === "PUT") window.__nnSaved = JSON.parse(init.body);
+        return json({ gangSheet: { id: "gs_nn_dev" }, ok: true });
+      }
+      if (url.includes("/api/cart")) return json({ variantId: null, properties: { _gang_sheet_id: "gs_nn_dev", _preview_url: "" } });
+      if (url.includes("/cart/add.js")) { window.__lastCartAdd = JSON.parse(init.body); return json({ items: [] }); }
+      return realFetch(input, init);
+    };
+    window.XMLHttpRequest = function () {
+      const x = { upload: {}, status: 0, responseText: "" };
+      x.open = (m, u) => { x.url = u; };
+      x.send = async (body) => {
+        const file = body.get("file");
+        const bmp = await createImageBitmap(file);
+        window.__nnUploads.push({ name: file.name, w: bmp.width, h: bmp.height });
+        x.upload.onprogress && x.upload.onprogress({ lengthComputable: true, loaded: 1, total: 1 });
+        x.upload.onload && x.upload.onload();
+        await new Promise((r) => setTimeout(r, 150));
+        x.status = 200;
+        x.responseText = JSON.stringify({ id: "db_" + Math.random().toString(36).slice(2, 8), imageId: "img", width: bmp.width, height: bmp.height, thumbnailUrl: URL.createObjectURL(file), originalUrl: "" });
+        x.onload && x.onload();
+      };
+      return x;
+    };
+    await import("/src/main.tsx");
+    window.__gangsheetMountNames(document.getElementById("nn-root"));
+  </script>
+</body>
+</html>

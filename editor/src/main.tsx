@@ -2,6 +2,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { App } from "./App";
 import { ReadySheetModal } from "./components/ReadySheet/ReadySheetModal";
 import { setAppProxyUrl } from "./services/api";
+import { NamesNumbers } from "./names/NamesNumbers";
+import { readPrices } from "./names/pricing";
 
 let activeRoot: Root | null = null;
 let uploadRoot: Root | null = null;
@@ -187,3 +189,29 @@ function openUpload(): void {
 };
 
 (window as any).__gangsheetCloseUpload = closeUpload;
+
+
+/* ─────────────── Namn och Siffror ───────────────
+ * The team names and numbers product mounts inline on its product page
+ * (app block "names-numbers"), not as an overlay. Same bundle: it shares
+ * the fonts, the text renderer, uploads and the gang sheet API.
+ */
+
+(window as any).__gangsheetMountNames = function (el: HTMLElement) {
+  if (el.dataset.mounted) return;
+  el.dataset.mounted = "1";
+  if (el.dataset.appProxyUrl) setAppProxyUrl(el.dataset.appProxyUrl);
+  if (!document.getElementById("gs-nn-styles")) {
+    const style = document.createElement("style");
+    style.id = "gs-nn-styles";
+    style.textContent = "@keyframes gs-nn-spin { to { transform: rotate(360deg); } }";
+    document.head.appendChild(style);
+  }
+  let variants: unknown = [];
+  try {
+    variants = JSON.parse(el.querySelector("script[data-nn-variants]")?.textContent || "[]");
+  } catch {
+    variants = [];
+  }
+  createRoot(el).render(<NamesNumbers prices={readPrices(variants)} />);
+};

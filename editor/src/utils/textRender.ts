@@ -148,6 +148,42 @@ export async function renderTextForPrint(
   return { canvas, mmPerPx, heightMm: laid.h * scale * mmPerPx };
 }
 
+/**
+ * Text for print by letter height: names and numbers are ordered as "7 cm"
+ * or "25 cm" tall. The letters (not the outline around them) are
+ * `heightMm` high; the outline adds to the piece. `mmPerPx` as above.
+ */
+export async function renderTextAtHeight(
+  spec: TextSpec,
+  heightMm: number,
+): Promise<{ canvas: HTMLCanvasElement; mmPerPx: number; widthMm: number; heightMm: number } | null> {
+  const laid = await layout(spec);
+  if (!laid) return null;
+  const letters = Math.max(1, laid.h - laid.outline * 2);
+  const targetPx = (heightMm / 25.4) * 300;
+  const scale = Math.min(
+    targetPx / letters,
+    MAX_SIDE / laid.w,
+    MAX_SIDE / laid.h,
+    Math.sqrt(MAX_PIXELS / (laid.w * laid.h)),
+  );
+  const canvas = draw(laid, spec, scale);
+  if (!canvas) return null;
+  const mmPerPx = heightMm / (letters * scale);
+  return { canvas, mmPerPx, widthMm: laid.w * scale * mmPerPx, heightMm: laid.h * scale * mmPerPx };
+}
+
+/** The printed size of text at a letter height, without drawing it. */
+export async function measureTextAtHeight(
+  spec: TextSpec,
+  heightMm: number,
+): Promise<{ widthMm: number; heightMm: number } | null> {
+  const laid = await layout(spec);
+  if (!laid) return null;
+  const mmPerRef = heightMm / Math.max(1, laid.h - laid.outline * 2);
+  return { widthMm: laid.w * mmPerRef, heightMm: laid.h * mmPerRef };
+}
+
 /** Text for the preview, fitted inside maxW × maxH pixels. */
 export async function renderTextPreview(
   spec: TextSpec,

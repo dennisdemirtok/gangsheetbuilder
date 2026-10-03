@@ -1,0 +1,118 @@
+import type { TextSpec } from "../utils/textRender";
+
+/**
+ * What a team can order on "Namn och Siffror": the styles, colours and
+ * sizes from TransferCraft's own number catalogue. The licensed classics
+ * (Helvetica Condensed/Bold, Agency, DIN, the league numbers) are replaced
+ * by free look-alikes; the customer sees our names for them, not theirs.
+ */
+
+export type Setup = "names" | "numbers" | "both";
+
+export interface Style {
+  id: string;
+  label: string;
+  fontId: string;
+  /** Gets an outline in the contrasting colour when picked. */
+  outlined?: boolean;
+}
+
+export const NAME_STYLES: Style[] = [
+  { id: "smal", label: "Smal", fontId: "roboto-condensed" },
+  { id: "fet", label: "Fet", fontId: "arimo" },
+  { id: "college", label: "College", fontId: "graduate" },
+  { id: "block", label: "Block", fontId: "anton" },
+];
+
+export const NUMBER_STYLES: Style[] = [
+  { id: "standard", label: "Standard", fontId: "anton" },
+  { id: "retro", label: "Retro", fontId: "graduate", outlined: true },
+  { id: "sport", label: "Sport", fontId: "rokkitt", outlined: true },
+  { id: "kantig", label: "Kantig", fontId: "big-shoulders-display" },
+  { id: "teknisk", label: "Teknisk", fontId: "barlow-semi-condensed" },
+  { id: "liga", label: "Liga", fontId: "saira-condensed" },
+  { id: "digital", label: "Digital", fontId: "dseg7" },
+];
+
+/** A few more, for a team that wants something of its own. */
+export const EXTRA_STYLES: Style[] = [
+  { id: "bebas", label: "Bebas", fontId: "bebas-neue" },
+  { id: "oswald", label: "Oswald", fontId: "oswald" },
+  { id: "racing", label: "Racing", fontId: "racing-sans-one" },
+  { id: "stencil", label: "Stencil", fontId: "black-ops-one" },
+  { id: "slab", label: "Slab", fontId: "alfa-slab-one" },
+];
+
+export function styleById(id: string): Style {
+  return [...NAME_STYLES, ...NUMBER_STYLES, ...EXTRA_STYLES].find((s) => s.id === id) ?? NUMBER_STYLES[0]!;
+}
+
+export const COLORS: { value: string; label: string }[] = [
+  { value: "#ffffff", label: "Vit" },
+  { value: "#111111", label: "Svart" },
+  { value: "#f5c400", label: "Gul" },
+  { value: "#d1202f", label: "Röd" },
+  { value: "#1f4fbf", label: "Blå" },
+  { value: "#1d2742", label: "Marinblå" },
+  { value: "#1f7a3a", label: "Grön" },
+  { value: "#f08a24", label: "Orange" },
+  { value: "#c9a227", label: "Guld" },
+  { value: "#a7abb0", label: "Silver" },
+];
+
+export const OUTLINES: { value: string; label: string }[] = [
+  { value: "none", label: "Ingen" },
+  { value: "#111111", label: "Svart" },
+  { value: "#ffffff", label: "Vit" },
+];
+
+/** Outline thickness as a share of the font size. */
+export const OUTLINE_WIDTH = 0.07;
+
+export const NAME_SIZES_CM = [5, 7];
+export const NUMBER_SIZES_CM = [5, 7, 10, 20, 25];
+
+export function colorLabel(value: string): string {
+  return COLORS.find((c) => c.value === value)?.label ?? value;
+}
+
+export interface Look {
+  setup: Setup;
+  nameStyle: string;
+  numberStyle: string;
+  color: string;
+  outline: string;
+  nameCm: number;
+  numberCm: number;
+  uppercase: boolean;
+}
+
+export const DEFAULT_LOOK: Look = {
+  setup: "both",
+  nameStyle: "smal",
+  numberStyle: "standard",
+  color: "#ffffff",
+  outline: "none",
+  nameCm: 7,
+  numberCm: 25,
+  uppercase: true,
+};
+
+export function specFor(text: string, styleId: string, look: Look): TextSpec {
+  const outline = look.outline !== "none" ? look.outline : null;
+  return {
+    text,
+    fontId: styleById(styleId).fontId,
+    color: look.color,
+    outline: outline ? OUTLINE_WIDTH : 0,
+    outlineColor: outline ?? "#111111",
+    align: "center",
+  };
+}
+
+/** The colour that stands out against `color`: for outlines that are picked for you. */
+export function contrastOf(color: string): string {
+  const n = parseInt(color.slice(1), 16);
+  const lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+  return lum > 0.6 ? "#111111" : "#ffffff";
+}

@@ -46,6 +46,16 @@ export const TEXT_FONTS: TextFont[] = [
   { id: "black-ops-one", name: "Black Ops", category: "sport" },
   { id: "bungee", name: "Bungee", category: "sport" },
   { id: "staatliches", name: "Staatliches", category: "sport", lineHeight: 1.05 },
+  // Team lettering and numbers (Namn och Siffror): free stand-ins for the
+  // licensed classics — Helvetica Condensed/Bold, Agency, DIN, the league
+  // numbers — plus a seven-segment digital face (DSEG, OFL).
+  { id: "roboto-condensed", name: "Roboto Condensed", category: "sport", lineHeight: 1.1 },
+  { id: "arimo", name: "Arimo", category: "sport" },
+  { id: "big-shoulders-display", name: "Big Shoulders", category: "sport", lineHeight: 1.0 },
+  { id: "barlow-semi-condensed", name: "Barlow", category: "sport", lineHeight: 1.05 },
+  { id: "saira-condensed", name: "Saira", category: "sport", lineHeight: 1.05 },
+  { id: "rokkitt", name: "Rokkitt", category: "sport", lineHeight: 1.05 },
+  { id: "dseg7", name: "Digital", category: "sport", lineHeight: 1.2 },
   { id: "damion", name: "Damion", category: "script", lineHeight: 1.3 },
   { id: "pacifico", name: "Pacifico", category: "script", lineHeight: 1.45 },
   { id: "lobster", name: "Lobster", category: "script", lineHeight: 1.25 },
