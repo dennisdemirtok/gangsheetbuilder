@@ -17,6 +17,13 @@ export interface TextSpec {
   /** Outline around the letters as a share of the font size; 0 is none. */
   outline: number;
   outlineColor: string;
+  /**
+   * A double outline: this gap, in the fill colour, between the letters
+   * and the outline, and a line of `inlineWidth` in the outline colour
+   * just inside the letters' edge. Shares of the font size.
+   */
+  outlineGap?: number;
+  inlineWidth?: number;
   align: "left" | "center" | "right";
 }
 
@@ -58,7 +65,8 @@ async function layout(spec: TextSpec): Promise<Laid | null> {
   probe.font = `400 ${REF}px "${family}"`;
 
   const step = REF * (font.lineHeight ?? 1.15);
-  const outline = Math.max(0, spec.outline) * REF;
+  // What the outline adds around the letters: the line and, doubled, its gap.
+  const outline = spec.outline > 0 ? (spec.outline + Math.max(0, spec.outlineGap ?? 0)) * REF : 0;
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -109,6 +117,9 @@ function draw(laid: Laid, spec: TextSpec, scale: number): HTMLCanvasElement | nu
     pad + (l.y - laid.minY) * scale,
   ];
 
+  const gap = laid.outline > 0 ? Math.max(0, spec.outlineGap ?? 0) * REF : 0;
+  const inner = laid.outline > 0 ? Math.max(0, spec.inlineWidth ?? 0) * REF : 0;
+
   // Every outline first, then every fill: on text with several lines a
   // later line's outline must not cover the line above.
   if (laid.outline > 0) {
@@ -117,9 +128,37 @@ function draw(laid: Laid, spec: TextSpec, scale: number): HTMLCanvasElement | nu
     ctx.lineWidth = laid.outline * 2 * scale;
     ctx.strokeStyle = spec.outlineColor;
     for (const l of laid.lines) ctx.strokeText(l.text, ...at(l));
+    if (gap > 0) {
+      // The gap of a double outline, in the fill colour.
+      ctx.lineWidth = gap * 2 * scale;
+      ctx.strokeStyle = spec.color;
+      for (const l of laid.lines) ctx.strokeText(l.text, ...at(l));
+    }
   }
   ctx.fillStyle = spec.color;
   for (const l of laid.lines) ctx.fillText(l.text, ...at(l));
+
+  if (inner > 0) {
+    // The inner line of a double outline: stroked on a copy of the letters
+    // and kept only where they are, so it runs just inside their edge.
+    const copy = document.createElement("canvas");
+    copy.width = canvas.width;
+    copy.height = canvas.height;
+    const c = copy.getContext("2d");
+    if (c) {
+      c.font = ctx.font;
+      c.textBaseline = "alphabetic";
+      c.fillStyle = "#000000";
+      for (const l of laid.lines) c.fillText(l.text, ...at(l));
+      c.globalCompositeOperation = "source-in";
+      c.lineJoin = "round";
+      c.lineCap = "round";
+      c.lineWidth = inner * 2 * scale;
+      c.strokeStyle = spec.outlineColor;
+      for (const l of laid.lines) c.strokeText(l.text, ...at(l));
+      ctx.drawImage(copy, 0, 0);
+    }
+  }
   return canvas;
 }
 

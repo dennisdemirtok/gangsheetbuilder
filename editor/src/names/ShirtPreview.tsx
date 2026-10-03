@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { fontById, fontFamily, loadFont } from "../config/fonts";
-import { OUTLINE_WIDTH, styleById, type Look } from "./catalog";
+import { DOUBLE_OUTLINE, OUTLINE_WIDTH, styleById, type Look } from "./catalog";
 
 /**
  * The back of a shirt with the first player on it, in the chosen styles,
@@ -76,7 +76,6 @@ export function ShirtPreview({
   // A hand's width (~4 cm) between name and number, as on a club shirt.
   const numberY = (showName ? nameY + 4 * UNITS_PER_CM : 140) + look.numberCm * UNITS_PER_CM;
   const stroke = look.outline !== "none" ? look.outline : "none";
-  const strokeFor = (size: number) => (stroke === "none" ? 0 : size * OUTLINE_WIDTH * 2);
   const seam = shade(shirt, -0.12);
 
   return (
@@ -98,39 +97,92 @@ export function ShirtPreview({
       <path d="M140 38 C160 52 240 52 260 38" fill="none" stroke={seam} strokeWidth="3" />
       <path d="M95 150 L95 432 C150 442 250 442 305 432 L305 150" fill="url(#nn-fold)" />
       {showName && (
-        <text
-          x="200"
+        <Lettering
           y={nameY}
-          textAnchor="middle"
-          fontFamily={`"${fontFamily(nameFont)}", sans-serif`}
-          fontSize={nameSize}
+          family={fontFamily(nameFont)}
+          size={nameSize}
           fill={look.color}
           stroke={stroke}
-          strokeWidth={strokeFor(nameSize)}
-          strokeLinejoin="round"
-          paintOrder="stroke"
-          style={{ letterSpacing: "0.02em" }}
-        >
-          {(look.uppercase ? name.toLocaleUpperCase("sv-SE") : name) || "NAMN"}
-        </text>
+          double={styleById(look.nameStyle).outline === "double"}
+          letterSpacing="0.02em"
+          text={(look.uppercase ? name.toLocaleUpperCase("sv-SE") : name) || "NAMN"}
+        />
       )}
       {showNumber && (
-        <text
-          x="200"
+        <Lettering
           y={numberY}
-          textAnchor="middle"
-          fontFamily={`"${fontFamily(numberFont)}", sans-serif`}
-          fontSize={numberSize}
+          family={fontFamily(numberFont)}
+          size={numberSize}
           fill={look.color}
           stroke={stroke}
-          strokeWidth={strokeFor(numberSize)}
-          strokeLinejoin="round"
-          paintOrder="stroke"
-        >
-          {number || "10"}
-        </text>
+          double={styleById(look.numberStyle).outline === "double"}
+          width={styleById(look.numberStyle).outlineWidth}
+          text={number || "10"}
+        />
       )}
     </svg>
+  );
+}
+
+/**
+ * A name or number on the shirt, outlined as it prints: no outline, a
+ * single line, or the double outline (line, gap, line inside the figure).
+ */
+function Lettering({
+  y,
+  family,
+  size,
+  fill,
+  stroke,
+  double,
+  width,
+  letterSpacing,
+  text,
+}: {
+  y: number;
+  family: string;
+  size: number;
+  fill: string;
+  stroke: string;
+  double: boolean;
+  /** Single outline thickness, when not the usual. */
+  width?: number;
+  letterSpacing?: string;
+  text: string;
+}) {
+  const clip = `nn-inline-${useId().replace(/[^a-zA-Z0-9-]/g, "")}`;
+  const common = {
+    x: 200,
+    y,
+    textAnchor: "middle" as const,
+    fontFamily: `"${family}", sans-serif`,
+    fontSize: size,
+    style: letterSpacing ? { letterSpacing } : undefined,
+  };
+  if (stroke === "none") return <text {...common} fill={fill}>{text}</text>;
+  if (!double) {
+    return (
+      <text {...common} fill={fill} stroke={stroke} strokeWidth={size * (width ?? OUTLINE_WIDTH) * 2} strokeLinejoin="round" paintOrder="stroke">
+        {text}
+      </text>
+    );
+  }
+  const { outer, gap, inner } = DOUBLE_OUTLINE;
+  return (
+    <g>
+      <text {...common} fill={fill} stroke={stroke} strokeWidth={size * (outer + gap) * 2} strokeLinejoin="round" paintOrder="stroke">
+        {text}
+      </text>
+      <text {...common} fill={fill} stroke={fill} strokeWidth={size * gap * 2} strokeLinejoin="round" paintOrder="stroke">
+        {text}
+      </text>
+      <clipPath id={clip}>
+        <text {...common}>{text}</text>
+      </clipPath>
+      <text {...common} fill="none" stroke={stroke} strokeWidth={size * inner * 2} strokeLinejoin="round" clipPath={`url(#${clip})`}>
+        {text}
+      </text>
+    </g>
   );
 }
 

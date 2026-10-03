@@ -2,9 +2,10 @@ import type { TextSpec } from "../utils/textRender";
 
 /**
  * What a team can order on "Namn och Siffror": the styles, colours and
- * sizes from TransferCraft's own number catalogue. The licensed classics
- * (Helvetica Condensed/Bold, Agency, DIN, the league numbers) are replaced
- * by free look-alikes; the customer sees our names for them, not theirs.
+ * sizes from TransferCraft's own number catalogue. Kantig, Teknisk, Liga
+ * and Digital are TransferCraft's own figures, drawn after the shop's
+ * sample sheet (fonts tc-*); the other styles use free fonts close to the
+ * catalogue.
  */
 
 export type Setup = "names" | "numbers" | "both";
@@ -13,6 +14,13 @@ export interface Style {
   id: string;
   label: string;
   fontId: string;
+  /**
+   * The outline as on the sample sheet: "double" is a line, a gap in the
+   * fill colour, and a second line just inside the figure's edge.
+   */
+  outline?: "double";
+  /** Outline thickness for this style when not the usual OUTLINE_WIDTH. */
+  outlineWidth?: number;
 }
 
 export const NAME_STYLES: Style[] = [
@@ -28,10 +36,12 @@ export const NUMBER_STYLES: Style[] = [
   // Graduate (still the College letters) draws its zero with a dot inside.
   { id: "retro", label: "Retro", fontId: "bungee" },
   { id: "sport", label: "Sport", fontId: "rokkitt" },
-  { id: "kantig", label: "Kantig", fontId: "big-shoulders-display" },
-  { id: "teknisk", label: "Teknisk", fontId: "barlow-semi-condensed" },
-  { id: "liga", label: "Liga", fontId: "saira-condensed" },
-  { id: "digital", label: "Digital", fontId: "dseg7" },
+  { id: "kantig", label: "Kantig", fontId: "tc-kantig", outline: "double" },
+  { id: "teknisk", label: "Teknisk", fontId: "tc-teknisk", outline: "double" },
+  { id: "liga", label: "Liga", fontId: "tc-liga", outline: "double" },
+  // Each segment outlined on its own with a hairline, as on the sample:
+  // thicker, the lines of neighbouring segments ran together in the joins.
+  { id: "digital", label: "Digital", fontId: "tc-digital", outlineWidth: 0.008 },
 ];
 
 /** A few more, for a team that wants something of its own. */
@@ -74,6 +84,13 @@ export const OUTLINES: { value: string; label: string }[] = [
  */
 export const OUTLINE_WIDTH = 0.018;
 
+/**
+ * The double outline, measured on the sample sheet's outlined 7, as shares
+ * of the font size: a 1.7 % line, a 2.3 % gap and a 2.9 % line inside the
+ * figure (of its height).
+ */
+export const DOUBLE_OUTLINE = { outer: 0.012, gap: 0.016, inner: 0.02 };
+
 export const NAME_SIZES_CM = [5, 7];
 export const NUMBER_SIZES_CM = [5, 7, 10, 20, 25];
 
@@ -105,12 +122,15 @@ export const DEFAULT_LOOK: Look = {
 
 export function specFor(text: string, styleId: string, look: Look): TextSpec {
   const outline = look.outline !== "none" ? look.outline : null;
+  const style = styleById(styleId);
+  const double = Boolean(outline) && style.outline === "double";
   return {
     text,
-    fontId: styleById(styleId).fontId,
+    fontId: style.fontId,
     color: look.color,
-    outline: outline ? OUTLINE_WIDTH : 0,
+    outline: outline ? (double ? DOUBLE_OUTLINE.outer : (style.outlineWidth ?? OUTLINE_WIDTH)) : 0,
     outlineColor: outline ?? "#111111",
+    ...(double ? { outlineGap: DOUBLE_OUTLINE.gap, inlineWidth: DOUBLE_OUTLINE.inner } : {}),
     align: "center",
   };
 }

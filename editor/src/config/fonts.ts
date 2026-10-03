@@ -79,10 +79,22 @@ export const TEXT_FONTS: TextFont[] = [
   { id: "unifrakturmaguntia", name: "Fraktur", category: "retro" },
 ];
 
+/**
+ * TransferCraft's own numbers for Namn och Siffror, drawn after the shop's
+ * sample sheet: Kantig, Teknisk, Liga and Digital. Digits and space only,
+ * so the text tool does not offer them.
+ */
+export const NUMBER_FONTS: TextFont[] = [
+  { id: "tc-kantig", name: "Kantig", category: "sport", lineHeight: 1.0 },
+  { id: "tc-teknisk", name: "Teknisk", category: "sport", lineHeight: 1.0 },
+  { id: "tc-liga", name: "Liga", category: "sport", lineHeight: 1.0 },
+  { id: "tc-digital", name: "Digital", category: "sport", lineHeight: 1.0 },
+];
+
 export const DEFAULT_FONT_ID = "anton";
 
 export function fontById(id: string): TextFont {
-  return TEXT_FONTS.find((f) => f.id === id) ?? TEXT_FONTS[0]!;
+  return TEXT_FONTS.find((f) => f.id === id) ?? NUMBER_FONTS.find((f) => f.id === id) ?? TEXT_FONTS[0]!;
 }
 
 /** Family name as registered — prefixed so a theme's own Montserrat can't stand in. */
