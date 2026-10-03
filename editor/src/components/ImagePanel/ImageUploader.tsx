@@ -5,10 +5,21 @@ import { pxToMm } from "../../utils/units";
 import { theme } from "../../styles/theme";
 import { showToast } from "../../utils/toast";
 
+/** One file on its way up, as listed under the drop zone. */
+interface QueueItem {
+  key: string;
+  name: string;
+  sent: number;
+  processing: boolean;
+  status: "uploading" | "done" | "failed";
+}
+
 export function ImageUploader() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+  const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
+  const patch = (key: string, p: Partial<QueueItem>) =>
+    setQueueItems((items) => items.map((i) => (i.key === key ? { ...i, ...p } : i)));
   const { sessionId, gangSheetId, sheetSize, filmType, gapMm, addImage, setUploading, setGangSheetId } = useEditorStore();
 
   const handleFiles = useCallback(
@@ -27,16 +38,19 @@ export function ImageUploader() {
       }
 
       // Three at a time: 40 logos one by one used to take minutes.
-      const queue = Array.from(files);
-      let done = 0;
-      setUploadProgress(`0/${total}`);
-      const uploadOne = async (file: File) => {
+      const queue = Array.from(files).map((file) => ({
+        file,
+        key: `${file.name}_${Math.random().toString(36).slice(2, 8)}`,
+      }));
+      setQueueItems((items) => [
+        ...items.filter((i) => i.status === "uploading"),
+        ...queue.map(({ file, key }) => ({ key, name: file.name, sent: 0, processing: false, status: "uploading" as const })),
+      ]);
+      const uploadOne = async ({ file, key }: { file: File; key: string }) => {
         console.log("[GS] Uploading:", file.name, file.size, "bytes");
         try {
-          const result = await uploadImage(
-            file,
-            sessionId,
-            gsId || "",
+          const result = await uploadImage(file, sessionId, gsId || "", (p) =>
+            patch(key, { sent: p.sent, processing: p.phase === "processing" }),
           );
           console.log("[GS] Upload result:", result);
 
@@ -95,15 +109,14 @@ export function ImageUploader() {
               showToast(warning, "warning");
             }
           }
+          patch(key, { status: "done", processing: false, sent: 1 });
         } catch (err) {
           console.error("Upload failed:", err);
+          patch(key, { status: "failed", processing: false });
           showToast(
             `${file.name}: uppladdningen misslyckades (${(err as Error).message})`,
             "error",
           );
-        } finally {
-          done++;
-          setUploadProgress(`${done}/${total}`);
         }
       };
       const worker = async () => {
@@ -111,8 +124,9 @@ export function ImageUploader() {
       };
       await Promise.all(Array.from({ length: Math.min(3, total) }, worker));
 
-      setUploadProgress(null);
       setUploading(false);
+      // Finished rows stay a moment so the customer sees them complete.
+      window.setTimeout(() => setQueueItems((items) => items.filter((i) => i.status === "uploading")), 2500);
     },
     [sessionId, gangSheetId, sheetSize, filmType, gapMm, addImage, setUploading, setGangSheetId],
   );
@@ -180,21 +194,30 @@ export function ImageUploader() {
         </p>
       </div>
 
-      {uploadProgress && (
-        <div
-          style={{
-            padding: "8px 12px",
-            background: theme.accentBg,
-            borderRadius: theme.radiusSm,
-            fontSize: 12,
-            color: theme.accent,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <Spinner />
-          <span>Laddar upp {uploadProgress}</span>
+      {queueItems.length > 0 && (
+        <div style={Q.list} aria-live="polite">
+          {queueItems.map((item) => (
+            <div key={item.key} style={Q.item}>
+              <div style={Q.head}>
+                {item.status === "uploading" ? <Spinner /> : <span style={{ color: item.status === "done" ? theme.success : theme.danger, fontWeight: 700 }}>{item.status === "done" ? "✓" : "!"}</span>}
+                <span style={Q.name}>{item.name}</span>
+                <span style={Q.state}>
+                  {item.status === "failed"
+                    ? "Misslyckades"
+                    : item.status === "done"
+                      ? "Klar"
+                      : item.processing
+                        ? "Bearbetar…"
+                        : `${Math.round(item.sent * 100)} %`}
+                </span>
+              </div>
+              {item.status === "uploading" && (
+                <div style={Q.track}>
+                  <div style={{ ...Q.fill, width: `${Math.max(4, Math.round((item.processing ? 1 : item.sent) * 100))}%`, ...(item.processing ? Q.shimmer : null) }} />
+                </div>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -216,5 +239,20 @@ function Spinner() {
     />
   );
 }
+
+const Q: Record<string, React.CSSProperties> = {
+  list: { display: "flex", flexDirection: "column", gap: 6 },
+  item: { padding: "8px 10px", background: theme.bgCard, border: `1px solid ${theme.border}`, borderRadius: 10 },
+  head: { display: "flex", alignItems: "center", gap: 8, fontSize: 12 },
+  name: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: theme.text },
+  state: { color: theme.textMuted, fontVariantNumeric: "tabular-nums", flexShrink: 0 },
+  track: { height: 4, borderRadius: 2, background: "#eceef1", overflow: "hidden", marginTop: 6 },
+  fill: { height: "100%", background: theme.accent, borderRadius: 2, transition: "width 0.25s ease" },
+  shimmer: {
+    backgroundImage: "linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.55) 50%, rgba(255,255,255,0) 100%)",
+    backgroundSize: "200% 100%",
+    animation: "gs-shimmer 1.1s linear infinite",
+  },
+};
 
 export { showToast };

@@ -90,6 +90,9 @@ interface Draft {
   count: number;
   vector: boolean;
   status: "uploading" | "ready" | "failed";
+  /** While uploading: share of the bytes sent (0-1), then the server's turn. */
+  sent?: number;
+  processing?: boolean;
   error?: string;
   uploaded?: Uploaded;
   /** The background-free version, when the file had a white background. */
@@ -220,7 +223,9 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
       (async () => {
         try {
           const gsId = await sheetId();
-          const result = await uploadImage(draft.file, sessionId, gsId);
+          const result = await uploadImage(draft.file, sessionId, gsId, (p) =>
+            update(draft.id, { sent: p.sent, processing: p.phase === "processing" }),
+          );
           const uploaded: Uploaded = {
             ...result,
             id: result.id,
@@ -693,13 +698,30 @@ function DraftRow({
         <div style={S.rowHead}>
           <span style={S.rowName}>{draft.file.name}</span>
           <span style={{ ...S.status, color: draft.status === "failed" ? theme.danger : draft.status === "ready" ? theme.success : theme.textDim }}>
-            {draft.status === "uploading" ? "Laddar upp…" : draft.status === "ready" ? "✓" : "Misslyckades"}
+            {draft.status === "uploading"
+              ? draft.processing
+                ? "Bearbetar…"
+                : `Laddar upp ${Math.round((draft.sent ?? 0) * 100)} %`
+              : draft.status === "ready"
+                ? "✓"
+                : "Misslyckades"}
           </span>
           <button onClick={onRemove} style={S.rowRemove} title="Ta bort">
             ×
           </button>
         </div>
 
+        {draft.status === "uploading" && (
+          <div style={S.uploadTrack} aria-hidden>
+            <div
+              style={{
+                ...S.uploadFill,
+                width: `${Math.max(4, Math.round((draft.processing ? 1 : draft.sent ?? 0) * 100))}%`,
+                ...(draft.processing ? S.uploadProcessing : null),
+              }}
+            />
+          </div>
+        )}
         {draft.status === "failed" ? (
           <p style={S.warn}>Filen kunde inte laddas upp. Prova att spara den som PNG och ladda upp igen.</p>
         ) : (
@@ -1007,7 +1029,15 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
   },
-  status: { fontSize: theme.fontSize.labelMd, flexShrink: 0 },
+  status: { fontSize: theme.fontSize.labelMd, flexShrink: 0, fontVariantNumeric: "tabular-nums" },
+  uploadTrack: { height: 4, borderRadius: 2, background: "#eceef1", overflow: "hidden", margin: "6px 0 2px" },
+  uploadFill: { height: "100%", background: theme.accent, borderRadius: 2, transition: "width 0.25s ease" },
+  // The server's part has no byte count: a moving stripe says it is working.
+  uploadProcessing: {
+    backgroundImage: "linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.55) 50%, rgba(255,255,255,0) 100%)",
+    backgroundSize: "200% 100%",
+    animation: "gs-shimmer 1.1s linear infinite",
+  },
   bulk: {
     padding: 12,
     border: `1px dashed ${theme.accent}`,

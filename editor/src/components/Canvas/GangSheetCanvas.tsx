@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Canvas, FabricImage, FabricObject, Rect, FabricText, ActiveSelection, util } from "fabric";
+import { Canvas, Control, FabricImage, FabricObject, Rect, FabricText, ActiveSelection, config, util } from "fabric";
 import { useEditorStore } from "../../store/editorStore";
 import {
   mmToCanvasPx,
@@ -33,6 +33,39 @@ function rotatedBboxMm(wMm: number, hMm: number, angleDeg: number): { bboxW: num
     bboxW: wMm * cos + hMm * sin,
     bboxH: wMm * sin + hMm * cos,
   };
+}
+
+/**
+ * Handles. Big enough for a thumb, and no side handles: they stretched a
+ * logo out of shape. Zoom is Fabric's own, so these stay the same size on
+ * screen at any zoom — under the old CSS zoom they grew with the sheet
+ * until they hid the design they belonged to.
+ */
+function styleControls(obj: FabricObject) {
+  obj.set({ cornerSize: 12, touchCornerSize: 34, borderScaleFactor: 1.5 } as any);
+  const mtr = obj.controls?.mtr;
+  if (mtr) obj.controls = { ...obj.controls, mtr: new Control({ ...mtr, offsetY: -28 }) };
+  obj.setControlsVisibility({ ml: false, mr: false, mt: false, mb: false });
+}
+
+/** Most bitmap pixels per canvas: iOS drops canvases above ~16.7 million. */
+const PIXEL_BUDGET = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches ? 8e6 : 24e6;
+
+/**
+ * Size the canvas for `zoom` and draw at that scale. The sheet was zoomed
+ * with a CSS transform: blurry, and since it scaled around the middle, the
+ * top of a zoomed sheet sat where scrolling could not reach — on a phone
+ * only the middle of the sheet could be seen. Now the canvas really grows
+ * and the page scrolls over it; its bitmap is kept within budget.
+ */
+function applyZoom(canvas: Canvas, base: { w: number; h: number }, zoom: number) {
+  const w = Math.max(1, Math.round(base.w * zoom));
+  const h = Math.max(1, Math.round(base.h * zoom));
+  const device = window.devicePixelRatio || 1;
+  config.configure({ devicePixelRatio: Math.max(0.5, Math.min(device, Math.sqrt(PIXEL_BUDGET / (w * h)))) });
+  canvas.setDimensions({ width: w, height: h });
+  canvas.setZoom(zoom);
+  canvas.requestRenderAll();
 }
 
 /** One design's transform as written to the store, for tidying after. */
@@ -91,6 +124,11 @@ export function GangSheetCanvas() {
   const rebuildingRef = useRef<boolean>(false);
   /** Selection to restore once the rebuild finishes. */
   const selectedIdRef = useRef<string | null>(null);
+  /** The canvas size at zoom 1 (the whole sheet fits), and the zoom drawn. */
+  const baseSizeRef = useRef<{ w: number; h: number }>({ w: 1, h: 1 });
+  const drawnZoomRef = useRef<number>(1);
+  /** Where a zoom should stay put (screen point), set by pinch and wheel. */
+  const zoomAnchorRef = useRef<{ x: number; y: number } | null>(null);
   const [overflowCount, setOverflowCount] = useState(0);
 
   const {
@@ -136,6 +174,9 @@ export function GangSheetCanvas() {
     });
 
     fabricRef.current = canvas;
+    baseSizeRef.current = { w: canvasWidth, h: canvasHeight };
+    drawnZoomRef.current = useEditorStore.getState().zoom;
+    applyZoom(canvas, baseSizeRef.current, drawnZoomRef.current);
 
     // Events
     canvas.on("selection:created", (e) => {
@@ -303,6 +344,7 @@ export function GangSheetCanvas() {
         fill: "transparent",
         stroke: "rgba(0,0,0,0.22)",
         strokeWidth: 1,
+        strokeUniform: true,
         strokeDashArray: [6, 5],
         selectable: false,
         evented: false,
@@ -397,6 +439,7 @@ export function GangSheetCanvas() {
               // Copies that cross the bottom edge won't print — mark them
               opacity: doesNotFit ? 0.5 : i === 0 ? 1 : 0.95,
             } as any);
+            if (i === 0) styleControls(obj);
             canvas.add(obj);
 
             if (doesNotFit || isClashing) {
@@ -409,6 +452,7 @@ export function GangSheetCanvas() {
                   fill: doesNotFit ? "rgba(239,68,68,0.25)" : "transparent",
                   stroke: "#ef4444",
                   strokeWidth: 2,
+                  strokeUniform: true,
                   strokeDashArray: isClashing && !doesNotFit ? [5, 4] : undefined,
                   selectable: false,
                   evented: false,
@@ -428,7 +472,7 @@ export function GangSheetCanvas() {
                   left: bboxLeft - 2, top: bboxTop - 2,
                   width: mmToCanvasPx(bboxW, scaleFactor) + 4,
                   height: mmToCanvasPx(bboxH, scaleFactor) + 4,
-                  fill: "transparent", stroke: color, strokeWidth: 3,
+                  fill: "transparent", stroke: color, strokeWidth: 3, strokeUniform: true,
                   selectable: false, evented: false,
                   data: { dpiOverlay: true },
                 } as any),
@@ -491,11 +535,17 @@ export function GangSheetCanvas() {
     const points = new Map<number, { x: number; y: number }>();
     let startSpread = 0;
     let startZoom = 1;
+    let pending = 1;
+    const wrapper = () => container.querySelector(".gs-canvas-wrapper") as HTMLElement | null;
 
     const spread = () => {
       const [a, b] = [...points.values()];
       if (!a || !b) return 0;
       return Math.hypot(a.x - b.x, a.y - b.y);
+    };
+    const middle = () => {
+      const [a, b] = [...points.values()];
+      return a && b ? { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } : null;
     };
 
     const onDown = (e: PointerEvent) => {
@@ -504,69 +554,122 @@ export function GangSheetCanvas() {
       if (points.size === 2) {
         startSpread = spread();
         startZoom = useEditorStore.getState().zoom;
+        pending = startZoom;
+        // Fingers on the sheet zoom it; they must not also drag a design.
+        fabricRef.current?.discardActiveObject();
+        const w = wrapper();
+        const m = middle();
+        if (w && m) {
+          const r = w.getBoundingClientRect();
+          w.style.transformOrigin = `${m.x - r.left}px ${m.y - r.top}px`;
+        }
       }
     };
 
+    // While the fingers move, a cheap CSS scale; the real redraw on release.
     const onMove = (e: PointerEvent) => {
       if (e.pointerType !== "touch" || !points.has(e.pointerId)) return;
       points.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (points.size !== 2 || startSpread <= 0) return;
       e.preventDefault();
-      setZoom(startZoom * (spread() / startSpread));
+      pending = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, startZoom * (spread() / startSpread)));
+      const w = wrapper();
+      if (w) w.style.transform = `scale(${pending / startZoom})`;
     };
 
     const onUp = (e: PointerEvent) => {
+      const wasPinching = points.size === 2 && startSpread > 0;
+      const m = middle();
       points.delete(e.pointerId);
-      if (points.size < 2) startSpread = 0;
+      if (!wasPinching) return;
+      startSpread = 0;
+      const w = wrapper();
+      if (w) w.style.transform = "";
+      if (m) zoomAnchorRef.current = m;
+      setZoom(pending);
+    };
+
+    // Trackpad pinch and Ctrl/⌘ + wheel on a computer: zoom at the pointer.
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      zoomAnchorRef.current = { x: e.clientX, y: e.clientY };
+      const z = useEditorStore.getState().zoom;
+      // A wheel notch (~100) is about 25 %; a trackpad pinch sends small steps.
+      setZoom(z * Math.exp(-e.deltaY * 0.0025));
     };
 
     container.addEventListener("pointerdown", onDown);
     container.addEventListener("pointermove", onMove, { passive: false });
     container.addEventListener("pointerup", onUp);
     container.addEventListener("pointercancel", onUp);
+    container.addEventListener("wheel", onWheel, { passive: false });
     return () => {
       container.removeEventListener("pointerdown", onDown);
       container.removeEventListener("pointermove", onMove);
       container.removeEventListener("pointerup", onUp);
       container.removeEventListener("pointercancel", onUp);
+      container.removeEventListener("wheel", onWheel);
     };
   }, [setZoom]);
 
-  // Apply zoom via CSS transform (not Fabric zoom — simpler, works with all objects)
+  // Redraw at the new zoom, keeping the spot under the fingers (or the
+  // middle of the view) where it was.
   useEffect(() => {
-    const wrapper = containerRef.current?.querySelector(".gs-canvas-wrapper") as HTMLElement;
-    if (wrapper) {
-      wrapper.style.transform = `scale(${zoom})`;
-    }
+    const canvas = fabricRef.current;
+    const container = containerRef.current;
+    const wrapper = container?.querySelector(".gs-canvas-wrapper") as HTMLElement | null;
+    if (!canvas || !container || !wrapper) return;
+    const prev = drawnZoomRef.current;
+    if (Math.abs(prev - zoom) < 1e-3) return;
+
+    const box = container.getBoundingClientRect();
+    const anchor = zoomAnchorRef.current ?? { x: box.left + box.width / 2, y: box.top + box.height / 2 };
+    zoomAnchorRef.current = null;
+    const before = wrapper.getBoundingClientRect();
+    // The anchor in sheet coordinates at the old zoom.
+    const sx = (anchor.x - before.left) / prev;
+    const sy = (anchor.y - before.top) / prev;
+
+    applyZoom(canvas, baseSizeRef.current, zoom);
+    drawnZoomRef.current = zoom;
+
+    const after = wrapper.getBoundingClientRect();
+    container.scrollLeft += after.left + sx * zoom - anchor.x;
+    container.scrollTop += after.top + sy * zoom - anchor.y;
   }, [zoom]);
 
   return (
+    <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", background: theme.bgCanvas }}>
     <div
       ref={containerRef}
       style={{
-        width: "100%",
-        height: "100%",
+        position: "absolute",
+        inset: 0,
         display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
         background: theme.bgCanvas,
-        position: "relative",
         overflow: "auto",
+        padding: 24,
+        // Pinching zooms the sheet (handled above), never the page.
+        touchAction: "pan-x pan-y",
       }}
     >
+      {/* margin: auto centres the sheet while it is small and, unlike flex
+          centring, never pushes a zoomed sheet past where scrolling reaches. */}
       <div
         className="gs-canvas-wrapper"
         style={{
+          margin: "auto",
+          flexShrink: 0,
           boxShadow: theme.shadowLg,
           borderRadius: 0,
           lineHeight: 0,
           ...backdropStyle(canvasBg),
-          transformOrigin: "center center",
-          transition: "transform 0.15s ease",
         }}
       >
         <canvas ref={canvasRef} />
       </div>
+    </div>
 
       {/* One banner for everything that would print wrong */}
       <CanvasAlerts
@@ -590,6 +693,9 @@ export function GangSheetCanvas() {
     </div>
   );
 }
+
+const ZOOM_MIN = 0.25;
+const ZOOM_MAX = 8;
 
 /** Bottom-left of the canvas: the backdrop picker above the DPI legend. */
 const CORNER: React.CSSProperties = {

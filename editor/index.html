@@ -181,10 +181,43 @@
       }
 
       if (url.includes("/api/cart")) {
-        return json({ variantId: "1", properties: {} });
+        return json({ variantId: "1", properties: { _gang_sheet_id: "gs_dev_1", _preview_url: "" } });
+      }
+
+      // Shopify's cart, so the whole checkout flow can be tried here. The
+      // last add is kept on window.__lastCartAdd to inspect.
+      if (/\/cart\.js(\?|$)/.test(url)) return json({ items: [] });
+      if (url.includes("/cart/change.js")) return json({});
+      if (url.includes("/cart/add.js")) {
+        window.__lastCartAdd = JSON.parse((init && init.body) || "{}");
+        return new Promise((r) => setTimeout(r, window.__cartDelay || 600)).then(() => json({ items: [] }));
       }
 
       return realFetch(input, init);
+    };
+
+    // Uploads go through XMLHttpRequest (for progress). Route them to the
+    // fetch mock above, reporting progress the way a slow line would.
+    window.XMLHttpRequest = function () {
+      const x = { upload: {}, status: 0, statusText: "", responseText: "" };
+      x.open = (method, url) => { x.url = url; };
+      x.setRequestHeader = () => {};
+      x.send = async (body) => {
+        for (const p of [0.15, 0.4, 0.7, 1]) {
+          await new Promise((r) => setTimeout(r, 180));
+          x.upload.onprogress && x.upload.onprogress({ lengthComputable: true, loaded: p, total: 1 });
+        }
+        x.upload.onload && x.upload.onload();
+        try {
+          const res = await window.fetch(x.url, { method: "POST", body });
+          x.status = res.status;
+          x.responseText = await res.text();
+          x.onload && x.onload();
+        } catch (e) {
+          x.onerror && x.onerror(e);
+        }
+      };
+      return x;
     };
 
     await import("/src/main.tsx");

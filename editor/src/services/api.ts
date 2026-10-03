@@ -83,27 +83,51 @@ export async function ensureGangSheet(
 }
 
 // Upload file via multipart
-export async function uploadImage(
+/** Where an upload is: bytes going up, then the server converting it. */
+export interface UploadProgress {
+  phase: "upload" | "processing";
+  /** 0-1 of the bytes sent. */
+  sent: number;
+}
+
+/**
+ * Upload one design. XMLHttpRequest rather than fetch, because only XHR
+ * reports bytes sent: a 40 MB EPS used to sit on "Laddar upp…" with no
+ * sign of life. After the last byte the server converts and trims the
+ * file, which `phase: "processing"` reports.
+ */
+export function uploadImage(
   file: File,
   sessionId: string,
   gangSheetId: string,
+  onProgress?: (p: UploadProgress) => void,
 ): Promise<any> {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("sessionId", sessionId);
   formData.append("gangSheetId", gangSheetId);
 
-  const base = getBaseUrl();
-  const response = await fetch(`${base}/api/upload`, {
-    method: "POST",
-    body: formData,
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${getBaseUrl()}/api/upload`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.({ phase: "upload", sent: e.loaded / Math.max(1, e.total) });
+    };
+    xhr.upload.onload = () => onProgress?.({ phase: "processing", sent: 1 });
+    xhr.onload = () => {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(`Upload failed: ${xhr.statusText || xhr.status}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(xhr.responseText));
+      } catch {
+        reject(new Error("Servern svarade inte som väntat"));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Nätverksfel, kontrollera anslutningen"));
+    xhr.send(formData);
   });
-
-  if (!response.ok) {
-    throw new Error(`Upload failed: ${response.statusText}`);
-  }
-
-  return response.json();
 }
 
 // Create a new gang sheet

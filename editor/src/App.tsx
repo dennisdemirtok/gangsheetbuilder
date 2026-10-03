@@ -292,9 +292,7 @@ function MobileShell({
         <HeaderButton onClick={onRestartWizard} title="Lägg till motiv" strong>
           + Motiv
         </HeaderButton>
-        <HeaderButton onClick={onReset} title="Rensa allt">
-          Rensa
-        </HeaderButton>
+        {/* "Rensa" lives in the Ark drawer: four buttons pushed ✕ off a 375 px screen. */}
         <HeaderButton onClick={closeEditor} title="Stäng" strong>
           ✕
         </HeaderButton>
@@ -324,6 +322,9 @@ function MobileShell({
                   <ArrangeButton />
                   <SheetManager />
                   <DownloadButton />
+                  <button onClick={onReset} style={mob.resetButton}>
+                    Rensa arket och börja om
+                  </button>
                 </div>
               ) : (
                 <TabContent tab={drawer} />
@@ -480,6 +481,16 @@ const mob: Record<string, React.CSSProperties> = {
     paddingBottom: "env(safe-area-inset-bottom, 0px)",
   },
   tabRow: { display: "flex", borderBottom: `1px solid ${theme.border}` },
+  resetButton: {
+    padding: "10px",
+    border: `1px solid ${theme.border}`,
+    borderRadius: theme.radius,
+    background: "transparent",
+    color: theme.textMuted,
+    fontSize: theme.fontSize.bodySm,
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+  },
 };
 
 /* ───────────────────────── Shared bits ───────────────────────── */
@@ -585,6 +596,7 @@ function GlobalStyles() {
   return (
     <style>{`
       @keyframes gs-spin { to { transform: rotate(360deg); } }
+      @keyframes gs-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
       @keyframes gs-toast-in {
         from { transform: translateY(-10px); opacity: 0; }
         to { transform: translateY(0); opacity: 1; }
@@ -609,6 +621,11 @@ function GlobalStyles() {
       }
       @media (max-width: 480px) {
         .gs-wizard { max-height: 100%; }
+      }
+      /* iOS zooms the whole page into any field with text under 16 px,
+         and the editor then no longer fits the screen. */
+      @media (max-width: 900px) {
+        .gs-editor input, .gs-editor textarea, .gs-editor select { font-size: 16px !important; }
       }
     `}</style>
   );

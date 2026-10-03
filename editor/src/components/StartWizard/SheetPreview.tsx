@@ -24,11 +24,19 @@ export function SheetPreview({
   sheetWidthMm,
   sheetHeightMm,
   label,
+  maxWidth = 180,
+  maxHeight = 440,
+  bare = false,
 }: {
   pieces: PreviewPiece[];
   sheetWidthMm: number;
   sheetHeightMm: number;
   label: string;
+  /** Fit inside this box (px). */
+  maxWidth?: number;
+  maxHeight?: number;
+  /** Just the sheet: no title or label (thumbnails in the order summary). */
+  bare?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [tick, setTick] = useState(0);
@@ -45,9 +53,9 @@ export function SheetPreview({
     }
   }
 
-  // 180 px wide; long sheets get narrower so the whole length shows.
-  const MAX_W = 180;
-  const MAX_H = 440;
+  // Long sheets get narrower so the whole length shows.
+  const MAX_W = maxWidth;
+  const MAX_H = maxHeight;
   const scale = Math.min(MAX_W / sheetWidthMm, MAX_H / sheetHeightMm);
   const cw = Math.max(1, Math.round(sheetWidthMm * scale));
   const ch = Math.max(1, Math.round(sheetHeightMm * scale));
@@ -63,7 +71,7 @@ export function SheetPreview({
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // Mid-grey checks, as on the sheet itself.
-    const cell = 6;
+    const cell = bare ? 4 : 6;
     for (let y = 0; y < ch; y += cell) {
       for (let x = 0; x < cw; x += cell) {
         ctx.fillStyle = ((x + y) / cell) % 2 === 0 ? "#cdcdcd" : "#b4b4b4";
@@ -101,10 +109,12 @@ export function SheetPreview({
     }
   }, [pieces, cw, ch, scale, tick]);
 
+  const sheet = <canvas ref={canvasRef} aria-label={label} style={{ width: cw, height: ch, display: "block", boxShadow: theme.shadow }} />;
+  if (bare) return sheet;
   return (
     <div style={P.wrap}>
       <span style={P.title}>Så blir arket</span>
-      <canvas ref={canvasRef} style={{ width: cw, height: ch, display: "block", boxShadow: theme.shadow }} />
+      {sheet}
       <span style={P.label}>{label}</span>
     </div>
   );

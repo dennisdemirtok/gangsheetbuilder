@@ -6,6 +6,34 @@ import { setAppProxyUrl } from "./services/api";
 let activeRoot: Root | null = null;
 let uploadRoot: Root | null = null;
 
+/**
+ * While the editor is open the page must not zoom. iOS zooms in on any
+ * field with text under 16 px and pinches the whole page along with the
+ * sheet; either left the editor larger than the screen, with the cart
+ * button and the "Ark" tab cut off. The theme's viewport is put back on
+ * close.
+ */
+let savedViewport: string | null = null;
+const blockPageZoom = (e: Event) => e.preventDefault();
+
+function lockPageZoom() {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+  if (meta && savedViewport === null) {
+    savedViewport = meta.getAttribute("content") ?? "";
+    meta.setAttribute("content", "width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover");
+  }
+  document.addEventListener("gesturestart", blockPageZoom, { passive: false });
+  document.addEventListener("gesturechange", blockPageZoom, { passive: false });
+}
+
+function unlockPageZoom() {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+  if (meta && savedViewport !== null) meta.setAttribute("content", savedViewport);
+  savedViewport = null;
+  document.removeEventListener("gesturestart", blockPageZoom);
+  document.removeEventListener("gesturechange", blockPageZoom);
+}
+
 function mount() {
   // Clean up previous mount if it exists
   cleanup();
@@ -41,12 +69,17 @@ function mount() {
       left: 0 !important;
       width: 100vw !important;
       height: 100vh !important;
+      /* The visible height on phones: with 100vh the bottom bar, and the
+         cart button in it, sat under Safari's toolbar. */
+      height: 100dvh !important;
       z-index: 2147483647 !important;
       margin: 0 !important;
       padding: 0 !important;
       max-width: none !important;
       overflow: hidden !important;
       background: #ffffff !important;
+      touch-action: manipulation;
+      -webkit-text-size-adjust: 100%;
     }
     body.gangsheet-open > *:not(#gangsheet-portal):not(script):not(style):not(link):not(dialog):not([role="dialog"]) {
       visibility: hidden !important;
@@ -63,6 +96,7 @@ function mount() {
   `;
 
   document.body.appendChild(portalDiv);
+  lockPageZoom();
   document.body.classList.add("gangsheet-open");
   document.body.style.overflow = "hidden";
 
@@ -98,6 +132,7 @@ function cleanup() {
 
 (window as any).__gangsheetCloseEditor = function () {
   cleanup();
+  unlockPageZoom();
 
   const styles = document.getElementById("gangsheet-portal-styles");
   if (styles) styles.remove();
