@@ -71,6 +71,8 @@ interface Uploaded {
   dpiY: number;
   hasAlpha?: boolean;
   hasWhiteBackground?: boolean;
+  /** A solid background around the design (#rrggbb): white, black or a colour. */
+  backgroundColor?: string | null;
   filename: string;
 }
 
@@ -95,7 +97,9 @@ interface Draft {
   processing?: boolean;
   error?: string;
   uploaded?: Uploaded;
-  /** The background-free version, when the file had a white background. */
+  /** The colour of the background the file sits on, when it has one. */
+  bgColor?: string;
+  /** The background-free version, once taken off. */
   bgRemovedUrl?: string;
   /** Use the background-free version (on by default when there is one). */
   useBgRemoved: boolean;
@@ -256,6 +260,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
                       result.height || d.heightPx,
                     ),
                     previewUrl: d.previewUrl || uploaded.thumbnailUrl,
+                    bgColor: result.backgroundColor || undefined,
                     useBgRemoved: white,
                   }
                 : d,
@@ -391,6 +396,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
           bgRemoved: bgOff || Boolean(u.hasAlpha),
           bgRemovedUrl: bgOff ? d.bgRemovedUrl : undefined,
           hasWhiteBackground: Boolean(u.hasWhiteBackground) && !bgOff,
+          backgroundColor: bgOff ? undefined : d.bgColor,
           placed: true,
         };
         return { image, count: d.count };
@@ -696,6 +702,10 @@ function DraftRow({
 
   const bgOff = draft.useBgRemoved && draft.bgRemovedUrl;
   const thumb = bgOff ? draft.bgRemovedUrl! : draft.previewUrl || draft.uploaded?.thumbnailUrl || "";
+  const bg = backgroundWords(draft.bgColor);
+  // A background found but not taken off (only white goes by itself): say
+  // so here, at the first step, with the button right beside it.
+  const offerBg = Boolean(draft.bgColor) && !draft.bgRemovedUrl && !draft.bgBusy && draft.status === "ready";
 
   return (
     <div style={{ ...S.row, borderColor: draft.status === "failed" ? theme.danger : theme.border }}>
@@ -826,14 +836,26 @@ function DraftRow({
                 )}
               </p>
             )}
-            {draft.bgBusy && <p style={S.note}>Tar bort vitt…</p>}
+            {offerBg && (
+              <div style={S.bgOffer}>
+                {/* Room for the sentence; on a phone the button goes below it. */}
+                <span style={{ display: "flex", alignItems: "center", gap: 8, flex: "1 1 180px", minWidth: 0 }}>
+                  <span style={{ ...S.bgSwatch, background: draft.bgColor }} />
+                  <span>Bilden har {bg.a} {bg.color} bakgrund som trycks som en {bg.color} ruta.</span>
+                </span>
+                <button type="button" onClick={() => onBgMode("background")} style={S.bgOfferButton}>
+                  Ta bort bakgrunden
+                </button>
+              </div>
+            )}
+            {draft.bgBusy && <p style={S.note}>Tar bort bakgrunden…</p>}
             {draft.bgRemovedUrl && !draft.bgBusy && (
               <p style={S.note}>
                 {!draft.useBgRemoved
-                  ? "Den vita bakgrunden behålls och trycks som vitt."
+                  ? `Den ${bg.the} bakgrunden behålls och trycks som en ${bg.color} ruta.`
                   : draft.bgMode === "all"
-                    ? "Allt vitt borttaget, även inuti motivet."
-                    : "Vit bakgrund borttagen — annars trycks den som en vit ruta. Vitt inuti motivet trycks vitt."}{" "}
+                    ? `${bg.All} borttaget, även inuti motivet.`
+                    : `${bg.Color} bakgrund borttagen — annars trycks den som en ${bg.color} ruta. ${bg.Inside} inuti motivet trycks som det är.`}{" "}
                 <button
                   onClick={() => onChange({ useBgRemoved: !draft.useBgRemoved })}
                   style={S.inlineLink}
@@ -847,7 +869,7 @@ function DraftRow({
                       onClick={() => onBgMode(draft.bgMode === "all" ? "background" : "all")}
                       style={S.inlineLink}
                     >
-                      {draft.bgMode === "all" ? "Bara bakgrunden" : "Ta bort även vitt inuti"}
+                      {draft.bgMode === "all" ? "Bara bakgrunden" : `Ta bort även ${bg.inside} inuti`}
                     </button>
                   </>
                 )}
@@ -858,6 +880,27 @@ function DraftRow({
       </div>
     </div>
   );
+}
+
+/** How to say the background's colour: white, black or "a colour". */
+function backgroundWords(hex: string | undefined) {
+  const n = hex && /^#[0-9a-f]{6}$/i.test(hex) ? parseInt(hex.slice(1), 16) : 0xffffff;
+  const lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+  if (lum > 0.85) {
+    return { a: "en", color: "vit", Color: "Vit", the: "vita", inside: "vitt", Inside: "Vitt", All: "Allt vitt" };
+  }
+  if (lum < 0.2) {
+    return { a: "en", color: "svart", Color: "Svart", the: "svarta", inside: "svart", Inside: "Svart", All: "Allt svart" };
+  }
+  return {
+    a: "en",
+    color: "färgad",
+    Color: "Färgad",
+    the: "färgade",
+    inside: "den färgen",
+    Inside: "Samma färg",
+    All: "All bakgrundsfärg",
+  };
 }
 
 function Spinner() {
@@ -1088,6 +1131,37 @@ const S: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   note: { margin: "4px 0 0", fontSize: theme.fontSize.labelMd, color: theme.textMuted },
+  bgOffer: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+    marginTop: 8,
+    padding: "8px 10px",
+    borderRadius: theme.radiusSm,
+    background: theme.warningBg,
+    color: theme.text,
+    fontSize: theme.fontSize.labelMd,
+  },
+  bgSwatch: {
+    width: 14,
+    height: 14,
+    borderRadius: 4,
+    border: "1px solid rgba(0,0,0,0.2)",
+    flexShrink: 0,
+  },
+  bgOfferButton: {
+    padding: "6px 12px",
+    border: "none",
+    borderRadius: 8,
+    background: theme.secondary,
+    color: "#ffffff",
+    fontSize: theme.fontSize.labelMd,
+    fontWeight: theme.fontWeight.semibold,
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
   inlineLink: {
     border: "none",
     background: "transparent",

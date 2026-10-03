@@ -98,7 +98,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       metadata = {
         width: 1000, height: 1000, dpiX: 300, dpiY: 300,
         format: validation.extension || "unknown",
-        hasAlpha: false, hasWhiteBackground: false,
+        hasAlpha: false, hasWhiteBackground: false, backgroundColor: null,
         colorSpace: "srgb", channels: 3, fileSize: buffer.length,
       };
     }
@@ -186,6 +186,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       filename,
       hasAlpha: metadata.hasAlpha,
       hasWhiteBackground: metadata.hasWhiteBackground,
+      // Any solid background (white, black, a colour): the guide offers to take it off.
+      backgroundColor: metadata.backgroundColor ?? null,
       format: metadata.format,
       warnings,
     });

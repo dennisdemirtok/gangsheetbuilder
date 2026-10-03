@@ -13,8 +13,8 @@ import {
 import { storeJobFile } from "../../app/lib/job-file.server";
 import {
   convertToRaster,
-  removeAllWhite,
-  removeWhiteBackground,
+  removeAllOfColor,
+  removeBackground,
   trimTransparentEdges,
 } from "../../app/lib/image-processing.server";
 
@@ -231,8 +231,8 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
         if (Math.abs(renderRatio - storedRatio) / storedRatio < 0.02) {
           if (usesBgRemoved) {
             render = /bg-removed-all\.png$/.test(image.bgRemovedUrl!)
-              ? await removeAllWhite(render)
-              : await removeWhiteBackground(render);
+              ? await removeAllOfColor(render)
+              : await removeBackground(render);
           }
           buffer = render;
           console.log(

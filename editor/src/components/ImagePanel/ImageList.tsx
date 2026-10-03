@@ -56,9 +56,9 @@ export function ImageList() {
 }
 
 /**
- * One click for every design with a white background. Taking them off one
- * by one was the step customers skipped — and a white box prints as a
- * white box.
+ * One click for every design with a background left on — white, black or a
+ * colour. Taking them off one by one was the step customers skipped, and a
+ * background prints as a box.
  */
 export function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
   const updateGroup = useEditorStore((s) => s.updateGroup);
@@ -66,7 +66,9 @@ export function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
   // bgRemoved is also set for files that came in transparent — an EPS
   // with a white box inside a transparent margin is one — so check for an
   // actual background-free version instead.
-  const white = groups.filter((g) => g.master.hasWhiteBackground && !g.master.bgRemovedUrl);
+  const white = groups.filter(
+    (g) => (g.master.hasWhiteBackground || g.master.backgroundColor) && !g.master.bgRemovedUrl,
+  );
   if (white.length === 0) return null;
 
   const removeAll = async () => {
@@ -80,7 +82,7 @@ export function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
         try {
           const result = await removeBg(group.master.dbId || group.master.id);
           const url = result.bgRemovedUrl.startsWith("/") ? base + result.bgRemovedUrl : result.bgRemovedUrl;
-          updateGroup(group.groupId, { bgRemoved: true, bgRemovedUrl: url, hasWhiteBackground: false });
+          updateGroup(group.groupId, { bgRemoved: true, bgRemovedUrl: url, hasWhiteBackground: false, backgroundColor: undefined });
         } catch {
           failed++;
         }
@@ -105,8 +107,8 @@ export function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
       }}
     >
       <span style={{ flex: 1 }}>
-        {white.length === 1 ? "1 motiv har" : `${white.length} motiv har`} vit
-        bakgrund, som trycks som en vit ruta.
+        {white.length === 1 ? "1 motiv har" : `${white.length} motiv har`} en
+        bakgrund, som trycks som en ruta runt motivet.
       </span>
       <button
         onClick={() => void removeAll()}
@@ -139,7 +141,7 @@ export async function removeGroupBackground(
   const result = await removeBg(image.dbId || image.id);
   const base = getAppProxyUrl();
   const bgUrl = result.bgRemovedUrl.startsWith("/") ? base + result.bgRemovedUrl : result.bgRemovedUrl;
-  updateGroup(group.groupId, { bgRemoved: true, bgRemovedUrl: bgUrl, hasWhiteBackground: false });
+  updateGroup(group.groupId, { bgRemoved: true, bgRemovedUrl: bgUrl, hasWhiteBackground: false, backgroundColor: undefined });
 }
 
 /** Trim the empty margin around a design, on every copy. Throws when it fails. */
@@ -511,7 +513,8 @@ function Thumbnail({ image, count }: { image: EditorImage; count: number }) {
         borderRadius: 6,
         overflow: "hidden",
         flexShrink: 0,
-        background: theme.bgInput,
+        // Checks, so a white design shows (on plain grey it disappeared).
+        background: "repeating-conic-gradient(#d5d9de 0% 25%, #eef0f2 0% 50%) 50% / 10px 10px",
         position: "relative",
         display: "flex",
         alignItems: "center",

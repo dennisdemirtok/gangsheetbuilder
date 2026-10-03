@@ -2,13 +2,13 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { downloadFile, uploadFile, storageKey } from "../lib/r2.server";
-import { removeAllWhite, removeWhiteBackground } from "../lib/image-processing.server";
+import { removeAllOfColor, removeBackground } from "../lib/image-processing.server";
 import { resolveRasterKey } from "../lib/placement";
 import prisma from "../db.server";
 
 /**
  * Remove background from an image.
- * Uses local Sharp processing for white backgrounds.
+ * Uses local Sharp processing for a solid background (white, black or any one colour).
  * Falls back to remove.bg API if configured.
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -18,8 +18,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     const body = await request.json();
     const { imageId } = body;
-    // "background" (default): white around the design. "all": every white
-    // pixel, also inside it — chosen by the customer after seeing the first.
+    // "background" (default): the background around the design. "all": every
+    // pixel of its colour, also inside it — chosen by the customer after
+    // seeing the first.
     const mode: "background" | "all" = body.mode === "all" ? "all" : "background";
 
     if (!imageId) {
@@ -62,14 +63,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         resultBuffer = await removeWithApi(originalBuffer, removeBgApiKey);
       } catch (apiError) {
         console.warn("remove.bg API failed, falling back to local:", apiError);
-        resultBuffer = await removeWhiteBackground(originalBuffer);
+        resultBuffer = await removeBackground(originalBuffer);
       }
     } else {
-      // Local: the white around the design, or on request all white.
+      // Local: the background around the design (white, black or any one
+      // colour), or on request every pixel of that colour.
       resultBuffer =
         mode === "all"
-          ? await removeAllWhite(originalBuffer)
-          : await removeWhiteBackground(originalBuffer);
+          ? await removeAllOfColor(originalBuffer)
+          : await removeBackground(originalBuffer);
     }
 
     await uploadFile(bgRemovedKey, resultBuffer, "image/png");

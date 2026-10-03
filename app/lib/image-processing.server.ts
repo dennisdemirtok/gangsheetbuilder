@@ -12,6 +12,11 @@ export interface ImageMetadata {
   format: string;
   hasAlpha: boolean;
   hasWhiteBackground: boolean;
+  /**
+   * The colour of a solid background around the design (#rrggbb) — white,
+   * black or any one colour — or null when there is none.
+   */
+  backgroundColor?: string | null;
   colorSpace: string;
   channels: number;
   fileSize: number;
@@ -25,8 +30,8 @@ export async function extractMetadata(buffer: Buffer): Promise<ImageMetadata> {
   const dpi = metadata.density || 72;
   const hasAlpha = metadata.hasAlpha || false;
 
-  // Analyze if image likely has a white background
-  const hasWhiteBg = await detectWhiteBackground(buffer, hasAlpha);
+  // A solid background that would print as a box around the design.
+  const background = await detectBackground(buffer);
 
   return {
     width: metadata.width || 0,
@@ -35,7 +40,8 @@ export async function extractMetadata(buffer: Buffer): Promise<ImageMetadata> {
     dpiY: dpi,
     format: metadata.format || "unknown",
     hasAlpha,
-    hasWhiteBackground: hasWhiteBg,
+    hasWhiteBackground: background !== null && isWhite(background),
+    backgroundColor: background ? toHex(background) : null,
     colorSpace: metadata.space || "srgb",
     channels: metadata.channels || 3,
     fileSize: buffer.length,
@@ -43,30 +49,25 @@ export async function extractMetadata(buffer: Buffer): Promise<ImageMetadata> {
 }
 
 /**
- * Does the design sit on a white background that would print as a white
- * box? Answered by the removal itself, on a small copy: if clearing the
- * white that touches the edge (through any transparent margin) would clear
- * more than a sliver of the image, there is a background.
+ * The colour of the background the design sits on, when it would print as
+ * a box around it. Answered by the removal itself, on a small copy: if
+ * clearing the background that touches the edge (through any transparent
+ * margin) would clear more than a sliver of the image, there is one.
  *
- * This used to give up as soon as the file had any transparency, and only
- * looked at the four corners — so an EPS whose white box sits inside a
- * transparent margin (Ghostscript renders the page that way) was never
- * flagged, and printed with its box.
+ * Only white counted until now, so a logo on black came through without a
+ * word and printed as a black box.
  */
-async function detectWhiteBackground(
-  buffer: Buffer,
-  _hasAlpha: boolean,
-): Promise<boolean> {
+async function detectBackground(buffer: Buffer): Promise<Rgb | null> {
   try {
     const { data, info } = await sharp(buffer, { limitInputPixels: false })
       .resize({ width: 600, height: 600, fit: "inside", withoutEnlargement: true })
       .ensureAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
-    const cleared = clearEdgeWhite(data, info.width, info.height, info.channels, 240, 20);
-    return cleared > info.width * info.height * 0.03;
+    const { cleared, color } = clearEdgeBackground(data, info.width, info.height, info.channels);
+    return color && cleared > info.width * info.height * 0.03 ? color : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -150,19 +151,16 @@ export async function convertToPng(buffer: Buffer): Promise<Buffer> {
 }
 
 /**
- * Remove the white background around a design.
+ * Remove the solid background around a design: white, black or any one
+ * colour, whichever frames it.
  *
- * Only white that is connected to the edge of the image is removed — the
- * background. This used to clear every near-white pixel, so white text and
- * white details inside a logo turned transparent too, and in DTF they would
- * print in the colour of the garment instead of white. Anti-aliased edges
- * against the background fade out instead of leaving a white halo.
+ * Only background connected to the edge of the image is removed. This used
+ * to clear every near-white pixel, so white text and white details inside a
+ * logo turned transparent too, and in DTF they would print in the colour of
+ * the garment instead of white. Anti-aliased edges against the background
+ * fade out instead of leaving a halo.
  */
-export async function removeWhiteBackground(
-  buffer: Buffer,
-  threshold: number = 240,
-  fuzz: number = 20,
-): Promise<Buffer> {
+export async function removeBackground(buffer: Buffer): Promise<Buffer> {
   const img = sharp(buffer, { limitInputPixels: false });
   const meta = await img.metadata();
   if (!meta.width || !meta.height) return buffer;
@@ -172,7 +170,7 @@ export async function removeWhiteBackground(
     .raw()
     .toBuffer({ resolveWithObject: true });
 
-  clearEdgeWhite(data, info.width, info.height, info.channels, threshold, fuzz);
+  clearEdgeBackground(data, info.width, info.height, info.channels);
 
   return sharp(data, {
     raw: { width: info.width, height: info.height, channels: info.channels },
@@ -215,68 +213,62 @@ export async function trimTransparentEdges(
 }
 
 /**
- * Make every near-white pixel transparent — also white inside the design,
- * like the counter of an "O". Only on request: it also clears white the
- * design is meant to print. The customer sees the result before using it.
+ * Make every pixel of the background's colour transparent — also inside
+ * the design, like the counter of an "O". Only on request: it also clears
+ * what the design is meant to print in that colour. The customer sees the
+ * result before using it. White when no background colour is found.
  */
-export async function removeAllWhite(
-  buffer: Buffer,
-  threshold: number = 240,
-  fuzz: number = 20,
-): Promise<Buffer> {
+export async function removeAllOfColor(buffer: Buffer): Promise<Buffer> {
   const { data, info } = await sharp(buffer, { limitInputPixels: false })
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
-  const loose = threshold - fuzz;
+  const color = frameColor(data, info.width, info.height, info.channels)?.color ?? WHITE;
   for (let i = 0; i < data.length; i += info.channels) {
-    const whiteness = Math.min(data[i]!, data[i + 1]!, data[i + 2]!);
-    if (whiteness < loose) continue;
-    const a = whiteness >= threshold ? 0 : Math.round(255 * (1 - (whiteness - loose) / fuzz));
-    data[i + 3] = Math.min(data[i + 3]!, Math.max(0, a));
+    const d = distanceAt(data, i, color);
+    if (d > LOOSE) continue;
+    const a = d <= TIGHT ? 0 : Math.round((255 * (d - TIGHT)) / (LOOSE - TIGHT));
+    data[i + 3] = Math.min(data[i + 3]!, a);
   }
   return sharp(data, { raw: { width: info.width, height: info.height, channels: info.channels } })
     .png()
     .toBuffer();
 }
 
+type Rgb = [number, number, number];
+
+const WHITE: Rgb = [255, 255, 255];
+/** Within this of the background colour (per channel): cleared. */
+const TIGHT = 15;
+/** Up to this: faded, the anti-aliased edge of the design. */
+const LOOSE = 35;
+/** Alpha below this is not part of the picture. */
+const VISIBLE = 16;
+
+function distanceAt(data: Buffer, i: number, c: Rgb): number {
+  return Math.max(Math.abs(data[i]! - c[0]), Math.abs(data[i + 1]! - c[1]), Math.abs(data[i + 2]! - c[2]));
+}
+
+function isWhite(c: Rgb): boolean {
+  return Math.min(c[0], c[1], c[2]) >= 235;
+}
+
+function toHex(c: Rgb): string {
+  return "#" + c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+}
+
 /**
- * Make a white background transparent, in place. Returns how many visible
- * white pixels it cleared (0 when there is no white background).
- *
- * A white background is a frame around the design: the edge of everything
- * visible in the file is mostly white. That covers a JPG on white paper and
- * an EPS whose white box sits inside a transparent margin (Ghostscript
- * renders the page that way, and a fill that started at the file's own edge
- * never reached the box). A white logo on a transparent background has a
- * mostly transparent edge and is left alone — clearing "white connected to
- * the edge" through the transparency would have erased it. From the white
- * on that edge, white connected to it is cleared; white inside the design
- * (text, details) stays and prints white. A scanline fill keeps the stack
- * small even on 40-megapixel renders.
+ * The colour most of the edge of everything visible has, when one colour
+ * makes up at least half of it — a frame. Null for a design on
+ * transparency (its edge is mostly see-through) or a photo (many colours).
  */
-function clearEdgeWhite(
+function frameColor(
   data: Buffer,
   w: number,
   h: number,
   channels: number,
-  threshold: number,
-  fuzz: number,
-): number {
-  const loose = threshold - fuzz;
-  const VISIBLE = 16;
+): { color: Rgb; edge: number[] } | null {
   const alpha = (p: number) => data[p * channels + 3]!;
-  const isWhite = (p: number) => {
-    const i = p * channels;
-    return (
-      data[i + 3]! >= VISIBLE &&
-      data[i]! >= loose &&
-      data[i + 1]! >= loose &&
-      data[i + 2]! >= loose
-    );
-  };
-
-  // Bounds of everything visible.
   let minX = w;
   let minY = h;
   let maxX = -1;
@@ -292,61 +284,109 @@ function clearEdgeWhite(
       }
     }
   }
-  if (maxX < 0) return 0;
+  if (maxX < 0) return null;
 
-  // Is the edge of the visible area mostly white — a frame?
   const edge: number[] = [];
   for (let x = minX; x <= maxX; x++) edge.push(minY * w + x, maxY * w + x);
   for (let y = minY + 1; y < maxY; y++) edge.push(y * w + minX, y * w + maxX);
-  const whiteOnEdge = edge.filter(isWhite);
-  if (whiteOnEdge.length < edge.length * 0.5) return 0;
 
-  let cleared = 0;
-  const clear = (p: number) => {
+  // Coarse buckets, so JPEG noise and a little shading stay one colour.
+  const buckets = new Map<number, number[]>();
+  for (const p of edge) {
+    if (alpha(p) < VISIBLE) continue;
     const i = p * channels;
-    const whiteness = Math.min(data[i]!, data[i + 1]!, data[i + 2]!);
-    data[i + 3] =
-      whiteness >= threshold
-        ? 0
-        : Math.max(0, Math.min(255, Math.round(255 * (1 - (whiteness - loose) / fuzz))));
-    cleared++;
+    const key = ((data[i]! >> 5) << 6) | ((data[i + 1]! >> 5) << 3) | (data[i + 2]! >> 5);
+    const list = buckets.get(key);
+    if (list) list.push(p);
+    else buckets.set(key, [p]);
+  }
+  let best: number[] = [];
+  for (const list of buckets.values()) if (list.length > best.length) best = list;
+  if (best.length < edge.length * 0.5) return null;
+
+  const sum = [0, 0, 0];
+  for (const p of best) {
+    const i = p * channels;
+    sum[0] += data[i]!;
+    sum[1] += data[i + 1]!;
+    sum[2] += data[i + 2]!;
+  }
+  return { color: [sum[0]! / best.length, sum[1]! / best.length, sum[2]! / best.length], edge };
+}
+
+/**
+ * Make a solid background transparent, in place. Returns how many visible
+ * pixels it cleared (0 when there is no background) and its colour.
+ *
+ * A background is a frame around the design: the edge of everything
+ * visible in the file is mostly one colour. That covers a JPG on white
+ * paper, a logo on a black square, and an EPS whose white box sits inside a
+ * transparent margin (Ghostscript renders the page that way, and a fill
+ * that started at the file's own edge never reached the box). A white logo
+ * on a transparent background has a mostly transparent edge and is left
+ * alone — clearing "white connected to the edge" through the transparency
+ * would have erased it. From the background on that edge, what is
+ * connected to it is cleared; the same colour inside the design (text,
+ * details) stays and prints. A scanline fill keeps the stack small even on
+ * 40-megapixel renders.
+ */
+function clearEdgeBackground(
+  data: Buffer,
+  w: number,
+  h: number,
+  channels: number,
+): { cleared: number; color: Rgb | null } {
+  const frame = frameColor(data, w, h, channels);
+  if (!frame) return { cleared: 0, color: null };
+  const { color } = frame;
+  const isBackground = (p: number) => {
+    const i = p * channels;
+    return data[i + 3]! >= VISIBLE && distanceAt(data, i, color) <= LOOSE;
   };
 
   const seen = new Uint8Array(w * h);
   const stack: number[] = [];
-  for (const p of whiteOnEdge) stack.push(p % w, Math.floor(p / w));
+  for (const p of frame.edge) if (isBackground(p)) stack.push(p % w, Math.floor(p / w));
 
   while (stack.length > 0) {
     const y = stack.pop()!;
     let x = stack.pop()!;
     let p = y * w + x;
-    if (seen[p] || !isWhite(p)) continue;
-    // Walk left to the start of this run of white.
-    while (x > 0 && !seen[p - 1] && isWhite(p - 1)) {
+    if (seen[p] || !isBackground(p)) continue;
+    // Walk left to the start of this run of background.
+    while (x > 0 && !seen[p - 1] && isBackground(p - 1)) {
       x--;
       p--;
     }
     let aboveOpen = false;
     let belowOpen = false;
-    for (; x < w && !seen[p] && isWhite(p); x++, p++) {
+    for (; x < w && !seen[p] && isBackground(p); x++, p++) {
       seen[p] = 1;
       if (y > 0) {
         const up = p - w;
-        const open = !seen[up] && isWhite(up);
+        const open = !seen[up] && isBackground(up);
         if (open && !aboveOpen) stack.push(x, y - 1);
         aboveOpen = open;
       }
       if (y < h - 1) {
         const down = p + w;
-        const open = !seen[down] && isWhite(down);
+        const open = !seen[down] && isBackground(down);
         if (open && !belowOpen) stack.push(x, y + 1);
         belowOpen = open;
       }
     }
   }
-  // Clear after the fill, so partial alphas don't change what counts as white.
-  for (let p = 0; p < seen.length; p++) if (seen[p]) clear(p);
-  return cleared;
+
+  // Clear after the fill, so partial alphas don't change what counts as background.
+  let cleared = 0;
+  for (let p = 0; p < seen.length; p++) {
+    if (!seen[p]) continue;
+    const i = p * channels;
+    const d = distanceAt(data, i, color);
+    data[i + 3] = d <= TIGHT ? 0 : Math.min(data[i + 3]!, Math.round((255 * (d - TIGHT)) / (LOOSE - TIGHT)));
+    cleared++;
+  }
+  return { cleared, color };
 }
 
 /**

@@ -50,6 +50,8 @@ export interface EditorImage {
   bgRemoved: boolean;
   bgRemovedUrl?: string;
   hasWhiteBackground?: boolean;
+  /** A solid background left on (#rrggbb): it prints as a box around the design. */
+  backgroundColor?: string;
   placed: boolean;
   locked?: boolean; // aspect ratio lock
   /** Made with the text tool: what it says and how, so it can be edited. */

@@ -108,13 +108,14 @@ const CHECKS: React.CSSProperties = {
 
 /**
  * Room kept free around the sheet when it is fitted to the view: the
- * rulers along the top and left and, on a phone, the controls along the
- * bottom. The sheet used to fill the whole height there, so "Plaggfärg",
- * "DPI-kvalitet" and the zoom sat on top of its last 10 cm.
+ * rulers along the top and left and, on a phone, "Ordna arket" above it
+ * and the controls along the bottom. The sheet used to fill the whole
+ * height there, so "Plaggfärg", "DPI-kvalitet" and the zoom sat on top of
+ * its last 10 cm.
  */
 function viewInsets(mobile: boolean) {
   return mobile
-    ? { top: 32, right: 14, bottom: 76, left: 30 }
+    ? { top: 50, right: 14, bottom: 76, left: 30 }
     : { top: 40, right: 40, bottom: 40, left: 40 };
 }
 
@@ -275,11 +276,59 @@ export function GangSheetCanvas({ hideControls = false }: { hideControls?: boole
     const canvasWidth = mmToCanvasPx(sheetSize.widthMm, scaleFactor);
     const canvasHeight = mmToCanvasPx(sheetSize.heightMm, scaleFactor);
 
+    const coarse = window.matchMedia("(pointer: coarse)").matches;
     const canvas = new Canvas(canvasRef.current, {
       width: canvasWidth,
       height: canvasHeight,
       backgroundColor: "transparent",
-      selection: true, // Enable drag-select (rubber band)
+      // Drag-select with a mouse; on a touchscreen a drag scrolls the sheet.
+      selection: !coarse,
+      allowTouchScrolling: true,
+    });
+
+    /**
+     * On a touchscreen a design is picked with a tap and only then dragged.
+     * A finger on its way to scroll the sheet used to grab whatever design
+     * it landed on and move it — and on a full sheet that is every spot.
+     */
+    let held: FabricObject | null = null;
+    let touchFrom: { x: number; y: number } | null = null;
+    const isTouch = (e: Event) =>
+      (typeof TouchEvent !== "undefined" && e instanceof TouchEvent) || (e as PointerEvent).pointerType === "touch";
+    const pointOf = (e: Event) => {
+      const t = (e as TouchEvent).touches?.[0] ?? (e as TouchEvent).changedTouches?.[0];
+      if (t) return { x: t.clientX, y: t.clientY };
+      const p = e as PointerEvent;
+      return typeof p.clientX === "number" ? { x: p.clientX, y: p.clientY } : null;
+    };
+    const release = () => {
+      if (held) {
+        held.lockMovementX = false;
+        held.lockMovementY = false;
+      }
+      held = null;
+    };
+    canvas.on("mouse:down:before", (opt) => {
+      release();
+      if (!isTouch(opt.e)) return;
+      touchFrom = pointOf(opt.e);
+      const target = opt.target;
+      if (target && target !== canvas.getActiveObject()) {
+        target.lockMovementX = true;
+        target.lockMovementY = true;
+        held = target;
+      }
+    });
+    canvas.on("mouse:up", (opt) => {
+      if (!held) return;
+      const to = pointOf(opt.e);
+      // A swipe that began on a design was a scroll, not a pick.
+      if (touchFrom && to && Math.hypot(to.x - touchFrom.x, to.y - touchFrom.y) > 10) {
+        canvas.discardActiveObject();
+        canvas.requestRenderAll();
+      }
+      release();
+      touchFrom = null;
     });
 
     fabricRef.current = canvas;
@@ -287,12 +336,13 @@ export function GangSheetCanvas({ hideControls = false }: { hideControls?: boole
     setBase({ w: canvasWidth, h: canvasHeight });
     if (mobile) {
       // The whole sheet when it shows at a size you can work with (a
-      // metre), else its width (2 m and up would be a narrow strip):
+      // metre, also on a phone with Safari's bars showing), else its width
+      // (2 m and up would be a narrow strip):
       // logos you can see, scrolling down the length. The width stays put
       // when the sheet grows, instead of the sheet shrinking under you.
       const viewH = Math.max(1, container.clientHeight - ins.top - ins.bottom);
       const whole = Math.min(1, viewH / canvasHeight);
-      const start = whole >= 0.7 ? whole : 1;
+      const start = whole >= 0.45 ? whole : 1;
       drawnZoomRef.current = start;
       applyZoom(canvas, baseSizeRef.current, start);
       container.scrollTop = 0;
@@ -859,6 +909,20 @@ export function GangSheetCanvas({ hideControls = false }: { hideControls?: boole
       </div>
     </div>
 
+      {/* Tidy up in one tap, where the mess is: it was in the list or the
+          side panel, out of sight when a drag went wrong. */}
+      {!hideControls && images.length > 0 && (
+        <button
+          type="button"
+          onClick={() => void arrangeSheet()}
+          style={TIDY}
+          title="Ordnar om motiven så att de ligger tätt och tar så lite film som möjligt"
+        >
+          {ICON.tidy}
+          Ordna arket
+        </button>
+      )}
+
       {/* One banner for everything that would print wrong */}
       <CanvasAlerts
         overflowCount={overflowCount}
@@ -903,6 +967,27 @@ export function GangSheetCanvas({ hideControls = false }: { hideControls?: boole
     </div>
   );
 }
+
+const TIDY: React.CSSProperties = {
+  position: "absolute",
+  top: 8,
+  right: 12,
+  zIndex: 5,
+  height: 34,
+  padding: "0 13px 0 11px",
+  display: "flex",
+  alignItems: "center",
+  gap: 7,
+  background: "rgba(255, 255, 255, 0.97)",
+  border: `1px solid ${theme.border}`,
+  boxShadow: "0 4px 16px rgba(16, 24, 40, 0.12)",
+  borderRadius: 999,
+  color: theme.text,
+  fontFamily: theme.fontFamily,
+  fontSize: theme.fontSize.labelLg,
+  fontWeight: theme.fontWeight.semibold,
+  cursor: "pointer",
+};
 
 /** A thin edge and a soft shadow: the film lifted off the table. */
 const SHEET_FRAME = "0 0 0 1px rgba(16, 24, 40, 0.16), 0 8px 24px rgba(16, 24, 40, 0.10)";
@@ -1275,7 +1360,8 @@ function CanvasAlerts({
     <div
       style={{
         position: "absolute",
-        top: compact ? 8 : 12,
+        // Below "Ordna arket".
+        top: 50,
         left: compact ? 8 : "50%",
         right: compact ? 8 : undefined,
         transform: compact ? undefined : "translateX(-50%)",
@@ -1354,6 +1440,14 @@ function Alert({
 
 
 const ICON = {
+  tidy: (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden>
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+    </svg>
+  ),
   zoomOut: (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
       <circle cx="10.5" cy="10.5" r="6.5" />

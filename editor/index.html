@@ -59,6 +59,7 @@
 
     let uploadSeq = 0;
     const uploadedReal = {};
+    const blackBoxRemoved = {};
 
     // Real logos, converted the way the upload route does (Ghostscript at
     // 300 DPI): public/test-assets/manifest.json maps a file name to the
@@ -133,8 +134,38 @@
             dpiY: 300,
             hasAlpha: real.hasAlpha,
             hasWhiteBackground: real.hasWhiteBackground,
+            backgroundColor: real.hasWhiteBackground ? "#ffffff" : null,
             warnings: [],
           }).then((res) => new Promise((r) => setTimeout(() => r(res), 400 + Math.random() * 600)));
+        }
+        // "svart-…": white arrows on a black box, like a phone screenshot of
+        // an icon — the server finds the black and the guide offers to take
+        // it off.
+        if (file && /^svart-/.test(file.name)) {
+          const draw = (withBox) => {
+            const c = document.createElement("canvas");
+            c.width = 600; c.height = 1000;
+            const x = c.getContext("2d");
+            if (withBox) { x.fillStyle = "#111"; x.fillRect(0, 0, 600, 1000); }
+            x.strokeStyle = "#fff"; x.lineWidth = 40; x.lineCap = "round"; x.lineJoin = "round";
+            x.beginPath(); x.moveTo(150, 420); x.lineTo(450, 420); x.lineTo(380, 350); x.stroke();
+            x.beginPath(); x.moveTo(450, 580); x.lineTo(150, 580); x.lineTo(220, 650); x.stroke();
+            return c.toDataURL("image/png");
+          };
+          const dbId = "dbimg_" + Date.now().toString(36) + "_" + uploadSeq;
+          blackBoxRemoved[dbId] = draw(false);
+          return json({
+            id: dbId,
+            imageId: "img_dev_" + Date.now().toString(36) + "_" + uploadSeq,
+            filename: file.name,
+            thumbnailUrl: draw(true),
+            originalUrl: draw(true),
+            width: 600, height: 1000, dpiX: 300, dpiY: 300,
+            hasAlpha: false,
+            hasWhiteBackground: false,
+            backgroundColor: "#111111",
+            warnings: [],
+          }).then((res) => new Promise((r) => setTimeout(() => r(res), 500)));
         }
         return json({
           // Unique across reloads: the editor keeps its designs in
@@ -157,6 +188,11 @@
       if (url.includes("/api/remove-bg")) {
         // Real logos: the server's removal, precomputed into test-assets.
         const id = JSON.parse((init && init.body) || "{}").imageId;
+        if (blackBoxRemoved[id]) {
+          return new Promise((r) => setTimeout(r, 400)).then(() =>
+            json({ status: "done", bgRemovedUrl: blackBoxRemoved[id] }),
+          );
+        }
         const realName = Object.keys(realAssets).find((n) => uploadedReal[id] === n);
         if (realName && realAssets[realName].nobg) {
           return new Promise((r) => setTimeout(r, 400)).then(() =>
