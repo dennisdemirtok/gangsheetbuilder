@@ -126,8 +126,11 @@ export function NamesNumbers({ prices }: { prices: PriceList }) {
   };
 
   const preview = (
-    <div style={{ ...S.previewCard, ...(wide ? { position: "sticky", top: 96 } : null) }}>
-      <ShirtPreview look={look} name={first?.name ?? ""} number={first?.number ?? ""} shirt={shirt} />
+    <div style={{ ...S.previewCard, ...(wide ? { position: "sticky", top: 96 } : { padding: 12 }) }}>
+      {/* On a phone the shirt is a reminder, not the page: it used to fill the first screen. */}
+      <div style={wide ? undefined : { maxWidth: 230, margin: "0 auto" }}>
+        <ShirtPreview look={look} name={first?.name ?? ""} number={first?.number ?? ""} shirt={shirt} />
+      </div>
       <div style={S.previewFoot}>
         <span style={S.small}>Förhandsvisa på</span>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -307,11 +310,26 @@ export function NamesNumbers({ prices }: { prices: PriceList }) {
             canOrder={canOrder}
             busy={Boolean(progress)}
             onOrder={() => void order()}
-            sticky={!wide}
+            sticky={false}
           />
           {error && <div style={S.error}>{error}</div>}
         </div>
       </div>
+
+      {/* Phones: the total and the button stay in reach while the list grows. */}
+      {!wide && (
+        <div style={S.mobileBar}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>{totals.pieces ? kr(Math.round(total * 100) / 100) : "—"}</div>
+            <div style={S.small}>
+              {totals.pieces} tryck{tier ? ` · −${tier.pct} %` : ""}
+            </div>
+          </div>
+          <button type="button" onClick={() => void order()} disabled={!canOrder} style={{ ...S.primary, width: "auto", padding: "12px 18px", ...(canOrder ? null : S.primaryOff) }}>
+            Lägg i varukorg
+          </button>
+        </div>
+      )}
 
       {progress && <ProgressModal progress={progress} added={added} />}
     </div>
@@ -361,9 +379,10 @@ function StylePicker({
                   fontFamily: `"${fontFamily(fontById(s.fontId))}", sans-serif`,
                   fontSize: 26,
                   lineHeight: 1.1,
-                  color: INK,
-                  WebkitTextStroke: s.outlined ? "0.6px #fff" : undefined,
-                  textShadow: s.outlined ? "0 0 0 #000, 1px 1px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000" : undefined,
+                  // Outlined styles as they print: light figures with a dark edge.
+                  color: s.outlined ? "#fff" : INK,
+                  WebkitTextStroke: s.outlined ? `1.4px ${INK}` : undefined,
+                  paintOrder: s.outlined ? "stroke fill" : undefined,
                 }}
               >
                 {sample}
@@ -759,6 +778,21 @@ const S: Record<string, React.CSSProperties> = {
     font: "inherit",
   },
   primaryOff: { background: "#e8e8ea", color: "#8e8e93", cursor: "not-allowed" },
+  mobileBar: {
+    position: "sticky",
+    bottom: 0,
+    zIndex: 5,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginTop: 14,
+    padding: "10px 14px",
+    background: "rgba(255,255,255,0.96)",
+    backdropFilter: "blur(8px)",
+    borderTop: `1px solid ${LINE}`,
+    boxShadow: "0 -6px 20px rgba(0,0,0,0.06)",
+  },
   error: { marginTop: 10, padding: "10px 12px", borderRadius: 10, background: "#fff4ed", border: "1px solid #fed7aa", color: "#9a3412", fontSize: 13.5 },
   backdrop: { position: "fixed", inset: 0, background: "rgba(17,17,20,0.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 2147483000 },
   modal: { width: "100%", maxWidth: 400, background: "#fff", borderRadius: 18, padding: 22, boxShadow: "0 24px 80px rgba(0,0,0,0.25)", fontFamily: "inherit" },
