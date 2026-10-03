@@ -1,7 +1,12 @@
 import { Wordmark } from "./components/Brand/Wordmark";
 import { useEffect, useState } from "react";
 import { GangSheetCanvas } from "./components/Canvas/GangSheetCanvas";
-import { LeftSidebar, TabContent, TABS, type TabKey } from "./components/LeftSidebar/LeftSidebar";
+import { TabContent, TABS, type TabKey } from "./components/LeftSidebar/LeftSidebar";
+import { BuilderPanel } from "./components/LeftSidebar/BuilderPanel";
+import { ImageUploader } from "./components/ImagePanel/ImageUploader";
+import { ImageList } from "./components/ImagePanel/ImageList";
+import { NamesModal } from "./names/NamesModal";
+import { useSheetStats } from "./utils/sheetStats";
 import { Toolbar } from "./components/Toolbar/Toolbar";
 import { ArrangeButton } from "./components/Toolbar/ArrangeButton";
 import { PriceDisplay, PriceBar } from "./components/PriceDisplay/PriceDisplay";
@@ -10,7 +15,7 @@ import { DownloadButton } from "./components/PriceDisplay/DownloadButton";
 import { SheetManager } from "./components/SheetManager/SheetManager";
 import { SheetInsight } from "./components/SheetInsight/SheetInsight";
 import { StartWizard } from "./components/StartWizard/StartWizard";
-import { useEditorStore, getSheetsTotalPrice, groupKey } from "./store/editorStore";
+import { useEditorStore, getSheetsTotalPrice, groupKey, groupImages } from "./store/editorStore";
 import { redo, undo, useHistory } from "./store/history";
 import { getPricing, setAppProxyUrl } from "./services/api";
 import { theme } from "./styles/theme";
@@ -159,11 +164,7 @@ function DesktopShell({
             justifyContent: "flex-end",
           }}
         >
-          <PriceBadge />
-          {/* The guide is also how to add many designs at once later on. */}
-          <HeaderButton onClick={onRestartWizard} title="Ladda upp flera motiv och ange storlek och antal" strong>
-            + Lägg till motiv
-          </HeaderButton>
+          {/* Price and "Lägg till motiv" live in the side panels now. */}
           <HeaderButton onClick={onReset} title="Rensa allt">
             Rensa
           </HeaderButton>
@@ -173,7 +174,7 @@ function DesktopShell({
         </div>
       </header>
 
-      <LeftSidebar />
+      <BuilderPanel onAddDesigns={onRestartWizard} />
 
       <main style={canvasStyle}>
         <GangSheetCanvas />
@@ -190,6 +191,21 @@ function DesktopShell({
           minWidth: 0,
         }}
       >
+        {/* The order first, as the top of a checkout should be. */}
+        <div
+          style={{
+            padding: theme.space.lg,
+            borderBottom: `1px solid ${theme.border}`,
+            display: "flex",
+            flexDirection: "column",
+            gap: theme.space.sm,
+            background: theme.bg,
+          }}
+        >
+          <PriceBar />
+          <AddToCartButton />
+        </div>
+
         <div
           style={{
             flex: 1,
@@ -204,21 +220,7 @@ function DesktopShell({
           <PriceDisplay />
           <SheetInsight />
           <SheetManager />
-        </div>
-
-        <div
-          style={{
-            padding: `${theme.space.sm}px ${theme.space.lg}px ${theme.space.lg}px`,
-            borderTop: `1px solid ${theme.border}`,
-            display: "flex",
-            flexDirection: "column",
-            gap: theme.space.sm,
-          }}
-        >
-          <PriceBar />
-          <ArrangeButton />
           <DownloadButton />
-          <AddToCartButton />
         </div>
       </aside>
 
@@ -256,8 +258,14 @@ function MobileShell({
   onReset: () => void;
   onRestartWizard: () => void;
 }) {
-  const [drawer, setDrawer] = useState<TabKey | "sheet" | null>(null);
-  const { images } = useEditorStore();
+  const [drawer, setDrawer] = useState<"roster" | "text" | null>(null);
+  const [namesOpen, setNamesOpen] = useState(false);
+  const { images, sheets, prices, sheetSize, filmType, activeSheetIndex } = useEditorStore();
+  const stats = useSheetStats();
+  const designs = groupImages(images).length;
+  const total = getSheetsTotalPrice(sheets, prices, sheetSize, filmType, activeSheetIndex, images.length);
+  const errors = stats.issues.filter((i) => i.severity === "error").length;
+  const metres = (sheetSize.heightMm / 1000).toLocaleString("sv-SE", { maximumFractionDigits: 1 });
 
   return (
     <div
@@ -289,10 +297,6 @@ function MobileShell({
         <Wordmark />
         <div style={{ flex: 1 }} />
         <MobileUndo />
-        <HeaderButton onClick={onRestartWizard} title="Lägg till motiv" strong>
-          + Motiv
-        </HeaderButton>
-        {/* "Rensa" lives in the Ark drawer: four buttons pushed ✕ off a 375 px screen. */}
         <HeaderButton onClick={closeEditor} title="Stäng" strong>
           ✕
         </HeaderButton>
@@ -315,11 +319,16 @@ function MobileShell({
               </button>
             </div>
             <div style={mob.drawerBody}>
-              {drawer === "sheet" ? (
+              {drawer === "roster" ? (
                 <div style={{ padding: theme.space.lg, display: "flex", flexDirection: "column", gap: theme.space.lg }}>
                   <PriceDisplay />
-                  <SheetInsight />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={mob.sectionHead}>Dina motiv{designs ? ` (${designs})` : ""}</div>
+                    <ImageUploader compact />
+                    <ImageList />
+                  </div>
                   <ArrangeButton />
+                  <SheetInsight />
                   <SheetManager />
                   <DownloadButton />
                   <button onClick={onReset} style={mob.resetButton}>
@@ -327,34 +336,48 @@ function MobileShell({
                   </button>
                 </div>
               ) : (
-                <TabContent tab={drawer} />
+                <TabContent tab="text" />
               )}
             </div>
           </div>
         </div>
       )}
+      {namesOpen && <NamesModal onClose={() => setNamesOpen(false)} />}
 
-      {/* Bottom bar — checkout is always one tap away */}
+      {/* Bottom: the sheet in one line, what to add, and the cart. */}
       <nav style={mob.bar}>
-        <div style={mob.tabRow}>
-          {TABS.filter((t) => t.key !== "settings").map((tab) => (
-            <MobileTab
-              key={tab.key}
-              icon={tab.icon}
-              label={tab.label}
-              active={drawer === tab.key}
-              onClick={() => setDrawer(drawer === tab.key ? null : tab.key)}
-            />
-          ))}
-          <MobileTab
-            icon={sheetIcon}
-            label="Ark"
-            active={drawer === "sheet"}
-            badge={images.length || undefined}
-            onClick={() => setDrawer(drawer === "sheet" ? null : "sheet")}
-          />
+        <button type="button" onClick={() => setDrawer(drawer === "roster" ? null : "roster")} style={mob.summary}>
+          <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, minWidth: 0 }}>
+            <span style={{ fontWeight: 700, fontSize: 14, color: theme.text }}>
+              {designs ? `${designs} motiv · ${images.length} st` : "Inga motiv ännu"}
+            </span>
+            <span style={{ fontSize: 12, color: theme.textMuted }}>
+              {designs ? "Tryck för att visa och ändra" : "Lägg till motiv för att börja"}
+            </span>
+          </span>
+          <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+            <span style={{ fontWeight: 700, fontSize: 14, color: theme.text }}>
+              {metres} m · {total !== null ? `${total} kr` : "—"}
+            </span>
+            {designs > 0 && (
+              <span style={{ fontSize: 12, fontWeight: 600, color: errors ? theme.danger : theme.success }}>
+                {errors ? `${errors} att åtgärda` : "Redo för tryck"}
+              </span>
+            )}
+          </span>
+        </button>
+        <div style={mob.actions}>
+          <button type="button" onClick={onRestartWizard} style={{ ...mob.action, ...mob.actionPrimary }}>
+            ＋ Motiv
+          </button>
+          <button type="button" onClick={() => setDrawer(drawer === "text" ? null : "text")} style={mob.action}>
+            T Text
+          </button>
+          <button type="button" onClick={() => setNamesOpen(true)} style={mob.action}>
+            Namn &amp; nr
+          </button>
         </div>
-        <div style={{ padding: "8px 12px 12px" }}>
+        <div style={{ padding: "0 12px 12px" }}>
           <AddToCartButton />
         </div>
       </nav>
@@ -481,6 +504,41 @@ const mob: Record<string, React.CSSProperties> = {
     paddingBottom: "env(safe-area-inset-bottom, 0px)",
   },
   tabRow: { display: "flex", borderBottom: `1px solid ${theme.border}` },
+  summary: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    padding: "10px 14px",
+    border: "none",
+    borderBottom: `1px solid ${theme.border}`,
+    background: theme.bg,
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+    textAlign: "left",
+  },
+  actions: { display: "grid", gridTemplateColumns: "1.2fr 1fr 1fr", gap: 8, padding: "10px 12px" },
+  action: {
+    padding: "10px 6px",
+    border: `1px solid ${theme.borderStrong}`,
+    borderRadius: 12,
+    background: theme.bg,
+    color: theme.text,
+    fontFamily: theme.fontFamily,
+    fontSize: 13.5,
+    fontWeight: 600,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  actionPrimary: { background: theme.secondary, borderColor: theme.secondary, color: "#fff" },
+  sectionHead: {
+    fontSize: theme.fontSize.labelMd,
+    fontWeight: theme.fontWeight.semibold,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    color: theme.textMuted,
+  },
   resetButton: {
     padding: "10px",
     border: `1px solid ${theme.border}`,
@@ -504,7 +562,7 @@ const shellBase: React.CSSProperties = {
   height: "100%",
   display: "grid",
   gridTemplateRows: "52px minmax(0, 1fr)",
-  gridTemplateColumns: "320px minmax(0, 1fr) 260px",
+  gridTemplateColumns: "300px minmax(0, 1fr) 280px",
   background: theme.bg,
   color: theme.text,
   overflow: "hidden",

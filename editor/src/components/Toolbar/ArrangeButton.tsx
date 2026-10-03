@@ -34,7 +34,7 @@ export function ArrangeButton() {
         }}
       >
         {isAutoBuilding && <Spinner />}
-        {isAutoBuilding ? "Ordnar..." : "Ordna om arket"}
+        {isAutoBuilding ? "Ordnar…" : "Ordna arket automatiskt"}
       </button>
 
       {lastArrange && lastArrange.overflow > 0 && (
@@ -47,7 +47,7 @@ export function ArrangeButton() {
             color: theme.warning,
           }}
         >
-          {lastArrange.overflow} motiv får inte plats ens på 5 meter. Lägg dem
+          {lastArrange.overflow} motiv får inte plats ens på 10 meter. Lägg dem
           på ett nytt ark eller gör dem mindre.
         </div>
       )}

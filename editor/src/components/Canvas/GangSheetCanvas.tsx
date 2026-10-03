@@ -129,6 +129,8 @@ export function GangSheetCanvas() {
   const drawnZoomRef = useRef<number>(1);
   /** Where a zoom should stay put (screen point), set by pinch and wheel. */
   const zoomAnchorRef = useRef<{ x: number; y: number } | null>(null);
+  /** baseSizeRef as state, for what renders from it (the rulers). */
+  const [base, setBase] = useState<{ w: number; h: number }>({ w: 1, h: 1 });
   const [overflowCount, setOverflowCount] = useState(0);
 
   const {
@@ -175,6 +177,7 @@ export function GangSheetCanvas() {
 
     fabricRef.current = canvas;
     baseSizeRef.current = { w: canvasWidth, h: canvasHeight };
+    setBase({ w: canvasWidth, h: canvasHeight });
     drawnZoomRef.current = useEditorStore.getState().zoom;
     applyZoom(canvas, baseSizeRef.current, drawnZoomRef.current);
 
@@ -659,6 +662,7 @@ export function GangSheetCanvas() {
       <div
         className="gs-canvas-wrapper"
         style={{
+          position: "relative",
           margin: "auto",
           flexShrink: 0,
           boxShadow: theme.shadowLg,
@@ -668,6 +672,7 @@ export function GangSheetCanvas() {
         }}
       >
         <canvas ref={canvasRef} />
+        <Rulers widthMm={sheetSize.widthMm} heightMm={sheetSize.heightMm} pxPerMm={(base.w * zoom) / sheetSize.widthMm} />
       </div>
     </div>
 
@@ -686,11 +691,71 @@ export function GangSheetCanvas() {
         />
       </div>
 
-      {/* Pinch works, but nothing on screen said so. */}
-      {isMobile && (
-        <ZoomControls zoom={zoom} onChange={setZoom} />
-      )}
+      {/* Zoom, the whole sheet, or its width filling the view. */}
+      <ZoomControls
+        zoom={zoom}
+        onChange={setZoom}
+        onFitWidth={() => {
+          const box = containerRef.current;
+          if (!box) return;
+          setZoom((box.clientWidth - 48) / Math.max(1, baseSizeRef.current.w));
+        }}
+      />
     </div>
+  );
+}
+
+/**
+ * Centimetre rulers along the top and left of the sheet, so a 9 cm chest
+ * logo reads as 9 cm. Ticks thin out when zoomed out, labels every 1-50 cm.
+ */
+function Rulers({ widthMm, heightMm, pxPerMm }: { widthMm: number; heightMm: number; pxPerMm: number }) {
+  if (!(pxPerMm > 0)) return null;
+  const pxPerCm = pxPerMm * 10;
+  const label = [1, 2, 5, 10, 20, 50, 100].find((n) => n * pxPerCm >= 42) ?? 100;
+  const minor = [1, 2, 5, 10, 20, 50].find((n) => n * pxPerCm >= 7 && label % n === 0) ?? label;
+  const ruler = (lengthMm: number, vertical: boolean) => {
+    const cm = Math.floor(lengthMm / 10);
+    const ticks: React.ReactNode[] = [];
+    for (let c = 0; c <= cm; c += minor) {
+      const at = c * pxPerCm;
+      const major = c % label === 0;
+      const len = major ? 8 : 4;
+      ticks.push(
+        vertical ? (
+          <line key={c} x1={16 - len} x2={16} y1={at} y2={at} stroke="rgba(0,0,0,0.35)" strokeWidth={1} />
+        ) : (
+          <line key={c} y1={16 - len} y2={16} x1={at} x2={at} stroke="rgba(0,0,0,0.35)" strokeWidth={1} />
+        ),
+      );
+      if (major && c > 0) {
+        ticks.push(
+          vertical ? (
+            <text key={`t${c}`} x={5} y={at - 3} fontSize={9} fill="rgba(0,0,0,0.5)" transform={`rotate(-90 5 ${at - 3})`} style={{ fontFamily: theme.fontFamily }}>
+              {c}
+            </text>
+          ) : (
+            <text key={`t${c}`} x={at + 3} y={8} fontSize={9} fill="rgba(0,0,0,0.5)" style={{ fontFamily: theme.fontFamily }}>
+              {c}
+            </text>
+          ),
+        );
+      }
+    }
+    return ticks;
+  };
+  const w = widthMm * pxPerMm;
+  const h = heightMm * pxPerMm;
+  return (
+    <>
+      <svg width={w} height={16} style={{ position: "absolute", left: 0, top: -18, overflow: "visible", pointerEvents: "none" }} aria-hidden>
+        {ruler(widthMm, false)}
+        <text x={w + 4} y={13} fontSize={9} fill="rgba(0,0,0,0.45)" style={{ fontFamily: theme.fontFamily }}>cm</text>
+      </svg>
+      <svg width={16} height={h} style={{ position: "absolute", left: -18, top: 0, overflow: "visible", pointerEvents: "none" }} aria-hidden>
+        {ruler(heightMm, true)}
+      </svg>
+    </>
   );
 }
 
@@ -1019,9 +1084,12 @@ function Alert({
 function ZoomControls({
   zoom,
   onChange,
+  onFitWidth,
 }: {
   zoom: number;
   onChange: (z: number) => void;
+  /** Zoom so the sheet's width fills the view (designs at a readable size). */
+  onFitWidth: () => void;
 }) {
   const btn: React.CSSProperties = {
     width: 40,
@@ -1068,6 +1136,13 @@ function ZoomControls({
       </button>
       <button onClick={() => onChange(zoom + 0.25)} style={btn} aria-label="Zooma in">
         +
+      </button>
+      <span style={{ width: 1, height: 20, background: "rgba(255,255,255,0.2)" }} />
+      <button onClick={() => onChange(1)} style={{ ...btn, fontSize: 15 }} title="Visa hela arket" aria-label="Visa hela arket">
+        ⤢
+      </button>
+      <button onClick={onFitWidth} style={{ ...btn, fontSize: 16 }} title="Fyll bredden" aria-label="Fyll bredden">
+        ↔
       </button>
     </div>
   );

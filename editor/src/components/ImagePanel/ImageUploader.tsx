@@ -14,7 +14,8 @@ interface QueueItem {
   status: "uploading" | "done" | "failed";
 }
 
-export function ImageUploader() {
+/** `compact`: one slim line under the panel's "Lägg till motiv" button. */
+export function ImageUploader({ compact = false }: { compact?: boolean } = {}) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [queueItems, setQueueItems] = useState<QueueItem[]>([]);
@@ -153,13 +154,14 @@ export function ImageUploader() {
         onDrop={handleDrop}
         onClick={() => fileInputRef.current?.click()}
         style={{
-          border: `2px dashed ${isDragOver ? theme.accent : theme.border}`,
-          borderRadius: theme.radius,
-          padding: "16px 12px",
+          border: `${compact ? 1.5 : 2}px dashed ${isDragOver ? theme.accent : theme.borderStrong}`,
+          borderRadius: compact ? 12 : theme.radius,
+          padding: compact ? "10px 12px" : "16px 12px",
           textAlign: "center",
           cursor: "pointer",
           background: isDragOver ? theme.accentBg : theme.bgCard,
           transition: "all 0.2s",
+          ...(compact ? { display: "flex", alignItems: "center", justifyContent: "center", gap: 8 } : null),
         }}
       >
         <input
@@ -170,28 +172,36 @@ export function ImageUploader() {
           style={{ display: "none" }}
           onChange={(e) => e.target.files && handleFiles(e.target.files)}
         />
-        <div
-          style={{
-            width: 36,
-            height: 36,
-            margin: "0 auto 8px",
-            borderRadius: 8,
-            background: theme.bgInput,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 20,
-            color: theme.accent,
-          }}
-        >
-          +
-        </div>
-        <p style={{ margin: 0, fontSize: 13, color: theme.text }}>
-          Dra bilder hit eller klicka
-        </p>
-        <p style={{ margin: "4px 0 0", fontSize: 11, color: theme.textDim }}>
-          PNG, JPG, SVG, TIFF, PDF, EPS, WebP — Max 500 MB
-        </p>
+        {compact ? (
+          <span style={{ fontSize: 12.5, color: theme.textMuted }}>
+            <span style={{ color: theme.accent, fontWeight: 700 }}>+</span> Släpp filer här för att lägga dem direkt på arket
+          </span>
+        ) : (
+          <>
+            <div
+              style={{
+                width: 36,
+                height: 36,
+                margin: "0 auto 8px",
+                borderRadius: 8,
+                background: theme.bgInput,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 20,
+                color: theme.accent,
+              }}
+            >
+              +
+            </div>
+            <p style={{ margin: 0, fontSize: 13, color: theme.text }}>
+              Dra bilder hit eller klicka
+            </p>
+            <p style={{ margin: "4px 0 0", fontSize: 11, color: theme.textDim }}>
+              PNG, JPG, SVG, TIFF, PDF, EPS, WebP. Max 500 MB
+            </p>
+          </>
+        )}
       </div>
 
       {queueItems.length > 0 && (

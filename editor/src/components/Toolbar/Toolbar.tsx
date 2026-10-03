@@ -9,8 +9,6 @@ export function Toolbar() {
     updateGroup,
     duplicateImage,
     removeGroup,
-    zoom,
-    setZoom,
   } = useEditorStore();
   const { canUndo, canRedo } = useHistory();
 
@@ -42,33 +40,6 @@ export function Toolbar() {
     >
       <ToolButton icon="↶" title={`Ångra (${UNDO_KEYS})`} onClick={undo} disabled={!canUndo} />
       <ToolButton icon="↷" title={`Gör om (${REDO_KEYS})`} onClick={redo} disabled={!canRedo} />
-
-      <Divider />
-
-      {/* Zoom controls */}
-      <ToolButton
-        icon="−"
-        title="Zooma ut"
-        onClick={() => setZoom(zoom - 0.1)}
-        disabled={zoom <= 0.2}
-      />
-      <span
-        style={{
-          fontSize: 11,
-          minWidth: 36,
-          textAlign: "center",
-          color: theme.textMuted,
-          fontVariantNumeric: "tabular-nums",
-        }}
-      >
-        {Math.round(zoom * 100)}%
-      </span>
-      <ToolButton
-        icon="+"
-        title="Zooma in"
-        onClick={() => setZoom(zoom + 0.1)}
-        disabled={zoom >= 5}
-      />
 
       <Divider />
 
