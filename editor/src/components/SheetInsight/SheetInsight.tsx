@@ -94,7 +94,7 @@ export function SheetInsight() {
       </div>
 
       <p style={S.pitch}>
-        Du betalar för arkets längd — inte per motiv. Fyll det och du får fler
+        Du betalar för arkets längd, inte per motiv. Fyll det och du får fler
         tryck för samma pengar.
       </p>
 
@@ -110,7 +110,7 @@ export function SheetInsight() {
 
       {shorter && (
         <button onClick={() => setSheetSize(shorter.size)} style={S.shorterBtn}>
-          Allt får plats på {shorter.size.label.replace(/ \(.*\)$/, "")} — byt
+          Allt får plats på {shorter.size.label.replace(/ \(.*\)$/, "")}. Byt
           {shorter.saves ? ` och spara ${shorter.saves} kr` : ""}
         </button>
       )}

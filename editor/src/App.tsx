@@ -14,7 +14,7 @@ import { DownloadButton } from "./components/PriceDisplay/DownloadButton";
 import { SheetManager } from "./components/SheetManager/SheetManager";
 import { SheetInsight } from "./components/SheetInsight/SheetInsight";
 import { StartWizard } from "./components/StartWizard/StartWizard";
-import { useEditorStore, getSheetsTotalPrice, groupKey, groupImages, type EditorImage } from "./store/editorStore";
+import { useEditorStore, getSheetsTotalPrice, totalText, groupKey, groupImages, type EditorImage } from "./store/editorStore";
 import { redo, undo, useHistory } from "./store/history";
 import { getPricing, setAppProxyUrl } from "./services/api";
 import { theme } from "./styles/theme";
@@ -399,7 +399,7 @@ function MobileShell({
               </span>
               <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
                 <span style={mob.summaryMain}>
-                  {metres} m · {total !== null ? `${total} kr` : "—"}
+                  {metres} m · {totalText(total, sheets, activeSheetIndex, images.length)}
                 </span>
                 {designs > 0 && (
                   <span style={{ fontSize: 12, fontWeight: 600, color: errors ? theme.danger : theme.success }}>
@@ -842,7 +842,7 @@ function PriceBadge() {
         whiteSpace: "nowrap",
       }}
     >
-      {total !== null ? `${total} kr` : "—"}
+      {totalText(total, sheets, activeSheetIndex, images.length)}
     </div>
   );
 }

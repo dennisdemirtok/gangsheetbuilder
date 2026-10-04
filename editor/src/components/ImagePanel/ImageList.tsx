@@ -342,8 +342,8 @@ function GroupItem({
         <p style={S.rowAlert}>
           {hasOverlap
             ? "⚠ Ligger ovanpå ett annat motiv"
-            : "⚠ Ligger utanför tryckytan"}{" "}
-          — klicka "Ordna om arket".
+            : "⚠ Ligger utanför tryckytan"}
+          . Klicka på "Ordna om arket".
         </p>
       )}
 
@@ -494,7 +494,7 @@ function GroupItem({
                 color: theme.warning,
               }}
             >
-              ⚠ Vit bakgrund detekterad — den skrivs ut som vit film. Klicka "Ta
+              ⚠ Bilden har vit bakgrund, och den trycks som vit film. Klicka på "Ta
               bort bakgrund".
             </div>
           )}

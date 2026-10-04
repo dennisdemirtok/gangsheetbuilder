@@ -86,10 +86,10 @@ export const DPI_LEVEL_LABELS: Record<DpiLevel, string> = {
 export function dpiWarning(dpi: number): string | null {
   const level = getDpiLevel(dpi);
   if (level === "bad") {
-    return `${dpi} DPI — bilden blir suddig i tryck. Ladda upp en större fil eller gör motivet mindre.`;
+    return `${dpi} DPI: bilden blir suddig i tryck. Ladda upp en större fil eller gör motivet mindre.`;
   }
   if (level === "low") {
-    return `${dpi} DPI — fungerar för större motiv, men detaljer kan bli mjuka.`;
+    return `${dpi} DPI fungerar för större motiv, men detaljer kan bli mjuka.`;
   }
   return null;
 }

@@ -268,6 +268,20 @@ export async function prepareForCart(
   });
 }
 
+/**
+ * Store a sheet's cart thumbnail (a data URL) and return the full address
+ * it is served at, through the shop's app proxy, for the cart line's
+ * _preview_url. The cart shows it in place of the price product's image.
+ */
+export async function uploadSheetThumbnail(gangSheetId: string, image: string): Promise<string> {
+  const { key } = await fetchApi("/api/thumbnail", {
+    method: "POST",
+    body: JSON.stringify({ gangSheetId, image }),
+  });
+  if (typeof key !== "string" || !key) throw new Error("No thumbnail key");
+  return new URL(`${getBaseUrl()}/api/image/${key}`, window.location.origin).href;
+}
+
 
 /* ─────────────── Ready-made sheets ───────────────
  * A customer who already has a finished 58 cm sheet uploads it whole

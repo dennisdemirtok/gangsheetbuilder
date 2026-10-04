@@ -1,4 +1,4 @@
-import { useEditorStore, getSheetsTotalPrice, groupImages } from "../../store/editorStore";
+import { useEditorStore, getSheetsTotalPrice, totalText, groupImages } from "../../store/editorStore";
 import { theme } from "../../styles/theme";
 import { MAX_SHEET_MM, MIN_SHEET_MM, SHEET_STEP_MM, sheetForHeight } from "../../config/sheets";
 import { getSheetPrice } from "../../services/storefrontPrices";
@@ -133,7 +133,7 @@ export function PriceBar() {
           letterSpacing: theme.letterSpacing.tight,
         }}
       >
-        {totalPrice !== null ? `${totalPrice} kr` : "—"}
+        {totalText(totalPrice, sheets, activeSheetIndex, images.length)}
       </span>
     </div>
   );

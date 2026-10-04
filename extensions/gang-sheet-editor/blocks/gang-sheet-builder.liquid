@@ -1,7 +1,7 @@
-<!-- Gang Sheet Builder — Product Page Section -->
+<!-- Gang Sheet Builder: product page section -->
 <div style="margin: 24px 0; font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;">
 
-  <!-- Main CTA — Build your own -->
+  <!-- Main CTA: build your own -->
   <button
     id="gangsheet-launch-btn"
     type="button"
@@ -33,7 +33,7 @@
   </button>
 
   {% if block.settings.show_upload_link %}
-  <!-- Secondary CTA — Upload ready sheet -->
+  <!-- Secondary CTA: upload a ready sheet -->
   <div style="margin-top: 10px; padding: 14px 18px; background: #f2f4f6; border-radius: 6px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
     <div style="flex: 1;">
       <p style="margin: 0; font-weight: 600; font-size: 13px; color: #191c1e;">{{ block.settings.upload_heading }}</p>
@@ -109,6 +109,7 @@
     data-shop="{{ shop.permanent_domain }}"
     data-app-proxy-url="/apps/gangsheet"
     data-currency="{{ shop.currency }}"
+    data-min-order="{{ block.settings.min_order | default: 300 }}"
     style="width: 100vw; height: 100vh; overflow: hidden;"
   >
     <div id="gangsheet-loading" style="display: flex; align-items: center; justify-content: center; height: 100vh; background: #f7f9fb;">
@@ -133,7 +134,7 @@
     margin: 0 !important; padding: 0 !important; transform: none !important; z-index: 2147483647 !important; background: #f7f9fb !important;
     overscroll-behavior: contain !important;
   }
-  /* dvh keeps the bottom action bar above the mobile browser chrome —
+  /* dvh keeps the bottom action bar above the mobile browser chrome:
      with plain vh the "Lägg i varukorg" button sits under the URL bar. */
   @supports (height: 100dvh) {
     #gangsheet-overlay { height: 100dvh !important; }
@@ -263,6 +264,13 @@
       "id": "price_product",
       "label": "Prisprodukt (per längd)",
       "info": "Produkten vars varianter styr pris och varukorg, t.ex. \"DTF Transfers By Size\". Varje variant ska heta \"1 meter\", \"2 meter\" osv. Lämnas den tom används produkten som blocket ligger på."
+    },
+    {
+      "type": "number",
+      "id": "min_order",
+      "label": "Minsta ordervärde (kr)",
+      "info": "Visas i texten för färdiga ark. Samma belopp som temats spärr i varukorgen (Temainställningar, Minsta ordervärde).",
+      "default": 300
     }
   ]
 }

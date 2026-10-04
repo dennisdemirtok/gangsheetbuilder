@@ -136,7 +136,7 @@ export function TextTab({ onDone }: { onDone?: () => void } = {}) {
       const blob: Blob | null = await new Promise((resolve) =>
         rendered.canvas.toBlob(resolve, "image/png"),
       );
-      if (!blob) throw new Error("Texten är för stor för webbläsaren — prova en mindre bredd");
+      if (!blob) throw new Error("Texten är för stor för webbläsaren. Prova en mindre bredd.");
       const slug = firstLine.toLowerCase().replace(/[^a-z0-9åäö]+/gi, "-").slice(0, 24) || "text";
       const file = new File([blob], `text-${slug}.png`, { type: "image/png" });
 

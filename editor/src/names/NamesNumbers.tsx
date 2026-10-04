@@ -356,7 +356,7 @@ export function NamesNumbers({
       {!wide && !builder && (
         <div style={S.mobileBar}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>{totals.pieces ? kr(Math.round(total * 100) / 100) : "—"}</div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>{kr(totals.pieces ? Math.round(total * 100) / 100 : 0)}</div>
             <div style={S.small}>
               {totals.pieces} tryck{tier ? ` · −${tier.pct} %` : ""}
             </div>
@@ -616,7 +616,7 @@ function Summary({
       <div style={S.sumRows}>
         <div style={S.sumRow}>
           <span>{pieces} tryck</span>
-          <span>{pieces ? kr(subtotal) : "—"}</span>
+          <span>{kr(pieces ? subtotal : 0)}</span>
         </div>
         {discount > 0 && (
           <div style={{ ...S.sumRow, color: "#2e7d32" }}>
@@ -626,7 +626,7 @@ function Summary({
         )}
         <div style={{ ...S.sumRow, fontWeight: 700, fontSize: 17, color: INK }}>
           <span>Totalt</span>
-          <span>{pieces ? kr(Math.round(total * 100) / 100) : "—"}</span>
+          <span>{kr(pieces ? Math.round(total * 100) / 100 : 0)}</span>
         </div>
         <div style={{ ...S.small, textAlign: "right" }}>Exkl. moms. Rabatten dras i kassan.</div>
       </div>

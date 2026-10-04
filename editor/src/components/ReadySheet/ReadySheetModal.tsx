@@ -4,8 +4,11 @@ import {
   analyzeReadySheet,
   presignReadySheet,
   uploadReadySheetToStorage,
+  uploadSheetThumbnail,
   type ReadySheetAnalysis,
 } from "../../services/api";
+import { BUSINESS_ACCOUNT_URL, minOrderKr } from "../../services/shopSettings";
+import { renderSheetThumbnail } from "../../utils/sheetDrawing";
 import { getEditTargets, removeCartLinesForSheets } from "../../services/cart";
 import { getPerDecimeterVariant } from "../../services/storefrontPrices";
 import { getDpiColor } from "../../utils/units";
@@ -55,6 +58,26 @@ function sheetPrice(meters: number): number | null {
   return rate === null ? null : billedDecimeters(meters) * rate;
 }
 
+/**
+ * The sheet's picture for its cart line, stored, or null. Drawn on the
+ * builder's checks so a transparent sheet reads; a missing picture is
+ * never worth failing the order over.
+ */
+async function readySheetThumbnail(s: Sheet): Promise<string | null> {
+  const id = s.analysis.gangSheetId;
+  if (!id || !s.thumbnail) return null;
+  try {
+    const w = s.analysis.widthMm;
+    const h = s.analysis.heightMm;
+    const piece = { url: s.thumbnail, fixed: { x: 0, y: 0, w, h, rotation: 0, unrotatedW: w, unrotatedH: h } };
+    const image = await renderSheetThumbnail([piece], w, h);
+    return image ? await uploadSheetThumbnail(id, image) : null;
+  } catch (error) {
+    console.warn("Sheet thumbnail skipped:", error);
+    return null;
+  }
+}
+
 /** Scale the chosen file down rather than holding a 500 MB decode in memory. */
 function makeThumbnail(file: File): Promise<string | null> {
   return new Promise((resolve) => {
@@ -82,6 +105,7 @@ function makeThumbnail(file: File): Promise<string | null> {
 }
 
 export function ReadySheetModal({ onClose }: { onClose: () => void }) {
+  const minOrder = minOrderKr();
   const [sheets, setSheets] = useState<Sheet[]>([]);
   const [rejected, setRejected] = useState<{
     filename: string;
@@ -158,7 +182,8 @@ export function ReadySheetModal({ onClose }: { onClose: () => void }) {
         );
       }
 
-      const items = sheets.map((s) => {
+      const thumbs = await Promise.all(sheets.map(readySheetThumbnail));
+      const items = sheets.map((s, i) => {
         const dm = billedDecimeters(s.meters);
         return {
           id: variant.variantId,
@@ -174,6 +199,7 @@ export function ReadySheetModal({ onClose }: { onClose: () => void }) {
             _dpi: String(s.analysis.dpi),
             _meters: s.meters.toFixed(1),
             _decimeters: String(dm),
+            ...(thumbs[i] ? { _preview_url: thumbs[i]! } : {}),
           },
         };
       });
@@ -215,8 +241,14 @@ export function ReadySheetModal({ onClose }: { onClose: () => void }) {
           <p style={S.lead}>
             Arket skrivs ut i 58 cm bredd och så långt som din fil är. För att
             det ska bli skarpt behöver filen vara{" "}
-            <strong>minst 6850 px bred</strong> — det är 58 cm i 300 DPI.
-            Transparent PNG ger bäst resultat. Minsta order är 1 meter.
+            <strong>minst 6850 px bred</strong>, alltså 58 cm i 300 DPI.
+            Transparent PNG ger bäst resultat.
+            {minOrder !== null && <> Minsta ordervärde är {minOrder} kr.</>} Företagskunder som
+            beställer löpande kan{" "}
+            <a href={BUSINESS_ACCOUNT_URL} target="_blank" rel="noopener" style={S.link}>
+              ansöka om företagskonto
+            </a>
+            , då finns inget minimum.
           </p>
 
           {busy ? (
@@ -248,7 +280,7 @@ export function ReadySheetModal({ onClose }: { onClose: () => void }) {
               <div style={S.dropPlus}>+</div>
               <p style={S.dropTitle}>Dra dina filer hit eller klicka</p>
               <p style={S.dropHint}>
-                PNG, JPG, TIFF — flera filer går bra, max 500 MB per fil
+                PNG, JPG eller TIFF. Flera filer går bra, max 500 MB per fil.
               </p>
             </div>
           )}
@@ -321,7 +353,7 @@ export function ReadySheetModal({ onClose }: { onClose: () => void }) {
                   </div>
                   <span style={S.rowPrice}>
                     {sheetPrice(s.meters) === null
-                      ? "—"
+                      ? "Pris saknas"
                       : `${sheetPrice(s.meters)! * s.qty} kr`}
                   </span>
                   <button
@@ -358,8 +390,8 @@ export function ReadySheetModal({ onClose }: { onClose: () => void }) {
                 {adding
                   ? "Lägger i varukorg..."
                   : perDm
-                    ? `Lägg i varukorg — ${total} kr`
-                    : "Pris saknas — kontakta oss"}
+                    ? `Lägg i varukorg · ${total} kr`
+                    : "Pris saknas, kontakta oss"}
               </button>
             </div>
           )}
@@ -469,6 +501,7 @@ const S: Record<string, React.CSSProperties> = {
     justifyContent: "center",
     margin: "0 auto 10px",
   },
+  link: { color: "inherit", fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 2 },
   dropTitle: { margin: 0, fontSize: 14, fontWeight: 500, color: theme.text },
   dropHint: { margin: "6px 0 0", fontSize: 12, color: theme.textDim },
   progressCard: {

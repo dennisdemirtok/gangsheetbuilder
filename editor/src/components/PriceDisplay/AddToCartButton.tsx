@@ -14,6 +14,7 @@ import {
   saveGangSheet,
   ensureGangSheet,
   buildPlacementsPayload,
+  uploadSheetThumbnail,
 } from "../../services/api";
 import {
   clearEditTarget,
@@ -22,6 +23,7 @@ import {
 } from "../../services/cart";
 import { imageBbox } from "../../utils/layout";
 import { SheetPreview, type PreviewPiece } from "../StartWizard/SheetPreview";
+import { renderSheetThumbnail } from "../../utils/sheetDrawing";
 import { theme } from "../../styles/theme";
 import { showToast } from "../../utils/toast";
 
@@ -118,6 +120,21 @@ function piecesOf(jobs: SheetJob[]): number {
   return jobs.reduce((n, j) => n + j.sheetImages.length, 0);
 }
 
+/**
+ * The sheet's picture for its cart line, stored, or null. The cart showed
+ * the price product's empty image instead; a missing picture is never
+ * worth failing the order over.
+ */
+async function sheetThumbnail(gangSheetId: string, job: SheetJob): Promise<string | null> {
+  try {
+    const image = await renderSheetThumbnail(previewPieces(job.sheetImages), job.size.widthMm, job.size.heightMm);
+    return image ? await uploadSheetThumbnail(gangSheetId, image) : null;
+  } catch (error) {
+    console.warn("Sheet thumbnail skipped:", error);
+    return null;
+  }
+}
+
 function jobPrice(job: SheetJob): number | null {
   const unit = getSheetPrice(job.size.key);
   return unit === null ? null : unit * Math.max(1, job.sheet.quantity || 1);
@@ -184,6 +201,7 @@ export function AddToCartButton() {
           report(1);
 
           const cartData = await prepareForCart(gsId, getSheetPrice(job.size.key));
+          const thumbUrl = await sheetThumbnail(gsId, job);
           done++;
           report(jobs.indexOf(job) === jobs.length - 1 ? 2 : 1);
 
@@ -199,6 +217,7 @@ export function AddToCartButton() {
           }
           const properties: Record<string, string> = {
             ...cartData.properties,
+            ...(thumbUrl ? { _preview_url: thumbUrl } : {}),
             ...(line ? line.properties : {}),
             ...(name ? { Designnamn: name } : {}),
             // Hidden on the order: when the customer ticked that they may
@@ -524,7 +543,7 @@ function ConfirmDialog({
           <span>
             Totalt ({jobs.length} ark, {pieces} motiv)
           </span>
-          <strong>{total !== null ? `${total} kr` : "—"}</strong>
+          <strong>{total !== null ? `${total} kr` : "Pris saknas"}</strong>
         </div>
       )}
 
@@ -571,7 +590,7 @@ function SheetSummary({ job, price, title }: { job: SheetJob; price: number | nu
         {copies > 1 && <Row label="Antal ark" value={`${copies} st`} />}
         <Row label="Motiv" value={designs === job.sheetImages.length ? `${designs}` : `${designs} (${job.sheetImages.length} st)`} />
         <div style={D.rule} />
-        <Row label="Pris" value={price !== null ? `${price} kr` : "—"} strong />
+        <Row label="Pris" value={price !== null ? `${price} kr` : "Saknas"} strong />
       </div>
       <div style={D.thumb}>
         <SheetPreview

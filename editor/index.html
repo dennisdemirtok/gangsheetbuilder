@@ -10,7 +10,7 @@
   </style>
 </head>
 <body>
-  <div id="gangsheet-editor-root" data-app-proxy-url="" data-shop-domain="preview.myshopify.com"></div>
+  <div id="gangsheet-editor-root" data-app-proxy-url="" data-shop-domain="preview.myshopify.com" data-min-order="300"></div>
 
   <!-- Stands in for what the theme block renders: real Shopify variants at
        200 kr/m, so the local preview exercises the storefront price path. -->
@@ -216,6 +216,13 @@
         return json({ error: "mock: use local arrange" }, 500);
       }
 
+      // The cart thumbnail: kept on window.__lastThumb to look at.
+      if (url.includes("/api/thumbnail")) {
+        window.__lastThumb = JSON.parse((init && init.body) || "{}");
+        try { sessionStorage.setItem("__lastThumb", JSON.stringify(window.__lastThumb)); } catch {}
+        return json({ key: "uploads/thumbs/gs_dev_1-" + Date.now() + ".webp" });
+      }
+
       if (url.includes("/api/cart")) {
         return json({ variantId: "1", properties: { _gang_sheet_id: "gs_dev_1", _preview_url: "" } });
       }
@@ -226,6 +233,7 @@
       if (url.includes("/cart/change.js")) return json({});
       if (url.includes("/cart/add.js")) {
         window.__lastCartAdd = JSON.parse((init && init.body) || "{}");
+        try { sessionStorage.setItem("__lastCartAdd", JSON.stringify(window.__lastCartAdd)); } catch {}
         return new Promise((r) => setTimeout(r, window.__cartDelay || 600)).then(() => json({ items: [] }));
       }
 

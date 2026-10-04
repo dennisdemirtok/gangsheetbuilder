@@ -344,7 +344,7 @@ function arrangeMessage(before: SheetSize, after: SheetSize, turned: number): st
   else if (after.heightMm < before.heightMm) parts.push(`Allt fick plats på ${shortLabel(after)}.`);
   if (turned > 0) {
     parts.push(
-      `${turned === 1 ? "Ett motiv" : `${turned} motiv`} vändes 90° för att spara film — de trycks likadant.`,
+      `${turned === 1 ? "Ett motiv" : `${turned} motiv`} vändes 90° för att spara film. De trycks likadant.`,
     );
   }
   return parts.length ? parts.join(" ") : null;
@@ -421,6 +421,23 @@ export function getSheetsTotalPrice(
     pricedSheets++;
   }
   return pricedSheets > 0 ? total : null;
+}
+
+/**
+ * A total for display. getSheetsTotalPrice is null both before anything is
+ * on a sheet and when a sheet has no price: "0 kr" for the first, "Pris
+ * saknas" only when there really are designs without a price.
+ */
+export function totalText(
+  total: number | null,
+  sheets: SheetEntry[],
+  activeSheetIndex: number,
+  activeImageCount: number,
+): string {
+  if (total !== null) return `${total} kr`;
+  const designs =
+    activeImageCount > 0 || sheets.some((s, i) => i !== activeSheetIndex && (s.savedImages?.length || 0) > 0);
+  return designs ? "Pris saknas" : "0 kr";
 }
 
 export const useEditorStore = create<EditorState>()(
@@ -860,9 +877,9 @@ export const useEditorStore = create<EditorState>()(
         });
         // Pulled back inside the edge explains itself; the rest needs a word.
         if (!spot) {
-          showToast("Det fanns ingen ledig plats där — motivet flyttades tillbaka.", "info");
+          showToast("Det fanns ingen ledig plats där, så motivet flyttades tillbaka.", "info");
         } else if (onTop) {
-          showToast("Motiv kan inte ligga på varandra — det lades på närmaste lediga plats.", "info");
+          showToast("Motiv kan inte ligga på varandra, så det lades på närmaste lediga plats.", "info");
         }
       },
 

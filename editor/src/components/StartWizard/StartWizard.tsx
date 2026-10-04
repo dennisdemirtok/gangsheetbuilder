@@ -411,10 +411,10 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
       });
 
       if (result.overflow > 0) {
-        showToast(`${result.overflow} kopior fick inte plats ens på 5 meter — lägg dem på ett nytt ark.`, "warning");
+        showToast(`${result.overflow} kopior fick inte plats ens på ${MAX_SHEET_MM / 1000} meter. Lägg dem på ett nytt ark.`, "warning");
       } else if (result.turned > 0) {
         showToast(
-          `${result.turned === 1 ? "Ett motiv" : `${result.turned} motiv`} vändes 90° för att spara film — de trycks likadant.`,
+          `${result.turned === 1 ? "Ett motiv" : `${result.turned} motiv`} vändes 90° för att spara film. De trycks likadant.`,
           "info",
         );
       }
@@ -465,8 +465,8 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
             <h2 style={S.title}>{adding ? "Lägg till motiv" : "Bygg ditt gang sheet"}</h2>
             <p style={S.sub}>
               {adding
-                ? "Välj filerna, säg hur stora och hur många — vi lägger dem på arket och gör det längre om det behövs."
-                : "Ladda upp, säg hur stort och hur många — vi räknar ut hur mycket film du behöver."}
+                ? "Välj filerna och säg hur stora och hur många. Vi lägger dem på arket och gör det längre om det behövs."
+                : "Ladda upp och säg hur stort och hur många. Vi räknar ut hur mycket film du behöver."}
             </p>
           </div>
           <button onClick={onClose} style={S.skip} title={adding ? "Stäng" : "Hoppa över och placera själv"}>
@@ -477,7 +477,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
         <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <div style={S.body}>
           {/* Step 1 — upload */}
-          <Step n={1} title="Ladda upp dina motiv — välj gärna alla på en gång" done={drafts.length > 0} />
+          <Step n={1} title="Ladda upp dina motiv, gärna alla på en gång" done={drafts.length > 0} />
           <div
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => e.preventDefault()}
@@ -506,7 +506,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
               <>
                 <div style={S.dropPlus}>+</div>
                 <p style={S.dropTitle}>Dra filer hit eller klicka</p>
-                <p style={S.dropHint}>PNG, JPG, SVG, TIFF, PDF, EPS — markera flera filer samtidigt</p>
+                <p style={S.dropHint}>PNG, JPG, SVG, PDF, AI, EPS eller TIFF. Markera gärna flera filer samtidigt.</p>
               </>
             )}
           </div>
@@ -571,7 +571,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
               </p>
               <p style={S.planSub}>
                 {plan.tooBig
-                  ? "Mer än 10 meter — dela upp på flera ark efter att du byggt."
+                  ? "Mer än 10 meter. Dela upp på flera ark när du har byggt."
                   : `Behöver ca ${(plan.neededMm / 10).toFixed(0)} cm film.`}
               </p>
             </div>
@@ -855,7 +855,7 @@ function DraftRow({
                   ? `Den ${bg.the} bakgrunden behålls och trycks som en ${bg.color} ruta.`
                   : draft.bgMode === "all"
                     ? `${bg.All} borttaget, även inuti motivet.`
-                    : `${bg.Color} bakgrund borttagen — annars trycks den som en ${bg.color} ruta. ${bg.Inside} inuti motivet trycks som det är.`}{" "}
+                    : `${bg.Color} bakgrund borttagen, annars trycks den som en ${bg.color} ruta. ${bg.Inside} inuti motivet trycks som det är.`}{" "}
                 <button
                   onClick={() => onChange({ useBgRemoved: !draft.useBgRemoved })}
                   style={S.inlineLink}
