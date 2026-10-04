@@ -17,6 +17,7 @@ import { removeBg, getAppProxyUrl } from "../../services/api";
 import { theme } from "../../styles/theme";
 import { useSheetStats } from "../../utils/sheetStats";
 import { showToast } from "../../utils/toast";
+import { NumberInput } from "../Fields/NumberInput";
 
 export function ImageList() {
   const { images, selectedImageId } = useEditorStore();
@@ -426,16 +427,12 @@ function GroupItem({
               >
                 −
               </button>
-              <input
-                type="number"
-                min="1"
-                max="500"
+              <NumberInput
                 value={group.count}
-                onChange={(e) => {
-                  const n = parseInt(e.target.value);
-                  if (isNaN(n)) return;
-                  setGroupCount(group.groupId, n);
-                }}
+                min={1}
+                max={500}
+                ariaLabel="Antal på arket"
+                onCommit={(n) => setGroupCount(group.groupId, n)}
                 style={{ ...S.input, textAlign: "center", flex: 1 }}
               />
               <button

@@ -1,5 +1,6 @@
 import { useEditorStore } from "../../store/editorStore";
 import { theme } from "../../styles/theme";
+import { NumberInput } from "../Fields/NumberInput";
 
 /**
  * Multi-sheet manager — shows active sheets, allows adding/removing.
@@ -102,12 +103,12 @@ export function SheetManager() {
               onClick={(e) => e.stopPropagation()}
             >
               <span style={{ fontSize: theme.fontSize.labelMd, color: theme.textMuted }}>Antal:</span>
-              <input
-                type="number"
+              <NumberInput
+                value={sheet.quantity}
                 min={1}
                 max={50}
-                value={sheet.quantity}
-                onChange={(e) => setSheetQuantity(idx, parseInt(e.target.value) || 1)}
+                ariaLabel="Antal ark"
+                onCommit={(n) => setSheetQuantity(idx, n)}
                 style={{
                   width: 44,
                   padding: "3px 4px",

@@ -15,6 +15,7 @@ import { showToast } from "../../utils/toast";
 import { theme } from "../../styles/theme";
 import { useIsMobile } from "../../utils/useIsMobile";
 import { NamesModal } from "../../names/NamesModal";
+import { NumberInput } from "../Fields/NumberInput";
 
 /**
  * Text for the sheet: pick a font with your own words as the sample, a
@@ -324,15 +325,14 @@ export function TextTab({ onDone }: { onDone?: () => void } = {}) {
 
         <Section label="Bredd på plagget">
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <input
-              type="number"
-              inputMode="decimal"
+            <NumberInput
+              value={widthCm}
               min={1}
               max={MAX_WIDTH_CM}
-              step={0.5}
-              value={widthCm}
-              onChange={(e) => setWidthCm(parseFloat(e.target.value.replace(",", ".")) || 0)}
-              aria-label="Bredd i centimeter"
+              decimals
+              live
+              ariaLabel="Bredd i centimeter"
+              onCommit={setWidthCm}
               style={T.widthInput}
             />
             <span style={{ fontSize: theme.fontSize.bodySm, color: theme.textMuted }}>cm</span>

@@ -11,6 +11,7 @@ import { calculateDisplayDpi, cmText, getDpiColor, dpiWarning, DPI_THRESHOLDS } 
 import { capacity, imageBbox, EDGE_MARGIN_MM } from "../../utils/layout";
 import { packSheet } from "../../utils/packing";
 import { SheetPreview, type PreviewPiece } from "./SheetPreview";
+import { NumberInput } from "../Fields/NumberInput";
 import { useIsMobile } from "../../utils/useIsMobile";
 import { MAX_SHEET_MM, SHEET_SIZES, SHEET_WIDTH_MM, sheetForHeight, smallestSheetFor } from "../../config/sheets";
 import { theme } from "../../styles/theme";
@@ -772,30 +773,25 @@ function DraftRow({
 
             <div style={S.fields}>
               <Field label="Bredd (cm)">
-                <input
-                  type="number"
+                <NumberInput
+                  value={draft.widthCm}
                   min={1}
                   max={58}
-                  step={0.5}
-                  value={draft.widthCm}
-                  onChange={(e) =>
-                    onChange({
-                      preset: undefined,
-                      widthCm: Math.min(58, Math.max(1, parseFloat(e.target.value) || 1)),
-                    })
-                  }
+                  decimals
+                  live
+                  ariaLabel="Bredd i centimeter"
+                  onCommit={(widthCm) => onChange({ preset: undefined, widthCm })}
                   style={S.input}
                 />
               </Field>
               <Field label="Antal">
-                <input
-                  type="number"
+                <NumberInput
+                  value={draft.count}
                   min={1}
                   max={5000}
-                  value={draft.count}
-                  onChange={(e) =>
-                    onChange({ count: Math.max(1, parseInt(e.target.value) || 1) })
-                  }
+                  live
+                  ariaLabel="Antal"
+                  onCommit={(count) => onChange({ count })}
                   style={S.input}
                 />
               </Field>
