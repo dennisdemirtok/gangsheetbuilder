@@ -57,6 +57,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     await uploadFile(key, thumb, "image/webp");
     return json({ key });
   } catch (error) {
+    // A request the app proxy did not sign answers as the proxy says.
+    if (error instanceof Response) throw error;
     console.error("Thumbnail error:", error);
     return json({ error: "Could not store the thumbnail" }, { status: 500 });
   }
