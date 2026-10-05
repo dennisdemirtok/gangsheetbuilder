@@ -140,3 +140,80 @@ export async function withOrderDetails<T extends SheetRef>(
     };
   });
 }
+
+/**
+ * Bring an order's recipient and address up to date with Shopify.
+ *
+ * The paid-order webhook copies them onto the sheets once. A name or address
+ * corrected on the order in Shopify afterwards never reached the app, so the
+ * courier label and the print shop's email carried the old one. Called when
+ * the order page opens, and right before a booking or the print shop email,
+ * while nothing is booked: a booked label keeps the address it was booked
+ * with. A phone number added in the app stays when Shopify has none.
+ * Returns true when something changed.
+ */
+export async function syncOrderAddress(
+  admin: AdminApiContext,
+  shopDomain: string,
+  shopifyOrderId: string,
+): Promise<boolean> {
+  let order: OrderNode | null = null;
+  try {
+    const response = await admin.graphql(
+      `#graphql
+      query OrderAddress($id: ID!) {
+        order(id: $id) {
+          id
+          name
+          email
+          phone
+          shippingAddress {
+            name company address1 address2 zip city country countryCodeV2 phone
+          }
+        }
+      }`,
+      { variables: { id: `gid://shopify/Order/${shopifyOrderId}` } },
+    );
+    const body = await response.json();
+    order = body.data?.order ?? null;
+  } catch (err) {
+    // The stored address still works; this only keeps it current.
+    console.error("[order-details] Could not refresh the address:", err);
+    return false;
+  }
+  const ship = order?.shippingAddress;
+  if (!order || !ship) return false;
+
+  const sheets = await prisma.gangSheet.findMany({
+    where: { shopDomain, shopifyOrderId },
+    select: { id: true, customerName: true, shippingAddress: true, shippingStatus: true },
+  });
+  if (sheets.length === 0) return false;
+  if (sheets.some((s) => s.shippingStatus === "booked" || s.shippingStatus === "booking")) return false;
+
+  let changed = false;
+  for (const sheet of sheets) {
+    const stored = (sheet.shippingAddress as Record<string, string | null> | null) || {};
+    const next: Record<string, string | null> = {
+      ...stored,
+      name: ship.name,
+      company: ship.company,
+      address1: ship.address1,
+      address2: ship.address2,
+      zip: ship.zip,
+      city: ship.city,
+      country: ship.country,
+      countryCode: ship.countryCodeV2,
+      phone: ship.phone || order.phone || stored.phone || null,
+      email: order.email || stored.email || null,
+    };
+    const customerName = ship.name || sheet.customerName;
+    if (JSON.stringify(next) === JSON.stringify(stored) && customerName === sheet.customerName) continue;
+    await prisma.gangSheet.update({
+      where: { id: sheet.id },
+      data: { customerName, shippingAddress: next },
+    });
+    changed = true;
+  }
+  return changed;
+}

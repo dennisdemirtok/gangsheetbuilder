@@ -33,7 +33,7 @@ import {
   printFileName,
   statusInfo,
 } from "../lib/order-status";
-import { withOrderDetails } from "../lib/order-details.server";
+import { syncOrderAddress, withOrderDetails } from "../lib/order-details.server";
 import { jobSize, printLabel, type LineProperty } from "../lib/print-jobs";
 import { orderStatusOf } from "../lib/order-list.server";
 import { normalizePhone } from "../lib/phone";
@@ -64,9 +64,13 @@ import { sendOrderToPrintShop } from "../lib/print-shop-email.server";
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
 
-  const found = await prisma.gangSheet.findUnique({ where: { id: params.id } });
+  let found = await prisma.gangSheet.findUnique({ where: { id: params.id } });
   if (!found || found.shopDomain !== session.shop) {
     throw new Response("Not found", { status: 404 });
+  }
+  // A name or address corrected on the order in Shopify shows here too.
+  if (found.shopifyOrderId && (await syncOrderAddress(admin, session.shop, found.shopifyOrderId))) {
+    found = (await prisma.gangSheet.findUnique({ where: { id: params.id } })) ?? found;
   }
 
   /*
@@ -179,7 +183,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const action = formData.get("action") as string;
 
@@ -448,6 +452,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const weight = parseFloat(String(formData.get("weightKg") || ""));
     const pickupDate = String(formData.get("pickupDate") || "");
     const service = String(formData.get("service") || "").trim();
+    // The label gets the name and address the order has in Shopify now.
+    await syncOrderAddress(admin, session.shop, gangSheet.shopifyOrderId);
     const result = await bookOrderShipment({
       shopDomain: session.shop,
       shopifyOrderId: gangSheet.shopifyOrderId,
@@ -476,6 +482,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       });
     }
     const to = [...new Set(recipients)].join(", ");
+    // The label and the email get the name and address the order has in Shopify now.
+    await syncOrderAddress(admin, session.shop, gangSheet.shopifyOrderId);
     // Book first when asked, so the label goes in the same email.
     if (formData.get("book") === "1" && gangSheet.shippingStatus !== "booked") {
       const weight = parseFloat(String(formData.get("weightKg") || ""));
