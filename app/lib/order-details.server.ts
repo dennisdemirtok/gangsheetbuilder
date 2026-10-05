@@ -191,23 +191,26 @@ export async function syncOrderAddress(
   if (sheets.length === 0) return false;
   if (sheets.some((s) => s.shippingStatus === "booked" || s.shippingStatus === "booking")) return false;
 
+  // Edited names come back as "Fredrik  Andersson": one space, no ends, as on a label.
+  const clean = (v: string | null | undefined) => (v ? v.replace(/\s+/g, " ").trim() || null : null);
+
   let changed = false;
   for (const sheet of sheets) {
     const stored = (sheet.shippingAddress as Record<string, string | null> | null) || {};
     const next: Record<string, string | null> = {
       ...stored,
-      name: ship.name,
-      company: ship.company,
-      address1: ship.address1,
-      address2: ship.address2,
-      zip: ship.zip,
-      city: ship.city,
-      country: ship.country,
+      name: clean(ship.name),
+      company: clean(ship.company),
+      address1: clean(ship.address1),
+      address2: clean(ship.address2),
+      zip: clean(ship.zip),
+      city: clean(ship.city),
+      country: clean(ship.country),
       countryCode: ship.countryCodeV2,
-      phone: ship.phone || order.phone || stored.phone || null,
-      email: order.email || stored.email || null,
+      phone: clean(ship.phone) || clean(order.phone) || stored.phone || null,
+      email: clean(order.email) || stored.email || null,
     };
-    const customerName = ship.name || sheet.customerName;
+    const customerName = next.name || sheet.customerName;
     if (JSON.stringify(next) === JSON.stringify(stored) && customerName === sheet.customerName) continue;
     await prisma.gangSheet.update({
       where: { id: sheet.id },
