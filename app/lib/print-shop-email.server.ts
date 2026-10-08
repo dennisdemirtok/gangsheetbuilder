@@ -3,7 +3,7 @@ import { downloadFile } from "./r2.server";
 import { fileLink, linkExpiry } from "./file-links.server";
 import { sendMail, mailFrom, type MailAttachment } from "./mailer.server";
 import { orderLabel, printFileName } from "./order-status";
-import { NAMES_NOTE, type LineProperty } from "./print-jobs";
+import { NAMES_NOTE, noteProperties, type LineProperty } from "./print-jobs";
 import { PACKAGE_CM, PICKUP_TIME, serviceLabel } from "./bws-shipping.server";
 
 /**
@@ -67,10 +67,9 @@ function dateIn(locale: string, date: string): string {
   });
 }
 
-/** Properties the customer typed, minus what the size line already says. */
+/** Properties the customer typed, minus what the size and count already say. */
 function customerNotes(sheet: Sheet): LineProperty[] {
-  const props = (sheet.lineProperties as LineProperty[] | null) || [];
-  return props.filter((p) => !/bredd|höjd|hojd|width|height/i.test(p.name));
+  return noteProperties((sheet.lineProperties as LineProperty[] | null) || []);
 }
 
 interface JobFile {
@@ -103,8 +102,8 @@ function jobFiles(sheets: Sheet[]): JobFile[] {
 
 /* ── Print shop email (Polish + English) ─────────────────────────────── */
 
+/** What the job is and how it is finished. The count has its own line. */
 function jobHeading(sheet: Sheet): { pl: string; en: string } {
-  const qty = sheet.lineQuantity || 1;
   const size = `${cm(sheet.widthMm)} × ${cm(sheet.heightMm)} cm`;
   // A team's names and numbers: one sheet, every piece cut out.
   if (((sheet.lineProperties as LineProperty[] | null) || []).some((p) => p.name === NAMES_NOTE)) {
@@ -115,13 +114,28 @@ function jobHeading(sheet: Sheet): { pl: string; en: string } {
   }
   if (sheet.kind === "cut") {
     return {
-      pl: `${qty} szt. · ${size} · wyciąć każdy motyw`,
-      en: `${qty} pcs · ${size} · cut out each design`,
+      pl: `Motyw ${size} · wyciąć każdy motyw`,
+      en: `Design ${size} · cut out each design`,
     };
   }
   return {
-    pl: `Arkusz na rolce ${size}${qty > 1 ? ` · ${qty} kopie` : ""} · drukować w całości`,
-    en: `Gang sheet on roll ${size}${qty > 1 ? ` · ${qty} copies` : ""} · print as is`,
+    pl: `Arkusz na rolce ${size} · drukować w całości`,
+    en: `Gang sheet on roll ${size} · print as is`,
+  };
+}
+
+/**
+ * How many times to print, on a line of its own and always shown, 1 too.
+ * The count used to sit inside the heading ("· 3 kopie") and was easy to
+ * miss, and a stale "Antal ark: 2" note under it read like the real count.
+ * "szt." and "razy" read right for any number, unlike "kopie"/"kopii".
+ */
+function jobQuantity(sheet: Sheet): { qty: number; pl: string; en: string } {
+  const qty = sheet.lineQuantity || 1;
+  return {
+    qty,
+    pl: `ILOŚĆ: ${qty} szt. · wydrukować ${qty === 1 ? "1 raz" : `${qty} razy`}`,
+    en: `Quantity: ${qty} · print ${qty === 1 ? "once" : `${qty} times`}`,
   };
 }
 
@@ -147,8 +161,8 @@ function printShopHtml({ sheets, files, attachFiles, hasLabel, message }: PrintS
           <div style="font-weight:700;">Odbiór kurierem BWS: ${esc(dateIn("pl-PL", first.pickupDate!))}, ${PICKUP_TIME}</div>
           <div style="color:#666;">BWS courier pickup: ${esc(dateIn("en-GB", first.pickupDate!))}, ${PICKUP_TIME}</div>
           <div style="padding-top:8px;">${esc(serviceLabel(first.shippingService))} · DDP · ${PACKAGE_CM.length}×${PACKAGE_CM.width}×${PACKAGE_CM.height} cm${first.trackingNumber ? ` · ${esc(first.trackingNumber)}` : ""}</div>
-          ${hasLabel ? `<div style="padding-top:8px;font-weight:700;color:${RED};">Etykieta w załączniku — proszę wydrukować i nakleić na paczkę.</div>
-          <div style="color:#666;">Label attached — please print it and put it on the parcel.</div>` : ""}
+          ${hasLabel ? `<div style="padding-top:8px;font-weight:700;color:${RED};">Etykieta w załączniku: proszę wydrukować i nakleić na paczkę.</div>
+          <div style="color:#666;">Label attached: please print it and put it on the parcel.</div>` : ""}
         </div>
       </td></tr>`
     : `
@@ -159,19 +173,29 @@ function printShopHtml({ sheets, files, attachFiles, hasLabel, message }: PrintS
   const jobs = files
     .map(({ sheet, filename, link }, i) => {
       const h = jobHeading(sheet);
+      const q = jobQuantity(sheet);
       const dpi = sheet.kind === "cut" ? sheet.images[0]?.dpiX : null;
       const notes = customerNotes(sheet);
+      // More than one is red, so it stands out from the usual single copy.
+      const badge = q.qty > 1 ? RED : "#111111";
       return `
       <tr><td style="padding:16px 32px 0;">
         <div style="border:1px solid #e6e4e0;border-radius:12px;padding:14px 16px;font-family:${FONT};font-size:14px;line-height:1.5;color:#111;">
           <div style="font-size:12px;font-weight:700;color:${RED};text-transform:uppercase;letter-spacing:.4px;">${i + 1}. ${esc(sheet.printType || "DTF Transfer")}${sheet.filmType && sheet.filmType !== "standard" ? ` · ${esc(sheet.filmType)}` : ""}</div>
           <div style="padding-top:4px;font-weight:700;">${esc(h.pl)}</div>
           <div style="color:#666;">${esc(h.en)}</div>
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:12px;border-collapse:separate;"><tr>
+            <td bgcolor="${badge}" style="background:${badge};color:#ffffff;font-family:${FONT};font-size:22px;font-weight:800;line-height:1;padding:10px 14px;border-radius:10px;white-space:nowrap;">${q.qty}×</td>
+            <td style="padding-left:12px;font-family:${FONT};line-height:1.35;">
+              <div style="font-size:16px;font-weight:800;color:#111;">${esc(q.pl)}</div>
+              <div style="font-size:13px;color:#666;">${esc(q.en)}</div>
+            </td>
+          </tr></table>
           ${notes.map((n) => `<div style="padding-top:8px;"><span style="color:#666;">Uwagi klienta / Customer note (${esc(n.name)}):</span> ${esc(n.value)}</div>`).join("")}
           ${
             link
               ? `<div style="padding-top:10px;"><a href="${esc(link)}" style="color:${RED};font-weight:700;">Pobierz plik / Download file</a> <span style="color:#8a8a8a;">${esc(filename)}${dpi ? ` · ${dpi} DPI` : ""}${attachFiles ? " · w załączniku / attached" : ""}</span></div>`
-              : `<div style="padding-top:10px;color:${RED};font-weight:700;">Brak pliku — skontaktujemy się. / No file — we will follow up.</div>`
+              : `<div style="padding-top:10px;color:${RED};font-weight:700;">Brak pliku, skontaktujemy się. / No file, we will follow up.</div>`
           }
         </div>
       </td></tr>`;
@@ -186,8 +210,8 @@ function printShopHtml({ sheets, files, attachFiles, hasLabel, message }: PrintS
       <tr><td bgcolor="#ffffff" style="background:#fff;border-radius:14px;padding-bottom:28px;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           <tr><td style="padding:28px 32px 0;font-family:${FONT};">
-            <div style="font-size:20px;font-weight:700;color:#111;">Zamówienie ${esc(order)} — ${files.length} ${files.length === 1 ? "pozycja" : files.length < 5 ? "pozycje" : "pozycji"}</div>
-            <div style="font-size:14px;color:#666;padding-top:2px;">Order ${esc(order)} — ${files.length} ${files.length === 1 ? "item" : "items"}</div>
+            <div style="font-size:20px;font-weight:700;color:#111;">Zamówienie ${esc(order)} · ${files.length} ${files.length === 1 ? "pozycja" : files.length < 5 ? "pozycje" : "pozycji"}</div>
+            <div style="font-size:14px;color:#666;padding-top:2px;">Order ${esc(order)} · ${files.length} ${files.length === 1 ? "item" : "items"}</div>
           </td></tr>
           ${message ? `<tr><td style="padding:16px 32px 0;font-family:${FONT};font-size:14px;line-height:1.55;color:#111;white-space:pre-wrap;"><b>Wiadomość / Message:</b><br>${esc(message)}</td></tr>` : ""}
           ${pickup}
@@ -216,8 +240,10 @@ function printShopText({ sheets, files, hasLabel, message }: PrintShopMailInput)
     "",
     ...files.flatMap(({ sheet, filename, link }, i) => {
       const h = jobHeading(sheet);
+      const q = jobQuantity(sheet);
       return [
         `${i + 1}. ${sheet.printType || "DTF Transfer"}: ${h.pl} / ${h.en}`,
+        `   ${q.pl} / ${q.en}`,
         ...customerNotes(sheet).map((n) => `   Uwagi / Note (${n.name}): ${n.value}`),
         link ? `   ${filename}: ${link}` : "   Brak pliku / No file",
       ];
@@ -268,7 +294,7 @@ export async function sendOrderToPrintShop(options: {
   try {
     await sendMail({
       to: options.to,
-      subject: `Zamówienie ${order} / Order ${order} — Transfercraft`,
+      subject: `Zamówienie ${order} / Order ${order} · Transfercraft`,
       html: printShopHtml(input),
       text: printShopText(input),
       attachments,

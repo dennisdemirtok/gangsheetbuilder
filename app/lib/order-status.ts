@@ -180,7 +180,9 @@ export function printFileName(
     .replace(/^#/, "")
     .replace(/[^\w.\-]+/g, "_");
   const size = sheet.widthMm > 0 ? `_${sheet.widthMm / 10}x${sheet.heightMm / 10}cm` : "";
-  // A cut job's file is one motif; the count belongs in the name.
-  const copies = sheet.kind === "cut" && sheet.lineQuantity ? `_x${sheet.lineQuantity}` : "";
+  // The count belongs in the name: a cut job's file is one motif, and a
+  // sheet ordered three times is printed three times ("_x3").
+  const n = sheet.lineQuantity ?? 0;
+  const copies = (sheet.kind === "cut" && n > 0) || n > 1 ? `_x${n}` : "";
   return `${order}${size}${copies}.${ext}`;
 }

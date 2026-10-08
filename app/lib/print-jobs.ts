@@ -90,6 +90,19 @@ export function visibleProperties(properties: LineProperty[]): LineProperty[] {
   );
 }
 
+/**
+ * The properties to show as notes: what the customer wrote, minus the size
+ * (shown on its own line) and the builder's "Antal ark" and "Längd". Those
+ * repeat the line's quantity and length, and "Antal ark" goes stale when the
+ * customer changes the quantity in the cart: #1056 read "Antal ark: 2" on a
+ * line of three paid sheets, next to "3 kopie".
+ */
+export function noteProperties(properties: LineProperty[]): LineProperty[] {
+  return properties.filter(
+    (p) => !/bredd|höjd|hojd|width|height/i.test(p.name) && !/^(antal ark|längd)$/i.test(p.name.trim()),
+  );
+}
+
 /** "Bredd (cm)" = "10,5" → 105 mm. */
 export function propertyMm(properties: LineProperty[], pattern: RegExp): number {
   const p = properties.find((x) => pattern.test(x.name));
@@ -116,26 +129,29 @@ export function printLabel(job: JobLike): string {
   return `${job.printType || DEFAULT_PRINT_TYPE} · ${KIND_LABEL[kind] ?? kind}`;
 }
 
-/** "58 × 100 cm", or "10 × 8 cm × 20 pcs" for cut jobs. */
+/**
+ * "58 × 100 cm", "58 × 100 cm × 3 copies" for a sheet ordered three times,
+ * or "10 × 8 cm × 20 pcs" for cut jobs.
+ */
 export function jobSize(job: JobLike): string {
   const size =
     job.widthMm > 0 && job.heightMm > 0
       ? `${job.widthMm / 10} × ${job.heightMm / 10} cm`
       : "Size not given";
-  return job.kind === "cut" && job.lineQuantity
-    ? `${size} × ${job.lineQuantity} pcs`
-    : size;
+  if (job.kind === "cut" && job.lineQuantity) return `${size} × ${job.lineQuantity} pcs`;
+  return job.lineQuantity && job.lineQuantity > 1 ? `${size} × ${job.lineQuantity} copies` : size;
 }
 
 /**
  * Film the job uses, in metres of 58 cm roll. A cut job's motifs are
  * printed side by side, so its area is what counts, not one motif's height.
+ * A sheet ordered three times uses three times its length.
  */
 export function filmMetres(job: JobLike): number {
   if (job.kind === "cut") {
     return (job.widthMm * job.heightMm * (job.lineQuantity || 1)) / (580 * 1000);
   }
-  return job.heightMm / 1000;
+  return (job.heightMm / 1000) * (job.lineQuantity || 1);
 }
 
 /**

@@ -34,7 +34,7 @@ import {
   statusInfo,
 } from "../lib/order-status";
 import { syncOrderAddress, withOrderDetails } from "../lib/order-details.server";
-import { jobSize, printLabel, type LineProperty } from "../lib/print-jobs";
+import { jobSize, noteProperties, printLabel, type LineProperty } from "../lib/print-jobs";
 import { orderStatusOf } from "../lib/order-list.server";
 import { normalizePhone } from "../lib/phone";
 import { isVectorFormat, storeJobFile } from "../lib/job-file.server";
@@ -161,9 +161,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         dpi,
         sheetDpi: job.kind === "gang_sheet" ? file?.dpi ?? null : null,
         minDesignDpi,
-        props: ((job.lineProperties as LineProperty[] | null) || []).filter(
-          (p) => !/bredd|höjd|hojd|width|height/i.test(p.name),
-        ),
+        props: noteProperties((job.lineProperties as LineProperty[] | null) || []),
         previewUrl: previews[i],
         hasFile: Boolean(file),
         vector,

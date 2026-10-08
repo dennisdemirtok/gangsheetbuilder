@@ -194,6 +194,10 @@ export async function intakeOrder(
         : await createFileJob(shop, order.id, lineItem);
       if (!jobId) continue;
 
+      // A roll typed in by hand is made as long as the whole line ("1 meter"
+      // × 4 is one 4 m roll), so it is printed once, not once per meter.
+      if (!gangSheetId && orderedMetres(lineItem) !== null) lineDetails.lineQuantity = 1;
+
       // A sheet billed by the decimetre (any length but whole metres, and
       // every ready-made sheet) has quantity = decimetres × sheets. The
       // print shop needs the number of sheets: 15 on a 1,5 m sheet used to
@@ -280,8 +284,12 @@ async function linkGangSheet(shop: string, gangSheetId: string, orderId: number)
 function orderedMetres(lineItem: WebhookLineItem): number | null {
   const name = [lineItem.title, lineItem.variant_title].filter(Boolean).join(" ");
   if (!/per\s*met(er|re)|gang[\s-]?sheet/i.test(name)) return null;
-  const match = /(\d+(?:[.,]\d+)?)\s*(m\b|meter|metre)/i.exec(lineItem.variant_title || "");
-  const perUnit = match ? parseFloat(match[1].replace(",", ".")) : 1;
+  const variant = lineItem.variant_title || "";
+  const num = (s: string) => parseFloat(s.replace(",", "."));
+  // "Per decimeter" × 15 is 1,5 m, not 15 m.
+  const dm = /(\d+(?:[.,]\d+)?)?\s*(?:decimet|dm\b)/i.exec(variant);
+  const match = /(\d+(?:[.,]\d+)?)\s*(m\b|meter|metre)/i.exec(variant);
+  const perUnit = dm ? (dm[1] ? num(dm[1]) : 1) / 10 : match ? num(match[1]) : 1;
   return perUnit * (lineItem.quantity ?? 1);
 }
 
