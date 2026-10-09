@@ -4,6 +4,7 @@ import { exportGangSheetJob } from "./jobs/export-gang-sheet";
 import { removeBackgroundJob } from "./jobs/remove-background";
 import { cleanupExpiredJob } from "./jobs/cleanup-expired";
 import { fulfillDuePickups } from "../app/lib/order-shipment.server";
+import { sweepMissedDeliveries } from "../app/lib/missed-delivery.server";
 
 const redisUrl = process.env.REDIS_URL;
 if (!redisUrl) {
@@ -99,12 +100,39 @@ async function sweepTracking() {
 const trackingTimer = setInterval(sweepTracking, TRACKING_SWEEP_MS);
 setTimeout(sweepTracking, 30_000);
 
+/*
+ * Missed deliveries: every hour, look up the carrier's events on shipped
+ * orders. A failed delivery attempt still not delivered by 08:00 the next
+ * day emails the customer to rebook (see missed-delivery.server.ts).
+ */
+const DELIVERY_SWEEP_MS = 60 * 60 * 1000;
+let checkingDeliveries = false;
+async function sweepDeliveries() {
+  if (checkingDeliveries) return;
+  checkingDeliveries = true;
+  try {
+    const results = await sweepMissedDeliveries();
+    for (const r of results) {
+      if (r.action === "send" || r.action === "error" || r.action === "delivered") {
+        console.log(`[delivery] ${r.order}: ${r.action}${r.detail ? ` (${r.detail})` : ""}`);
+      }
+    }
+  } catch (err) {
+    console.error("[delivery] Sweep failed:", err);
+  } finally {
+    checkingDeliveries = false;
+  }
+}
+const deliveryTimer = setInterval(sweepDeliveries, DELIVERY_SWEEP_MS);
+setTimeout(sweepDeliveries, 90_000);
+
 console.log("Workers started successfully.");
 
 // Graceful shutdown
 process.on("SIGTERM", async () => {
   console.log("Shutting down workers...");
   clearInterval(trackingTimer);
+  clearInterval(deliveryTimer);
   await Promise.all([
     exportWorker.close(),
     bgRemovalWorker.close(),

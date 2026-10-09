@@ -83,6 +83,11 @@ model GangSheet {
   /// Set while the shop waits for the customer (e.g. to fix a file); on every job of the order.
   awaitingCustomerSince DateTime? @map("awaiting_customer_since")
   awaitingCustomerNote  String?   @map("awaiting_customer_note")
+  /// When the carrier reported the parcel delivered (Shopify's tracking events);
+  /// ends the missed-delivery check for the order. Same on every job of the order.
+  deliveredAt       DateTime? @map("delivered_at")
+  /// When the customer was emailed after a failed delivery attempt — sent once.
+  missedDeliveryMailSentAt DateTime? @map("missed_delivery_mail_sent_at")
   /// Shopify fulfillment carrying the tracking to the customer, or why it failed.
   shopifyFulfillmentId String? @map("shopify_fulfillment_id")
   fulfillmentError  String?  @map("fulfillment_error")

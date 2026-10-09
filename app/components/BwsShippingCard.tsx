@@ -67,6 +67,8 @@ interface SheetShippingFields {
   sentToPrintShopAt: string | null;
   sentToPrintShopTo: string | null;
   productionMailSentAt: string | null;
+  deliveredAt: string | null;
+  missedDeliveryMailSentAt: string | null;
 }
 
 type ActionData = { success?: boolean; errors?: string[]; notice?: string };
@@ -196,6 +198,12 @@ export function BwsShippingCard({
             )}
             {sheet.bwsBookingId && <Row label="Booking" value={sheet.bwsBookingId} />}
             {sheet.trackingNumber && <Row label="Tracking" value={sheet.trackingNumber} />}
+            {sheet.deliveredAt && <Row label="Delivered" value={formatDateTime(sheet.deliveredAt)} />}
+            {sheet.missedDeliveryMailSentAt && (
+              <Text as="p" variant="bodySm" tone="caution">
+                Delivery attempt failed · customer emailed to rebook {formatDateTime(sheet.missedDeliveryMailSentAt)}
+              </Text>
+            )}
             <InlineStack gap="200">
               {hasLabel && (
                 <Button onClick={onDownloadLabel} loading={downloadingLabel}>
