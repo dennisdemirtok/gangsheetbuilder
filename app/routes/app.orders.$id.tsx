@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useFetcher, useRevalidator } from "@remix-run/react";
+import { useLoaderData, useFetcher, useNavigate, useRevalidator } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -60,6 +60,7 @@ import {
 import { BwsShippingCard } from "../components/BwsShippingCard";
 import { missingMailConfig } from "../lib/mailer.server";
 import { sendOrderToPrintShop } from "../lib/print-shop-email.server";
+import { mergeCutJobs, splitSheet } from "../lib/merge-sheet.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -78,7 +79,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
    * in the database, and the page used to show just one of them: an order
    * with four cut motifs meant four pages to go through.
    */
-  const jobs = await prisma.gangSheet.findMany({
+  const allJobs = await prisma.gangSheet.findMany({
     where: found.shopifyOrderId
       ? { shopDomain: session.shop, shopifyOrderId: found.shopifyOrderId }
       : { id: found.id },
@@ -90,10 +91,20 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     },
   });
 
+  // Cut jobs combined into one sheet are printed by it: shown on the sheet.
+  const jobs = allJobs.filter((j) => !j.mergedIntoId);
+  const combined = new Map<string, { count: number; pieces: number }>();
+  for (const j of allJobs) {
+    if (!j.mergedIntoId) continue;
+    const c = combined.get(j.mergedIntoId) ?? { count: 0, pieces: 0 };
+    combined.set(j.mergedIntoId, { count: c.count + 1, pieces: c.pieces + (j.lineQuantity ?? 1) });
+  }
+  const combinable = jobs.filter((j) => j.kind === "cut" && j.status !== "shipped" && j.status !== "draft");
+
   const [[gangSheet], notes, previews, summary] = await Promise.all([
     withOrderDetails(admin, session.shop, [found]),
     prisma.gangSheetNote.findMany({
-      where: { gangSheetId: { in: jobs.map((j) => j.id) } },
+      where: { gangSheetId: { in: allJobs.map((j) => j.id) } },
       orderBy: { createdAt: "desc" },
     }),
     Promise.all(jobs.map((j) => (j.previewUrl ? getPresignedDownloadUrl(j.previewUrl) : null))),
@@ -134,6 +145,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     orderedAt: formatDateTime(gangSheet.createdAt),
     hasLabel: Boolean(gangSheet.shippingLabelKey),
     shipping,
+    // Many cut motifs are hours of cutting: they can go on one sheet instead.
+    combine:
+      combinable.length >= 2 && orderStatus !== "shipped"
+        ? { jobs: combinable.length, pieces: combinable.reduce((s, j) => s + (j.lineQuantity ?? 1), 0) }
+        : null,
     jobs: jobs.map((job, i) => {
       const file = job.exports[0];
       const vector = job.kind === "cut" && isVectorFormat(file?.format);
@@ -172,6 +188,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         widthCm: job.widthMm / 10,
         heightCm: job.heightMm / 10,
         pieces: job.lineQuantity ?? 1,
+        combinedFrom: combined.get(job.id) ?? null,
         fileMeta: file
           ? `${file.format.toUpperCase()}${file.fileSizeBytes ? ` ${(file.fileSizeBytes / 1024 / 1024).toFixed(1)} MB` : ""}`
           : null,
@@ -389,6 +406,37 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 
   // Status buttons act on the whole order: every job is printed together.
+  if (action === "combine_cut_jobs") {
+    if (!gangSheet.shopifyOrderId) {
+      return json({ errors: ["This sheet is not part of an order."] }, { status: 400 });
+    }
+    const result = await mergeCutJobs({
+      shopDomain: session.shop,
+      shopifyOrderId: gangSheet.shopifyOrderId,
+      author: session.shop,
+    });
+    if (!result.ok) return json({ errors: [result.error] });
+    const jobsCombined = result.sheets.reduce((s, x) => s + x.jobs, 0);
+    const pieces = result.sheets.reduce((s, x) => s + x.pieces, 0);
+    const lengths = result.sheets.map((x) => `${x.heightMm / 10} cm`).join(" + ");
+    return json({
+      success: true,
+      notice: `Combined ${jobsCombined} cut jobs (${pieces} motifs) into ${result.sheets.length > 1 ? `${result.sheets.length} sheets` : "one sheet"}, ${lengths}. The print file is being made.`,
+      errors: result.skipped.length > 0 ? [`Left as cut jobs: ${result.skipped.join(", ")}`] : undefined,
+    });
+  }
+
+  if (action === "split_sheet") {
+    const result = await splitSheet({
+      shopDomain: session.shop,
+      sheetId: String(formData.get("sheetId") || ""),
+      author: session.shop,
+    });
+    if (!result.ok) return json({ errors: [result.error] });
+    // The combined sheet is gone; this page may have been its page.
+    return json({ success: true, goTo: `/app/orders/${result.firstJobId}`, notice: "Back to one cut job per motif." });
+  }
+
   const wholeOrder = gangSheet.shopifyOrderId
     ? { shopDomain: session.shop, shopifyOrderId: gangSheet.shopifyOrderId }
     : { id: gangSheet.id };
@@ -547,7 +595,7 @@ interface ShippingAddress {
 }
 
 export default function OrderDetailPage() {
-  const { gangSheet, orderStatus, awaiting, orderedAt, hasLabel, shipping, jobs } =
+  const { gangSheet, orderStatus, awaiting, orderedAt, hasLabel, shipping, jobs, combine } =
     useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const address = (gangSheet.shippingAddress as ShippingAddress | null) || null;
@@ -742,9 +790,12 @@ export default function OrderDetailPage() {
             {/* Every print job of the order, each with its file. */}
             <Card padding="0">
               <Box padding="400" paddingBlockEnd="200">
-                <Text as="h2" variant="headingMd">
-                  {jobs.length > 1 ? `Print jobs (${jobs.length})` : "Print job"}
-                </Text>
+                <InlineStack align="space-between" blockAlign="center" gap="200">
+                  <Text as="h2" variant="headingMd">
+                    {jobs.length > 1 ? `Print jobs (${jobs.length})` : "Print job"}
+                  </Text>
+                  {combine && <CombineButton jobs={combine.jobs} pieces={combine.pieces} />}
+                </InlineStack>
               </Box>
               {jobs.map((job) => (
                 <Box
@@ -841,6 +892,11 @@ export default function OrderDetailPage() {
                             {p.value}
                           </Text>
                         ))}
+                        {job.combinedFrom && (
+                          <Text as="p" variant="bodySm" tone="subdued">
+                            Combined from {job.combinedFrom.count} cut jobs ({job.combinedFrom.pieces} motifs). The customer cuts them out.
+                          </Text>
+                        )}
                       </BlockStack>
                     </div>
                     <BlockStack gap="200" inlineAlign="end">
@@ -851,6 +907,7 @@ export default function OrderDetailPage() {
                       )}
                       <ReplaceFileButton jobId={job.id} label={job.hasFile ? "Replace file" : "Upload file"} />
                       <EditSizeButton job={job} />
+                      {job.combinedFrom && orderStatus !== "shipped" && <SplitSheetButton sheetId={job.id} />}
                     </BlockStack>
                   </InlineStack>
                 </Box>
@@ -1001,6 +1058,89 @@ function ReplaceFileButton({ jobId, label }: { jobId: string; label: string }) {
         {label}
       </Button>
     </>
+  );
+}
+
+/**
+ * Put the order's cut motifs on one sheet. DTF Transfers By Size is printed
+ * and cut out motif by motif; dozens of small motifs in different sizes
+ * (#1063: 47 jobs, 70 motifs) is hours of cutting. On one sheet it prints
+ * as one file and the customer cuts it out.
+ */
+function CombineButton({ jobs, pieces }: { jobs: number; pieces: number }) {
+  const fetcher = useFetcher<{ success?: boolean; notice?: string; errors?: string[] }>();
+  const shopify = useAppBridge();
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    if (fetcher.data.success) {
+      setOpen(false);
+      if (fetcher.data.notice) shopify.toast.show(fetcher.data.notice);
+    }
+    if (fetcher.data.errors) {
+      shopify.toast.show(fetcher.data.errors.join(" "), { isError: !fetcher.data.success });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetcher.state, fetcher.data, shopify]);
+
+  return (
+    <>
+      <Button onClick={() => setOpen(true)}>Combine into one sheet</Button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Combine into one sheet"
+        primaryAction={{
+          content: "Combine",
+          loading: fetcher.state !== "idle",
+          onAction: () => fetcher.submit({ action: "combine_cut_jobs" }, { method: "post" }),
+        }}
+        secondaryActions={[{ content: "Cancel", onAction: () => setOpen(false) }]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p">
+              The {jobs} cut jobs ({pieces} motifs) are packed onto one 58 cm sheet at
+              the sizes ordered. The print shop prints it as one file instead of
+              cutting every motif; the customer cuts them out.
+            </Text>
+            <Text as="p" tone="subdued">
+              The cut jobs stay on the order and ship as before. Undo it from the
+              sheet any time before the order ships.
+            </Text>
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+    </>
+  );
+}
+
+/** Undo a combined sheet: back to one cut job per motif. */
+function SplitSheetButton({ sheetId }: { sheetId: string }) {
+  const fetcher = useFetcher<{ success?: boolean; notice?: string; goTo?: string; errors?: string[] }>();
+  const shopify = useAppBridge();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    if (fetcher.data.errors) shopify.toast.show(fetcher.data.errors.join(" "), { isError: true });
+    if (fetcher.data.success) {
+      if (fetcher.data.notice) shopify.toast.show(fetcher.data.notice);
+      if (fetcher.data.goTo) navigate(fetcher.data.goTo);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetcher.state, fetcher.data, shopify]);
+
+  return (
+    <Button
+      variant="plain"
+      tone="critical"
+      loading={fetcher.state !== "idle"}
+      onClick={() => fetcher.submit({ action: "split_sheet", sheetId }, { method: "post" })}
+    >
+      Undo combine
+    </Button>
   );
 }
 

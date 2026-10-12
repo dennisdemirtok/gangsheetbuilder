@@ -23,7 +23,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const gangSheets = await prisma.gangSheet.findMany({
     where: {
       shopDomain: session.shop,
-      ...(orders.length > 0 ? { shopifyOrderId: { in: orders } } : { id: { in: ids } }),
+      // Cut jobs combined into a sheet are printed by that sheet.
+      ...(orders.length > 0 ? { shopifyOrderId: { in: orders }, mergedIntoId: null } : { id: { in: ids } }),
     },
     orderBy: { createdAt: "asc" },
     include: { exports: true },

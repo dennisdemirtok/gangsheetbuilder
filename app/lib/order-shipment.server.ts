@@ -54,15 +54,18 @@ export async function summarizeOrderShipment(
   shopifyOrderId: string,
 ): Promise<OrderShipmentSummary> {
   const sheets = await loadOrderSheets(shopDomain, shopifyOrderId);
+  // Cut jobs combined into a sheet are printed on it: its film, not theirs.
+  const printed = sheets.filter((s) => !s.mergedIntoId);
   // Every printed line on the order travels in the tube — gang sheets and
   // cut transfers alike — so weight is estimated from the film they use.
-  const meters = sheets.reduce((sum, s) => sum + filmMetres(s), 0);
+  const meters = printed.reduce((sum, s) => sum + filmMetres(s), 0);
   return {
     meters: Math.round(meters * 10) / 10,
     weightKg: weightForMeters(meters),
+    // What the customer paid for: the combined sheet itself has no price.
     valueSEK: sheets.reduce((sum, s) => sum + (s.priceSEK || 0), 0),
     pickupDate: defaultPickupDate(),
-    sheetCount: sheets.length,
+    sheetCount: printed.length,
     otherLineItems:
       (sheets[0]?.otherLineItems as { title: string; quantity: number }[] | null) || [],
   };

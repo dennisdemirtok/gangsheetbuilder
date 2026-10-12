@@ -24,9 +24,10 @@ const STATUS_BY_RANK = Object.fromEntries(
   Object.entries(RANK).map(([s, r]) => [r, s as OrderStatus]),
 ) as Record<number, OrderStatus>;
 
+// Cut jobs combined into a sheet are printed by it: the sheet's status counts.
 const RANK_SQL = Prisma.sql`min(CASE status
   WHEN 'pending' THEN 1 WHEN 'exported' THEN 2 WHEN 'downloaded' THEN 3
-  WHEN 'printed' THEN 4 WHEN 'shipped' THEN 5 ELSE 0 END)`;
+  WHEN 'printed' THEN 4 WHEN 'shipped' THEN 5 ELSE 0 END) FILTER (WHERE merged_into_id IS NULL)`;
 
 function ordersCte(shopDomain: string) {
   return Prisma.sql`
@@ -35,7 +36,7 @@ function ordersCte(shopDomain: string) {
              min(created_at) AS created_at,
              max(order_name) AS order_name,
              max(customer_name) AS customer_name,
-             count(*)::int AS jobs,
+             (count(*) FILTER (WHERE merged_into_id IS NULL))::int AS jobs,
              ${RANK_SQL}::int AS rank,
              bool_or(awaiting_customer_since IS NOT NULL) AS awaiting,
              (array_agg(id ORDER BY created_at))[1] AS first_id
@@ -138,7 +139,7 @@ export function orderStatusOf(jobs: { status: string }[]): OrderStatus {
 /** All jobs of the given orders, for summaries. */
 export function jobsOfOrders(shopDomain: string, orderIds: string[]) {
   return prisma.gangSheet.findMany({
-    where: { shopDomain, shopifyOrderId: { in: orderIds } },
+    where: { shopDomain, shopifyOrderId: { in: orderIds }, mergedIntoId: null },
     orderBy: { createdAt: "asc" },
     select: {
       id: true,

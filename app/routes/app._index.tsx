@@ -42,8 +42,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const [counts, month, shippedThisMonth, upNext] = await Promise.all([
     orderStatusCounts(shopDomain),
     // Film is summed per job: a cut job's motifs use area, not height.
+    // Cut jobs combined into a sheet use that sheet's film.
     prisma.gangSheet.findMany({
-      where: { ...real, createdAt: { gte: thirtyDaysAgo } },
+      where: { ...real, createdAt: { gte: thirtyDaysAgo }, mergedIntoId: null },
       select: { shopifyOrderId: true, kind: true, widthMm: true, heightMm: true, lineQuantity: true },
     }),
     prisma.gangSheet.findMany({

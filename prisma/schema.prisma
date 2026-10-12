@@ -109,6 +109,10 @@ model GangSheet {
   /// Where a cut job's motif was uploaded (Shopify's CDN), before the worker
   /// copies it into file storage.
   sourceFileUrl     String?  @map("source_file_url")
+  /// A cut job combined into one gang sheet from the order page: the sheet
+  /// that prints it. It stays on the order, since Shopify still fulfils its
+  /// line, but it is not printed, sent, counted or ranked on its own.
+  mergedIntoId      String?  @map("merged_into_id")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @updatedAt @map("updated_at")
 
@@ -123,6 +127,7 @@ model GangSheet {
   @@index([shopDomain, status])
   @@index([shopDomain, createdAt])
   @@index([shopDomain, shopifyLineItemId])
+  @@index([mergedIntoId])
   @@map("gangsheet_gang_sheet")
 }
 

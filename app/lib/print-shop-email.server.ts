@@ -37,7 +37,8 @@ type Sheet = Awaited<ReturnType<typeof loadOrder>>[number];
 
 function loadOrder(shopDomain: string, shopifyOrderId: string) {
   return prisma.gangSheet.findMany({
-    where: { shopDomain, shopifyOrderId },
+    // Cut jobs combined into a sheet are printed by that sheet.
+    where: { shopDomain, shopifyOrderId, mergedIntoId: null },
     orderBy: { createdAt: "asc" },
     include: {
       exports: { orderBy: { createdAt: "desc" }, take: 1 },
