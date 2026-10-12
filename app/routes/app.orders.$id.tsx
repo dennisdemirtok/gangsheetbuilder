@@ -244,10 +244,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       : null;
     if (!job || !file) return json({ error: "No print file yet" }, { status: 404 });
 
-    // Downloading is the step itself — the shop should not have to report it.
-    if (job.status === "exported") {
-      await prisma.gangSheet.update({ where: { id: job.id }, data: { status: "downloaded" } });
-    }
+    // Downloading leaves the status alone. It used to count as handing the
+    // order over, from when the print shop downloaded the files itself; now
+    // the files are emailed, and a file downloaded to check it put #1031,
+    // #1061 and #1063 under "With print shop" without being sent.
     return json({
       downloadUrl: await getPresignedAttachmentUrl(file.url, printFileName(job, file.format)),
     });

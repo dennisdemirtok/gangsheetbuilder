@@ -50,7 +50,8 @@ export const ORDER_STATUS: Record<DisplayStatus, StatusInfo> = {
     hint: "Send it to the print shop (right), or download the file and print it.",
   },
   downloaded: {
-    // Reached by downloading the file or by emailing it to the print shop.
+    // Reached only by emailing the order to the print shop; downloading a
+    // file to check it no longer counts as handing it over.
     label: "With print shop",
     tone: "info",
     hint: "The files are with the print shop. Mark as printed when done.",

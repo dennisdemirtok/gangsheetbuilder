@@ -55,14 +55,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         console.error(`Failed to download ${exp.url}:`, err);
       }
     }
-
-    // Only a sheet still waiting to be printed moves on. This used to set
-    // every selected sheet to "downloaded", pulling printed and shipped
-    // orders back into the queue.
-    await prisma.gangSheet.updateMany({
-      where: { id: gs.id, status: "exported" },
-      data: { status: "downloaded" },
-    });
+    // Downloading leaves the status alone: only sending the order to the
+    // print shop puts it under "With print shop". A ZIP downloaded to check
+    // the files used to move orders there unsent, where they were missed.
   }
 
   await archive.finalize();
