@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { Prisma } from "@prisma/client";
+import { Prisma, type GangSheetImage } from "@prisma/client";
 import prisma from "../db.server";
 import { getPresignedDownloadUrl } from "../lib/r2.server";
 
@@ -78,38 +78,97 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     // Update image positions AND link them to this gang sheet
     if (images && Array.isArray(images)) {
+      const sentIds = images
+        .map((img: { id?: unknown }) => img?.id)
+        .filter((id: unknown): id is string => typeof id === "string" && id.length > 0);
+      const rows = new Map(
+        (await prisma.gangSheetImage.findMany({ where: { id: { in: sentIds } } })).map((row) => [row.id, row]),
+      );
+      // Rows on this sheet the editor doesn't name: copies made for it by
+      // an earlier save (see below), or designs no longer on it.
+      const spares = await prisma.gangSheetImage.findMany({
+        where: { gangSheetId, id: { notIn: sentIds } },
+        orderBy: { createdAt: "asc" },
+      });
+      // The rows this sheet prints from once saved.
+      const keptIds = new Set<string>();
+      const handled = new Set<string>();
+
       for (const img of images) {
-        if (!img.id) continue;
+        if (!img.id || handled.has(img.id)) continue;
+        handled.add(img.id);
+        const row = rows.get(img.id);
+        if (!row) {
+          // Image might not exist in DB (e.g. duplicated locally)
+          console.warn(`[gang-sheet] ${gangSheetId}: image ${img.id} not found, skipped`);
+          continue;
+        }
 
         // The editor sends every copy's own position. Store them so the
         // export prints the arrangement the customer actually saw instead
         // of re-deriving a grid that ignores the other designs.
         const placements = sanitizePlacements(img.placements);
+        const layout = {
+          gangSheetId: gangSheetId, // ALWAYS link to this gang sheet
+          positionX: img.positionX,
+          positionY: img.positionY,
+          displayWidth: img.displayWidth,
+          displayHeight: img.displayHeight,
+          rotation: img.rotation || 0,
+          flipX: img.flipX || false,
+          flipY: img.flipY || false,
+          quantity: placements ? placements.length : img.quantity || 1,
+          placementsJson: placements ?? Prisma.DbNull,
+          // Which version prints: the editor says whether the customer
+          // kept the background-free one. Older editors don't send it.
+          ...(typeof img.useBgRemoved === "boolean" ? { bgRemoved: img.useBgRemoved } : {}),
+        };
 
+        // A duplicated sheet keeps the original's dbIds, so both sheets
+        // send the same row. Taking it moved the design off the sheet saved
+        // first, which then printed without it. When another sheet has
+        // placed the row, this sheet gets its own copy instead: the one an
+        // earlier save made, or a new one. File fields come from the row on
+        // every save, since a removed background or a crop only reaches it.
+        // A row placed nowhere is just where it was uploaded: take it.
+        const placedElsewhere =
+          row.gangSheetId !== null &&
+          row.gangSheetId !== gangSheetId &&
+          (row.placementsJson !== null || row.positionX !== null);
         try {
-          await prisma.gangSheetImage.update({
-            where: { id: img.id },
-            data: {
-              gangSheetId: gangSheetId, // ALWAYS link to this gang sheet
-              positionX: img.positionX,
-              positionY: img.positionY,
-              displayWidth: img.displayWidth,
-              displayHeight: img.displayHeight,
-              rotation: img.rotation || 0,
-              flipX: img.flipX || false,
-              flipY: img.flipY || false,
-              quantity: placements ? placements.length : img.quantity || 1,
-              placementsJson: placements ?? Prisma.DbNull,
-              // Which version prints: the editor says whether the customer
-              // kept the background-free one. Older editors don't send it.
-              ...(typeof img.useBgRemoved === "boolean" ? { bgRemoved: img.useBgRemoved } : {}),
-            },
-          });
+          if (!placedElsewhere) {
+            keptIds.add(row.id);
+            await prisma.gangSheetImage.update({ where: { id: row.id }, data: layout });
+            continue;
+          }
+          const data = { ...designFile(row), ...layout };
+          const spare = spares.findIndex((s) => s.originalUrl === row.originalUrl);
+          if (spare >= 0) {
+            const [copy] = spares.splice(spare, 1);
+            keptIds.add(copy!.id);
+            await prisma.gangSheetImage.update({ where: { id: copy!.id }, data });
+          } else {
+            const copy = await prisma.gangSheetImage.create({ data });
+            keptIds.add(copy.id);
+            console.log(`[gang-sheet] ${gangSheetId}: own copy ${copy.id} of ${row.id} (placed on ${row.gangSheetId})`);
+          }
         } catch (imgErr) {
           console.warn(`Failed to update image ${img.id}:`, imgErr);
-          // Image might not exist in DB (e.g. duplicated locally)
-          // Skip it silently
         }
+      }
+
+      // The editor sends the whole sheet, so a design it leaves out is not
+      // on it. Without this, one the customer deleted or changed after an
+      // earlier "add to cart" (an edited text is a new upload) kept its old
+      // positions here and printed on top of the new layout: #1077 got 17
+      // stray "KMF", #1082 111 old "Linneryd". Compared with the rows kept
+      // above, not the ids sent, so a copy made for this sheet stays on it.
+      const { count } = await prisma.gangSheetImage.updateMany({
+        where: { gangSheetId, id: { notIn: [...keptIds] } },
+        data: { gangSheetId: null },
+      });
+      if (count > 0) {
+        console.log(`[gang-sheet] ${gangSheetId}: unlinked ${count} design(s) no longer on the sheet`);
       }
     }
 
@@ -131,6 +190,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 };
 
+
+/** What a copy of a design row shares with it: the file, not its place. */
+function designFile(row: GangSheetImage) {
+  return {
+    originalUrl: row.originalUrl,
+    thumbnailUrl: row.thumbnailUrl,
+    originalFilename: row.originalFilename,
+    mimeType: row.mimeType,
+    fileSizeBytes: row.fileSizeBytes,
+    widthPx: row.widthPx,
+    heightPx: row.heightPx,
+    dpiX: row.dpiX,
+    dpiY: row.dpiY,
+    bgRemoved: row.bgRemoved,
+    bgRemovedUrl: row.bgRemovedUrl,
+  };
+}
 
 /** Hard cap so a malformed client can't write an unbounded blob. */
 const MAX_PLACEMENTS = 2000;
