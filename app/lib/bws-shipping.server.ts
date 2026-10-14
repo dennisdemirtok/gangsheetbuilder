@@ -99,6 +99,13 @@ export interface BwsShipmentInput {
   description?: string;
   /** ServiceType code, e.g. EXP (Blue Express) or ECO (Blue Economy). */
   service?: string;
+  /**
+   * Somewhere other than the print shop, e.g. clothes collected at Printgood.
+   * Unset = the print shop (BWS_PICKUP_*), as for every print order.
+   */
+  pickup?: BwsAddress;
+  /** Unset = the print shop's 60×5×5 cm tube. */
+  packageCm?: { length: number; width: number; height: number };
 }
 
 /**
@@ -241,7 +248,9 @@ function toBwsAddress(a: BwsAddress) {
 export function buildShippingOrder(input: BwsShipmentInput) {
   // The admin still shows the real print shop; only the booking sent to the
   // test API is picked up in Denmark.
-  const pickup = IS_TEST_API ? { ...getPickupAddress(), ...TEST_PICKUP } : getPickupAddress();
+  const origin = input.pickup ?? getPickupAddress();
+  const pickup = IS_TEST_API ? { ...origin, ...TEST_PICKUP } : origin;
+  const pkg = input.packageCm ?? PACKAGE_CM;
   // On TEST only ECO books; in production the shop picks per booking.
   const serviceCode = IS_TEST_API ? TEST_SERVICE : input.service || BWS_SERVICE;
   /*
@@ -302,9 +311,9 @@ export function buildShippingOrder(input: BwsShipmentInput) {
             Quantity: 1,
             UnitType: "Package",
             UnitDimensions: {
-              Length: PACKAGE_CM.length,
-              Width: PACKAGE_CM.width,
-              Height: PACKAGE_CM.height,
+              Length: pkg.length,
+              Width: pkg.width,
+              Height: pkg.height,
               Unit: "CentiMeter",
             },
             TotalGrossWeight: { Value: input.weightKg, Unit: "Kilogram" },
@@ -386,7 +395,15 @@ export async function createBwsShipment(
 ): Promise<BwsShipmentResult> {
   const requestBody = buildShippingOrder(input);
 
-  const missing = missingPickupConfig();
+  // A pickup given with the booking (Printgood) stands on its own.
+  const missing = input.pickup
+    ? [
+        ...(BWS_API_KEY ? [] : ["BWS_API_KEY"]),
+        ...(input.pickup.address1 && input.pickup.zip && input.pickup.city && input.pickup.phone
+          ? []
+          : ["pickup address or phone"]),
+      ]
+    : missingPickupConfig();
   if (missing.length > 0) {
     return {
       success: false,
@@ -451,7 +468,8 @@ function simulateShipment(
 ): Omit<BwsShipmentResult, "requestBody"> {
   const stamp = Date.now().toString().slice(-8);
   const trackingNumber = `${SIMULATED_PREFIX}${stamp}`;
-  const pickup = getPickupAddress();
+  const pickup = input.pickup ?? getPickupAddress();
+  const pkg = input.packageCm ?? PACKAGE_CM;
   const r = input.recipient;
   const lines = [
     "SIMULATED LABEL - NOT A REAL BWS BOOKING",
@@ -460,7 +478,7 @@ function simulateShipment(
     `Reference: ${input.reference}`,
     `Tracking: ${trackingNumber}`,
     `Pickup: ${input.pickupDate} ${PICKUP_FROM}-${PICKUP_UNTIL} (Poland)`,
-    `Package: ${PACKAGE_CM.length}x${PACKAGE_CM.width}x${PACKAGE_CM.height} cm, ${input.weightKg} kg, DDP`,
+    `Package: ${pkg.length}x${pkg.width}x${pkg.height} cm, ${input.weightKg} kg, DDP`,
     "",
     "FROM",
     pickup.name,

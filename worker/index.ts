@@ -4,6 +4,7 @@ import { exportGangSheetJob } from "./jobs/export-gang-sheet";
 import { removeBackgroundJob } from "./jobs/remove-background";
 import { cleanupExpiredJob } from "./jobs/cleanup-expired";
 import { fulfillDuePickups } from "../app/lib/order-shipment.server";
+import { fulfillDueGarmentPickups } from "../app/lib/garment-shipment.server";
 import { sweepMissedDeliveries } from "../app/lib/missed-delivery.server";
 
 const redisUrl = process.env.REDIS_URL;
@@ -91,6 +92,9 @@ async function sweepTracking() {
   try {
     const sent = await fulfillDuePickups();
     if (sent > 0) console.log(`[tracking] Sent shipping confirmation for ${sent} order(s)`);
+    // Clothes collected at Printgood: their own parcel and tracking.
+    const garments = await fulfillDueGarmentPickups();
+    if (garments > 0) console.log(`[tracking] Sent garment tracking for ${garments} order(s)`);
   } catch (err) {
     console.error("[tracking] Sweep failed:", err);
   } finally {

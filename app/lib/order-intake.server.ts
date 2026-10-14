@@ -13,6 +13,7 @@ import { Prisma } from "@prisma/client";
 import prisma from "../db.server";
 import { SHEET_WIDTH_MM } from "./constants";
 import { bookOrderShipment } from "./order-shipment.server";
+import { intakeGarments } from "./garment-intake.server";
 import {
   DEFAULT_PRINT_TYPE,
   detectPrintType,
@@ -40,6 +41,8 @@ interface WebhookLineItem {
   product_id?: number | null;
   title?: string;
   variant_title?: string | null;
+  sku?: string | null;
+  vendor?: string | null;
   quantity?: number;
   price?: string;
   requires_shipping?: boolean;
@@ -238,6 +241,13 @@ export async function intakeOrder(
         error,
       );
     }
+  }
+
+  // Clothes are dropshipped from Printgood: their own list, never a print job.
+  try {
+    await intakeGarments(shop, order, productTypes);
+  } catch (error) {
+    console.error(`[order-intake] Could not record the clothes of order ${order.id}:`, error);
   }
 
   /*

@@ -213,3 +213,43 @@ model GangSheetNote {
   @@index([gangSheetId])
   @@map("gangsheet_gang_sheet_note")
 }
+
+/// An order's clothes (Stanley/Stella, B&C), dropshipped from Printgood in
+/// Poland. Kept apart from the print jobs: its own email to Feelgood, its own
+/// BWS pickup at Printgood once they approve, its own fulfilment of the
+/// garment lines in Shopify.
+model GarmentOrder {
+  id                   String    @id @default(cuid())
+  shopDomain           String    @map("shop_domain")
+  shopifyOrderId       String    @map("shopify_order_id")
+  orderName            String?   @map("order_name")
+  customerName         String?   @map("customer_name")
+  shippingAddress      Json?     @map("shipping_address")
+  /// [{ lineItemId, title, variantTitle, sku, quantity, vendor, unitPrice }]
+  items                Json
+  /// new → sent (waiting for Feelgood to approve the pickup) → booked → shipped; or cancelled.
+  status               String    @default("new")
+  sentToSupplierAt     DateTime? @map("sent_to_supplier_at")
+  sentToSupplierTo     String?   @map("sent_to_supplier_to")
+  /// BWS booking at Printgood: null | "booking" | "booked" | "failed".
+  shippingStatus       String?   @map("shipping_status")
+  bwsBookingId         String?   @map("bws_booking_id")
+  trackingNumber       String?   @map("tracking_number")
+  trackingUrl          String?   @map("tracking_url")
+  shippingLabelKey     String?   @map("shipping_label_key")
+  pickupDate           String?   @map("pickup_date")
+  shippingService      String?   @map("shipping_service")
+  shippingPrice        Float?    @map("shipping_price")
+  shippingCurrency     String?   @map("shipping_currency")
+  shippingBookedAt     DateTime? @map("shipping_booked_at")
+  shippingError        String?   @map("shipping_error")
+  shopifyFulfillmentId String?   @map("shopify_fulfillment_id")
+  fulfillmentError     String?   @map("fulfillment_error")
+  shippedAt            DateTime? @map("shipped_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  @@unique([shopDomain, shopifyOrderId])
+  @@index([shopDomain, status])
+  @@map("gangsheet_garment_order")
+}
