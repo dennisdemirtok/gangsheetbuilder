@@ -499,6 +499,9 @@ export async function compositeGangSheet(
       input: processedBuffer,
       left,
       top,
+      // Overlays keep sharp's 268-megapixel limit otherwise (a ready-made
+      // sheet over ~3.3 m); see worker/jobs/export-gang-sheet.ts.
+      limitInputPixels: false,
     });
   }
 

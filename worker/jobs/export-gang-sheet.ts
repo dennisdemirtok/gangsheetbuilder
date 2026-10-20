@@ -316,6 +316,11 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
         input: processedBuffer,
         left,
         top,
+        // Each overlay has sharp's own 268-megapixel limit; the canvas's
+        // limitInputPixels does not reach it. A ready-made sheet longer
+        // than ~3.3 m is one overlay that size: #1108's 6.3 m sheet failed
+        // every attempt and sat on "Preparing file".
+        limitInputPixels: false,
       });
     }
   }
