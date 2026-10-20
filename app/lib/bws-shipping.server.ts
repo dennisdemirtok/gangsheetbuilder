@@ -261,8 +261,15 @@ export function buildShippingOrder(input: BwsShipmentInput) {
    * which is an export there.
    */
   const quoteType = IS_TEST_API ? "Export" : process.env.BWS_QUOTE_TYPE || "Import";
-  const from = zonedToUtc(input.pickupDate, PICKUP_FROM, PICKUP_TIMEZONE);
-  const until = zonedToUtc(input.pickupDate, PICKUP_UNTIL, PICKUP_TIMEZONE);
+  /*
+   * The pickup window as it reads on the clock in Poland, with no zone — as
+   * the BWS app books it. BWS hands the clock time to the carrier and drops
+   * the zone: 11:30 sent as UTC ("09:30:00.000Z") reached FedEx as a 09:30
+   * ready time, so a same-day booking made after 09:30 failed with
+   * READY.TIME.INVALID (#1108, booked 09:57 for 11:30).
+   */
+  const from = `${input.pickupDate}T${PICKUP_FROM}:00`;
+  const until = `${input.pickupDate}T${PICKUP_UNTIL}:00`;
   const value = { Value: input.valueSEK, Currency: "Sek" };
   const pickupAddress = toBwsAddress(pickup);
   const recipient = toBwsAddress(input.recipient);
@@ -275,7 +282,7 @@ export function buildShippingOrder(input: BwsShipmentInput) {
       SenderId: null,
       TourNumber: null,
     },
-    EstimatedDeparture: from.toISOString(),
+    EstimatedDeparture: from,
     Comments: `TransferCraft ${input.reference}`,
     ReceiverPays: false,
     Consignments: [
@@ -292,8 +299,8 @@ export function buildShippingOrder(input: BwsShipmentInput) {
         TotalValue: value,
         Pickup: {
           Mode: "WithinDateTimeInterval",
-          FromDateTime: from.toISOString(),
-          ToDateTime: until.toISOString(),
+          FromDateTime: from,
+          ToDateTime: until,
         },
         TransportDetails: { Mode: "Courier", QuoteType: quoteType },
         Addresses: {
