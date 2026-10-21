@@ -253,3 +253,35 @@ model GarmentOrder {
   @@index([shopDomain, status])
   @@map("gangsheet_garment_order")
 }
+
+/// One more BWS pickup for an order that already has its own, e.g. a reprint
+/// sent after a complaint. Kept apart from the order's booking: the customer
+/// and the print shop are told nothing, and its tracking never reaches
+/// Shopify; the shop emails the label to Poland itself.
+model ExtraShipment {
+  id               String   @id @default(cuid())
+  shopDomain       String   @map("shop_domain")
+  shopifyOrderId   String   @map("shopify_order_id")
+  /// What BWS and the label show, e.g. "#1108-2".
+  reference        String
+  /// Why it was sent, for the shop's own record.
+  reason           String?
+  /// The address it was booked to (the order's, or one typed in).
+  recipient        Json
+  /// "booking" while BWS is asked (the claim against a double click), then "booked".
+  status           String   @default("booking")
+  bwsBookingId     String?  @map("bws_booking_id")
+  trackingNumber   String?  @map("tracking_number")
+  trackingUrl      String?  @map("tracking_url")
+  shippingLabelKey String?  @map("shipping_label_key")
+  pickupDate       String   @map("pickup_date")
+  shippingService  String?  @map("shipping_service")
+  weightKg         Float    @map("weight_kg")
+  shippingPrice    Float?   @map("shipping_price")
+  shippingCurrency String?  @map("shipping_currency")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([shopDomain, shopifyOrderId])
+  @@map("gangsheet_extra_shipment")
+}

@@ -58,6 +58,8 @@ import {
   summarizeOrderShipment,
 } from "../lib/order-shipment.server";
 import { BwsShippingCard } from "../components/BwsShippingCard";
+import { ExtraShipmentCard } from "../components/ExtraShipmentCard";
+import { bookExtraShipment, listExtraShipments } from "../lib/extra-shipment.server";
 import { missingMailConfig } from "../lib/mailer.server";
 import { sendOrderToPrintShop } from "../lib/print-shop-email.server";
 import { mergeCutJobs, splitSheet } from "../lib/merge-sheet.server";
@@ -101,7 +103,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
   const combinable = jobs.filter((j) => j.kind === "cut" && j.status !== "shipped" && j.status !== "draft");
 
-  const [[gangSheet], notes, previews, summary] = await Promise.all([
+  const [[gangSheet], notes, previews, summary, extraShipments] = await Promise.all([
     withOrderDetails(admin, session.shop, [found]),
     prisma.gangSheetNote.findMany({
       where: { gangSheetId: { in: allJobs.map((j) => j.id) } },
@@ -109,6 +111,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     }),
     Promise.all(jobs.map((j) => (j.previewUrl ? getPresignedDownloadUrl(j.previewUrl) : null))),
     found.shopifyOrderId ? summarizeOrderShipment(session.shop, found.shopifyOrderId) : null,
+    found.shopifyOrderId ? listExtraShipments(session.shop, found.shopifyOrderId) : [],
   ]);
 
   const orderStatus = orderStatusOf(jobs);
@@ -145,6 +148,23 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     orderedAt: formatDateTime(gangSheet.createdAt),
     hasLabel: Boolean(gangSheet.shippingLabelKey),
     shipping,
+    // A second pickup is for an order whose first parcel has gone.
+    extraShipments:
+      shipping && (gangSheet.shippingStatus === "booked" || orderStatus === "shipped" || extraShipments.length > 0)
+        ? extraShipments.map((x) => ({
+            id: x.id,
+            reference: x.reference,
+            reason: x.reason,
+            bwsBookingId: x.bwsBookingId,
+            trackingNumber: x.trackingNumber,
+            trackingUrl: x.trackingUrl,
+            hasLabel: Boolean(x.shippingLabelKey),
+            pickupDate: x.pickupDate,
+            service: x.shippingService,
+            price: x.shippingPrice != null ? `${x.shippingPrice} ${x.shippingCurrency ?? ""}`.trim() : null,
+            bookedAt: formatDateTime(x.createdAt),
+          }))
+        : null,
     // Many cut motifs are hours of cutting: they can go on one sheet instead.
     combine:
       combinable.length >= 2 && orderStatus !== "shipped"
@@ -216,6 +236,23 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
      * URL rendered into the page expired after an hour, and a print shop
      * leaves an order open far longer than that.
      */
+    if (formData.get("kind") === "extra_label") {
+      const extra = await prisma.extraShipment.findFirst({
+        where: {
+          id: String(formData.get("shipmentId") || ""),
+          shopDomain: session.shop,
+          shopifyOrderId: gangSheet.shopifyOrderId ?? "",
+        },
+      });
+      if (!extra?.shippingLabelKey) return json({ error: "No label" }, { status: 404 });
+      const ext = extra.shippingLabelKey.split(".").pop() || "pdf";
+      return json({
+        downloadUrl: await getPresignedAttachmentUrl(
+          extra.shippingLabelKey,
+          `${extra.reference.replace(/^#/, "")}_label.${ext}`,
+        ),
+      });
+    }
     if (formData.get("kind") === "label") {
       if (!gangSheet.shippingLabelKey) {
         return json({ error: "No label" }, { status: 404 });
@@ -304,6 +341,47 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         : undefined,
     });
     return json(result.ok ? { success: true, notice: "Booking saved. You can send the order to the print shop now." } : { errors: result.errors });
+  }
+
+  if (action === "book_extra") {
+    if (!gangSheet.shopifyOrderId) {
+      return json({ errors: ["This sheet is not part of an order."] }, { status: 400 });
+    }
+    const field = (name: string) => String(formData.get(name) || "").trim();
+    const weight = parseFloat(field("weightKg").replace(",", "."));
+    const pickupDate = field("pickupDate");
+    const service = field("service");
+    const result = await bookExtraShipment({
+      shopDomain: session.shop,
+      shopifyOrderId: gangSheet.shopifyOrderId,
+      orderName: orderLabel(gangSheet),
+      reason: field("reason"),
+      recipient: {
+        name: field("name"),
+        company: field("company"),
+        address1: field("address1"),
+        address2: field("address2"),
+        zip: field("zip"),
+        city: field("city"),
+        countryCode: field("countryCode").toUpperCase(),
+        phone: field("phone"),
+        email: field("email"),
+      },
+      pickupDate: /^\d{4}-\d{2}-\d{2}$/.test(pickupDate) ? pickupDate : undefined,
+      weightKg: weight > 0 && weight <= 30 ? weight : undefined,
+      service: BWS_SERVICES.some((s) => s.code === service) ? service : undefined,
+    });
+    return json(
+      result.ok
+        ? {
+            success: true,
+            notice: `${result.reference} booked${result.trackingNumbers.length ? ` · tracking ${result.trackingNumbers.join(", ")}` : ""}. Nobody was emailed.`,
+            errors: result.labelMissing
+              ? ["BWS booked it but the label was not saved. Get it from the BWS portal."]
+              : undefined,
+          }
+        : { errors: result.errors },
+    );
   }
 
   if (action === "set_size") {
@@ -595,7 +673,7 @@ interface ShippingAddress {
 }
 
 export default function OrderDetailPage() {
-  const { gangSheet, orderStatus, awaiting, orderedAt, hasLabel, shipping, jobs, combine } =
+  const { gangSheet, orderStatus, awaiting, orderedAt, hasLabel, shipping, extraShipments, jobs, combine } =
     useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const address = (gangSheet.shippingAddress as ShippingAddress | null) || null;
@@ -623,10 +701,10 @@ export default function OrderDetailPage() {
   const [note, setNote] = useState("");
   const revalidator = useRevalidator();
 
-  const download = (kind: "file" | "label", jobId?: string) => {
-    setDownloading(jobId ?? kind);
+  const download = (kind: "file" | "label" | "extra_label", id?: string) => {
+    setDownloading(id ?? kind);
     downloadFetcher.submit(
-      { action: "download", kind, ...(jobId ? { jobId } : {}) },
+      { action: "download", kind, ...(id ? (kind === "extra_label" ? { shipmentId: id } : { jobId: id }) : {}) },
       { method: "post" },
     );
   };
@@ -957,6 +1035,25 @@ export default function OrderDetailPage() {
                 hasLabel={hasLabel}
                 onDownloadLabel={() => download("label")}
                 downloadingLabel={downloading === "label"}
+              />
+            )}
+
+            {shipping && extraShipments && (
+              <ExtraShipmentCard
+                shipments={extraShipments}
+                address={gangSheet.shippingAddress as Record<string, string | null> | null}
+                customerName={gangSheet.customerName}
+                defaults={{
+                  pickupDate: shipping.summary.pickupDate,
+                  weightKg: shipping.summary.weightKg,
+                  service: gangSheet.shippingService || "EXP",
+                }}
+                services={shipping.services}
+                pickupFrom={shipping.pickupFrom}
+                isTest={shipping.isTest}
+                missingConfig={shipping.missingConfig}
+                onDownloadLabel={(id) => download("extra_label", id)}
+                downloading={downloading}
               />
             )}
 
