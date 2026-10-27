@@ -76,12 +76,15 @@ type ActionData = { success?: boolean; errors?: string[]; notice?: string };
 export function BwsShippingCard({
   sheet,
   shipping,
+  paidShipping,
   hasLabel,
   onDownloadLabel,
   downloadingLabel,
 }: {
   sheet: SheetShippingFields;
   shipping: BwsShippingData;
+  /** The delivery the customer chose at checkout, from Shopify. */
+  paidShipping: { title: string; price: string; service: string | null } | null;
   hasLabel: boolean;
   /** Saves the label in place; a new-tab link from the admin iframe opened blank. */
   onDownloadLabel: () => void;
@@ -93,8 +96,8 @@ export function BwsShippingCard({
 
   const [pickupDate, setPickupDate] = useState(shipping.summary.pickupDate);
   const [weightKg, setWeightKg] = useState(String(shipping.summary.weightKg));
-  // Blue Express is what most customers get; Economy when speed does not matter.
-  const [service, setService] = useState(sheet.shippingService || "EXP");
+  // What the customer paid for: Expressfrakt is Blue Express, Standardfrakt Blue Economy.
+  const [service, setService] = useState(sheet.shippingService || paidShipping?.service || "EXP");
   const [bookToo, setBookToo] = useState(!booked);
   const [to, setTo] = useState(sheet.sentToPrintShopTo || shipping.printShop.defaultTo);
   const [message, setMessage] = useState("");
@@ -190,6 +193,9 @@ export function BwsShippingCard({
               <Row label="Pickup" value={`${sheet.pickupDate}, ${shipping.pickupFrom}`} />
             )}
             <Row label="Service" value={serviceName} />
+            {paidShipping && (
+              <Row label="Customer paid" value={`${paidShipping.title}, ${paidShipping.price}`} />
+            )}
             {sheet.shippingPrice != null && (
               <Row
                 label="BWS charge"
@@ -230,6 +236,11 @@ export function BwsShippingCard({
               value={service}
               onChange={setService}
               options={shipping.services.map((s) => ({ label: s.label, value: s.code }))}
+              helpText={
+                paidShipping
+                  ? `Customer paid for ${paidShipping.title} (${paidShipping.price})`
+                  : "No delivery on the Shopify order"
+              }
             />
             <InlineStack gap="200" wrap={false}>
               <TextField

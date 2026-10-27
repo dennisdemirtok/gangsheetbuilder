@@ -33,7 +33,7 @@ import {
   printFileName,
   statusInfo,
 } from "../lib/order-status";
-import { syncOrderAddress, withOrderDetails } from "../lib/order-details.server";
+import { orderPayment, syncOrderAddress, withOrderDetails } from "../lib/order-details.server";
 import { jobSize, noteProperties, printLabel, type LineProperty } from "../lib/print-jobs";
 import { orderStatusOf } from "../lib/order-list.server";
 import { normalizePhone } from "../lib/phone";
@@ -103,7 +103,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
   const combinable = jobs.filter((j) => j.kind === "cut" && j.status !== "shipped" && j.status !== "draft");
 
-  const [[gangSheet], notes, previews, summary, extraShipments] = await Promise.all([
+  const [[gangSheet], notes, previews, summary, extraShipments, payment] = await Promise.all([
     withOrderDetails(admin, session.shop, [found]),
     prisma.gangSheetNote.findMany({
       where: { gangSheetId: { in: allJobs.map((j) => j.id) } },
@@ -112,7 +112,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     Promise.all(jobs.map((j) => (j.previewUrl ? getPresignedDownloadUrl(j.previewUrl) : null))),
     found.shopifyOrderId ? summarizeOrderShipment(session.shop, found.shopifyOrderId) : null,
     found.shopifyOrderId ? listExtraShipments(session.shop, found.shopifyOrderId) : [],
+    found.shopifyOrderId ? orderPayment(admin, found.shopifyOrderId) : null,
   ]);
+  const money = (amount: number, currency: string) =>
+    currency === "SEK"
+      ? `${Math.round(amount).toLocaleString("sv-SE")} kr`
+      : `${amount.toLocaleString("en-GB", { maximumFractionDigits: 2 })} ${currency}`;
 
   const orderStatus = orderStatusOf(jobs);
   const onHold = jobs.find((j) => j.awaitingCustomerSince);
@@ -148,6 +153,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     orderedAt: formatDateTime(gangSheet.createdAt),
     hasLabel: Boolean(gangSheet.shippingLabelKey),
     shipping,
+    // What the customer paid, to pick the service and the order of bookings.
+    paid: payment
+      ? {
+          total: money(payment.total, payment.currency),
+          shipping: payment.shipping
+            ? {
+                title: payment.shipping.title,
+                price: money(payment.shipping.price, payment.currency),
+                service: payment.shipping.service,
+              }
+            : null,
+        }
+      : null,
     // A second pickup is for an order whose first parcel has gone.
     extraShipments:
       shipping && (gangSheet.shippingStatus === "booked" || orderStatus === "shipped" || extraShipments.length > 0)
@@ -673,7 +691,7 @@ interface ShippingAddress {
 }
 
 export default function OrderDetailPage() {
-  const { gangSheet, orderStatus, awaiting, orderedAt, hasLabel, shipping, extraShipments, jobs, combine } =
+  const { gangSheet, orderStatus, awaiting, orderedAt, hasLabel, shipping, paid, extraShipments, jobs, combine } =
     useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const address = (gangSheet.shippingAddress as ShippingAddress | null) || null;
@@ -759,8 +777,20 @@ export default function OrderDetailPage() {
     <Page
       backAction={{ content: "Orders", url: "/app/orders" }}
       title={orderLabel(gangSheet)}
-      titleMetadata={<Badge tone={status.tone}>{status.label}</Badge>}
-      subtitle={[gangSheet.customerName, `Ordered ${orderedAt}`].filter(Boolean).join(" · ")}
+      titleMetadata={
+        <InlineStack gap="200">
+          <Badge tone={status.tone}>{status.label}</Badge>
+          {paid?.shipping?.service === "EXP" && <Badge tone="attention">Express</Badge>}
+        </InlineStack>
+      }
+      subtitle={[
+        gangSheet.customerName,
+        `Ordered ${orderedAt}`,
+        paid?.total,
+        paid?.shipping && `${paid.shipping.title} ${paid.shipping.price}`,
+      ]
+        .filter(Boolean)
+        .join(" · ")}
       secondaryActions={[
         ...(canHold
           ? [
@@ -1032,6 +1062,7 @@ export default function OrderDetailPage() {
               <BwsShippingCard
                 sheet={{ ...gangSheet, status: orderStatus }}
                 shipping={shipping}
+                paidShipping={paid?.shipping ?? null}
                 hasLabel={hasLabel}
                 onDownloadLabel={() => download("label")}
                 downloadingLabel={downloading === "label"}

@@ -220,3 +220,67 @@ export async function syncOrderAddress(
   }
   return changed;
 }
+
+export interface OrderPayment {
+  /** What the customer pays for the order now (after edits and refunds). */
+  total: number;
+  currency: string;
+  /** The delivery the customer chose at checkout, e.g. "Expressfrakt". */
+  shipping: {
+    title: string;
+    price: number;
+    /** The BWS service it calls for: Expressfrakt is Blue Express, the rest Blue Economy. */
+    service: "EXP" | "ECO" | null;
+  } | null;
+}
+
+/**
+ * Order total and the delivery the customer paid for, read from Shopify when
+ * the order page opens: the shop books Express for Expressfrakt and decides
+ * which orders go first by what they are worth. Not stored, so an edited
+ * order shows its new total. Null when Shopify cannot be reached.
+ */
+export async function orderPayment(
+  admin: AdminApiContext,
+  shopifyOrderId: string,
+): Promise<OrderPayment | null> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+      query OrderPayment($id: ID!) {
+        order(id: $id) {
+          id
+          currentTotalPriceSet { shopMoney { amount currencyCode } }
+          shippingLine {
+            title
+            code
+            discountedPriceSet { shopMoney { amount currencyCode } }
+          }
+        }
+      }`,
+      { variables: { id: `gid://shopify/Order/${shopifyOrderId}` } },
+    );
+    const order = (await response.json()).data?.order;
+    if (!order) return null;
+    const line = order.shippingLine as {
+      title: string | null;
+      code: string | null;
+      discountedPriceSet: { shopMoney: { amount: string } };
+    } | null;
+    const name = `${line?.title ?? ""} ${line?.code ?? ""}`;
+    return {
+      total: Number(order.currentTotalPriceSet.shopMoney.amount),
+      currency: order.currentTotalPriceSet.shopMoney.currencyCode,
+      shipping: line
+        ? {
+            title: line.title || line.code || "Shipping",
+            price: Number(line.discountedPriceSet.shopMoney.amount),
+            service: /express/i.test(name) ? "EXP" : /standard|ekonomi|economy/i.test(name) ? "ECO" : null,
+          }
+        : null,
+    };
+  } catch (err) {
+    console.error("[order-details] Could not read the order total:", err);
+    return null;
+  }
+}
