@@ -106,6 +106,11 @@ export interface BwsShipmentInput {
   pickup?: BwsAddress;
   /** Unset = the print shop's 60×5×5 cm tube. */
   packageCm?: { length: number; width: number; height: number };
+  /**
+   * A private customer (B2C, residential). Unset = no company name on the
+   * address; the shop can override it per booking.
+   */
+  residential?: boolean;
 }
 
 /**
@@ -273,6 +278,7 @@ export function buildShippingOrder(input: BwsShipmentInput) {
   const value = { Value: input.valueSEK, Currency: "Sek" };
   const pickupAddress = toBwsAddress(pickup);
   const recipient = toBwsAddress(input.recipient);
+  const residential = input.residential ?? !input.recipient.company;
 
   return {
     MessageIdentification: {
@@ -329,8 +335,16 @@ export function buildShippingOrder(input: BwsShipmentInput) {
         ],
         LinesAreTotals: true,
         AdditionalServices: {
-          BusinessToCustomer: !input.recipient.company,
+          BusinessToCustomer: residential,
         },
+        /*
+         * A private address. BWS then books FedEx with Delivery Manager
+         * International (FDMI): FedEx texts or emails the customer, who can
+         * have the parcel left at a PostNord or Instabox pickup point
+         * instead of at home. BusinessToCustomer alone does not do this —
+         * BWS's sales contact, 2026-10-27.
+         */
+        Residential: residential,
       },
     ],
   };

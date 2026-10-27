@@ -87,6 +87,8 @@ export async function bookOrderShipment(options: {
   weightKg?: number;
   /** ServiceType code the shop picked: EXP (Blue Express) or ECO (Blue Economy). */
   service?: string;
+  /** Private customer (FedEx offers them a pickup point). Unset = no company on the address. */
+  residential?: boolean;
 }): Promise<BookOrderResult> {
   const { shopDomain, shopifyOrderId } = options;
   const where = { shopDomain, shopifyOrderId };
@@ -160,6 +162,7 @@ export async function bookOrderShipment(options: {
       weightKg: options.weightKg || summary.weightKg,
       valueSEK: summary.valueSEK,
       service: options.service,
+      residential: options.residential,
     });
 
     if (!result.success) {

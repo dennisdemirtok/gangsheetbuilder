@@ -49,6 +49,7 @@ export async function bookExtraShipment(options: {
   pickupDate?: string;
   weightKg?: number;
   service?: string;
+  residential?: boolean;
 }): Promise<ExtraBookResult> {
   const { shopDomain, shopifyOrderId, recipient } = options;
 
@@ -130,6 +131,7 @@ export async function bookExtraShipment(options: {
       weightKg,
       valueSEK: summary.valueSEK,
       service: options.service,
+      residential: options.residential,
     });
   } catch (error) {
     return fail([`Booking aborted: ${(error as Error).message}`]);

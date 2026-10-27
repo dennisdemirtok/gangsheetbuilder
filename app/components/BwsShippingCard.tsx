@@ -77,6 +77,7 @@ export function BwsShippingCard({
   sheet,
   shipping,
   paidShipping,
+  company,
   hasLabel,
   onDownloadLabel,
   downloadingLabel,
@@ -85,6 +86,8 @@ export function BwsShippingCard({
   shipping: BwsShippingData;
   /** The delivery the customer chose at checkout, from Shopify. */
   paidShipping: { title: string; price: string; service: string | null } | null;
+  /** The shipping address has a company name: booked as a business delivery by default. */
+  company: boolean;
   hasLabel: boolean;
   /** Saves the label in place; a new-tab link from the admin iframe opened blank. */
   onDownloadLabel: () => void;
@@ -98,6 +101,7 @@ export function BwsShippingCard({
   const [weightKg, setWeightKg] = useState(String(shipping.summary.weightKg));
   // What the customer paid for: Expressfrakt is Blue Express, Standardfrakt Blue Economy.
   const [service, setService] = useState(sheet.shippingService || paidShipping?.service || "EXP");
+  const [residential, setResidential] = useState(!company);
   const [bookToo, setBookToo] = useState(!booked);
   const [to, setTo] = useState(sheet.sentToPrintShopTo || shipping.printShop.defaultTo);
   const [message, setMessage] = useState("");
@@ -143,6 +147,7 @@ export function BwsShippingCard({
         action,
         book: willBook ? "1" : "0",
         service,
+        residential: residential ? "1" : "0",
         pickupDate,
         weightKg,
         to,
@@ -263,6 +268,12 @@ export function BwsShippingCard({
                 autoComplete="off"
               />
             </InlineStack>
+            <Checkbox
+              label="Private customer"
+              helpText="FedEx texts or emails them and they can pick a PostNord or Instabox pickup point instead of home delivery. Untick for a company address."
+              checked={residential}
+              onChange={setResidential}
+            />
             {bwsMissing.length > 0 && (
               <Banner tone="warning">Missing server settings: {bwsMissing.join(", ")}</Banner>
             )}

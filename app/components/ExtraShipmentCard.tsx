@@ -6,6 +6,7 @@ import {
   BlockStack,
   Button,
   Card,
+  Checkbox,
   Divider,
   FormLayout,
   InlineStack,
@@ -81,6 +82,7 @@ export function ExtraShipmentCard({
   const [pickupDate, setPickupDate] = useState(defaults.pickupDate);
   const [weightKg, setWeightKg] = useState(String(defaults.weightKg));
   const [service, setService] = useState(defaults.service);
+  const [residential, setResidential] = useState(!address?.company);
   const initialAddress = (): Record<AddressKey, string> => ({
     name: address?.name || customerName || "",
     company: address?.company || "",
@@ -104,7 +106,7 @@ export function ExtraShipmentCard({
 
   const book = () =>
     fetcher.submit(
-      { action: "book_extra", reason, pickupDate, weightKg, service, ...to },
+      { action: "book_extra", reason, pickupDate, weightKg, service, residential: residential ? "1" : "0", ...to },
       { method: "post" },
     );
 
@@ -279,6 +281,12 @@ export function ExtraShipmentCard({
                 autoComplete="off"
               />
             </InlineStack>
+            <Checkbox
+              label="Private customer"
+              helpText="FedEx texts or emails them and they can pick a PostNord or Instabox pickup point instead of home delivery. Untick for a company address."
+              checked={residential}
+              onChange={setResidential}
+            />
             {missingConfig.length > 0 && (
               <Banner tone="warning">Missing server settings: {missingConfig.join(", ")}</Banner>
             )}

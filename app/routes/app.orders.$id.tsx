@@ -239,6 +239,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const action = formData.get("action") as string;
+  // Private or company delivery as ticked on the card; unset = by the address.
+  const residential =
+    formData.get("residential") === "1" ? true : formData.get("residential") === "0" ? false : undefined;
 
   const gangSheet = await prisma.gangSheet.findUnique({
     where: { id: params.id },
@@ -388,6 +391,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       pickupDate: /^\d{4}-\d{2}-\d{2}$/.test(pickupDate) ? pickupDate : undefined,
       weightKg: weight > 0 && weight <= 30 ? weight : undefined,
       service: BWS_SERVICES.some((s) => s.code === service) ? service : undefined,
+      residential,
     });
     return json(
       result.ok
@@ -602,6 +606,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       pickupDate: /^\d{4}-\d{2}-\d{2}$/.test(pickupDate) ? pickupDate : undefined,
       weightKg: weight > 0 && weight <= 30 ? weight : undefined,
       service: BWS_SERVICES.some((s) => s.code === service) ? service : undefined,
+      residential,
     });
     return json(result.ok ? { success: true } : { errors: result.errors });
   } else if (action === "send_print_shop") {
@@ -637,6 +642,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         pickupDate: /^\d{4}-\d{2}-\d{2}$/.test(pickupDate) ? pickupDate : undefined,
         weightKg: weight > 0 && weight <= 30 ? weight : undefined,
         service: BWS_SERVICES.some((s) => s.code === service) ? service : undefined,
+        residential,
       });
       if (!booking.ok) {
         return json({ errors: ["BWS booking failed, nothing was sent.", ...booking.errors] });
@@ -1063,6 +1069,7 @@ export default function OrderDetailPage() {
                 sheet={{ ...gangSheet, status: orderStatus }}
                 shipping={shipping}
                 paidShipping={paid?.shipping ?? null}
+                company={Boolean(address?.company)}
                 hasLabel={hasLabel}
                 onDownloadLabel={() => download("label")}
                 downloadingLabel={downloading === "label"}
