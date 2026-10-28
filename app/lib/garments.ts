@@ -35,9 +35,16 @@ export const GARMENT_PACKAGE_CM = { length: 40, width: 30, height: 15 };
 
 const GARMENT_VENDOR = /stanley|b\s*&\s*c/i;
 const GARMENT_TYPE = /t-?shirt|hoodie|sweatshirt|pik[eé]|polo|tröja|crew\s*neck/i;
+/**
+ * Team wear bought from New Wave in Dingle (Clique, later Craft), not from
+ * Printgood: Feelgood has none of it, so it stays out of their email and is
+ * ordered on newwave.se.
+ */
+const NEW_WAVE_VENDOR = /clique|new\s*wave|\bcraft\b/i;
 
-/** A blank garment: by brand, or by product type for a brand added later. */
+/** A blank garment Printgood ships: by brand, or by product type for a brand added later. */
 export function isGarment(line: { vendor?: string | null }, productType?: string | null): boolean {
+  if (NEW_WAVE_VENDOR.test(line.vendor || "")) return false;
   return GARMENT_VENDOR.test(line.vendor || "") || GARMENT_TYPE.test(productType || "");
 }
 
