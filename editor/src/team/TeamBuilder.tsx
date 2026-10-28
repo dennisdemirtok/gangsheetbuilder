@@ -543,7 +543,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                 <div style={S.partner}>
                   <strong style={{ fontSize: 13.5 }}>Är ni en förening?</strong>{" "}
                   <span style={S.small}>
-                    Bli partnerförening: vi sparar klubbmärket, ni får en egen länk att dela med lagen, och en del av varje beställning går till lagkassan.
+                    Bli partnerförening: vi sparar klubbmärket, ni får en egen länk att dela med lagen, och 10 % av varje beställning går till lagkassan.
                   </span>{" "}
                   <a href={data.partnerUrl} style={{ ...S.link, fontSize: 13 }}>
                     Läs mer
