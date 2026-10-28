@@ -5,7 +5,7 @@ import { cleanInitials, initialsOf, newRow, parseRoster, readCsvFile, rowInitial
 import { readXlsxFile } from "./xlsx";
 import { TIERS, kr, nextTier, priceKey, tierFor, type PieceKind, type PriceList } from "./pricing";
 import { orderGraphics, planGraphics, totalsOf, type CartLine, type Graphic, type LogoPiece, type OrderProgress } from "./order";
-import { PackshotPreview, textWidthCm, type PreviewLogo } from "./ShirtPreview";
+import { PackshotPreview, backRoomCm, textWidthCm, type PreviewLogo } from "./ShirtPreview";
 import { StylePicker } from "./NamesNumbers";
 import { DIGIT_HEIGHTS_CM, DIGIT_INKS, LOGO_WIDTHS_CM, SIZE_CHART, countDigits, digitStockKey, logoKey, parseNumbers, type TeamData } from "../team/data";
 
@@ -246,16 +246,32 @@ export function NamesPage({ data }: { data: NamesPageData }) {
   const packshot = variantFor(shownSize) ?? shirt?.variants.find((v) => v.color === shirtColor) ?? null;
   const twoWide = showNumbers && numberCm >= 20 ? textWidthCm(numberFamily, "88", numberCm) : 0;
   const tooWide = twoWide > chart.chest * 0.75;
-  // The widest name against the back of the size shown, margins left.
-  const widestName = showNames
-    ? filled.reduce<{ text: string; cm: number } | null>((w, r) => {
-        const text = upper(r.name.trim());
-        if (!text) return w;
-        const cm = textWidthCm(nameFamily, text, nameCm, "HANDE");
-        return !w || cm > w.cm ? { text, cm } : w;
-      }, null)
+  // Names wider than the back of the size shown (the preview says so on the
+  // shirt instead of wrapping them round the sides), widest first.
+  const room = backRoomCm(chart);
+  const tooWideNames = showNames
+    ? filled
+        .map((r) => upper(r.name.trim()))
+        .filter(Boolean)
+        .map((text) => ({ text, cm: textWidthCm(nameFamily, text, nameCm, "HANDE") }))
+        .filter((w) => w.cm > room)
+        .sort((a, b) => b.cm - a.cm)
+    : [];
+  // The nearest change that makes the widest name fit this size: a lower
+  // height, a narrower style, or both.
+  const smallerName = NAME_SIZES_CM.filter((h) => h < nameCm).reverse();
+  const otherStyles = NAME_STYLES.filter((st) => st.id !== nameStyle);
+  const nameFix = tooWideNames.length
+    ? ([
+        ...smallerName.map((h) => ({ style: nameStyle, h })),
+        ...otherStyles.map((st) => ({ style: st.id, h: nameCm })),
+        ...otherStyles.flatMap((st) => smallerName.map((h) => ({ style: st.id, h }))),
+      ].find((c) => textWidthCm(fontFamily(fontById(styleById(c.style).fontId)), tooWideNames[0]!.text, c.h, "HANDE") <= room) ?? null)
     : null;
-  const nameTooWide = widestName && widestName.cm > chart.chest * 0.9 ? widestName : null;
+  /** A larger shirt the widest name fits on at this height. */
+  const roomierSize = tooWideNames.length ? (sizes.find((s) => SIZE_CHART[s] && backRoomCm(SIZE_CHART[s]!) >= tooWideNames[0]!.cm) ?? null) : null;
+  const shownNameWidth = shownName ? textWidthCm(nameFamily, shownName, nameCm, "HANDE") : 0;
+  const shownNumberWidth = shownNumber ? textWidthCm(numberFamily, shownNumber, numberCm) : 0;
   const previewSponsors: PreviewLogo[] = sponsors.filter((s) => s.qty > 0).map((s) => ({ src: s.upload?.url ?? null, widthCm: s.widthCm, place: s.place }));
 
   // White shirts get black prints; picking a dark shirt again brings white back.
@@ -388,6 +404,29 @@ export function NamesPage({ data }: { data: NamesPageData }) {
   let stepNo = 0;
   const n = () => ++stepNo;
 
+  /** What does not fit and what to change, for the names step and under the shirt. */
+  const nameFit = (what: string) => (
+    <>
+      {what} i {nameCm} cm, men ryggen på {shownSize} rymmer ca {Math.round(room)} cm.{" "}
+      {nameFix ? (
+        <button
+          type="button"
+          onClick={() => {
+            setNameStyle(nameFix.style);
+            setNameCm(nameFix.h);
+          }}
+          style={{ ...S.link, fontSize: "inherit", textDecoration: "underline" }}
+        >
+          Byt till {[nameFix.style !== nameStyle ? styleById(nameFix.style).label : "", `${nameFix.h} cm`].filter(Boolean).join(" ")}
+        </button>
+      ) : roomierSize ? (
+        `Det får plats på ${roomierSize}.`
+      ) : (
+        "Skriv ett kortare namn, till exempel förnamnet eller ett smeknamn."
+      )}
+    </>
+  );
+
   const preview = (
     <div style={S.previewCard}>
       <PackshotPreview
@@ -407,6 +446,14 @@ export function NamesPage({ data }: { data: NamesPageData }) {
         sponsors={previewSponsors}
         size={shownSize}
       />
+      {shownName && shownNameWidth > room && (
+        <div style={{ ...S.error, marginTop: 8, fontSize: 13 }}>{nameFit(`${shownName} blir ca ${Math.round(shownNameWidth)} cm brett`)}</div>
+      )}
+      {shownNumber && shownNumberWidth > room && (
+        <div style={{ ...S.error, marginTop: 8, fontSize: 13 }}>
+          Numret {shownNumber} blir ca {Math.round(shownNumberWidth)} cm brett i {numberCm} cm, men ryggen på {shownSize} rymmer ca {Math.round(room)} cm. Välj en lägre höjd.
+        </div>
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
         {showTable && filled.length > 0 ? (
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
@@ -692,10 +739,13 @@ export function NamesPage({ data }: { data: NamesPageData }) {
                 <input type="checkbox" checked={uppercase} onChange={(e) => setUppercase(e.target.checked)} style={{ accentColor: ACCENT, width: 16, height: 16 }} />
                 <span style={{ fontSize: 14 }}>Namn i versaler</span>
               </label>
-              {nameTooWide && (
-                <div style={{ ...S.note, marginTop: 12 }}>
-                  {nameTooWide.text} blir ca {Math.round(nameTooWide.cm)} cm brett i {nameCm} cm, bredare än ryggen på {shownSize}.{" "}
-                  {nameCm > NAME_SIZES_CM[0]! ? `Välj ${NAME_SIZES_CM[0]} cm eller ett kortare namn.` : "Korta namnet, eller visa en större storlek."}
+              {tooWideNames.length > 0 && (
+                <div style={{ ...S.error, marginTop: 12 }}>
+                  {nameFit(
+                    tooWideNames.length > 1
+                      ? `${tooWideNames.length} namn får inte plats, längst ${tooWideNames[0]!.text} med ca ${Math.round(tooWideNames[0]!.cm)} cm`
+                      : `${tooWideNames[0]!.text} blir ca ${Math.round(tooWideNames[0]!.cm)} cm brett`,
+                  )}
                 </div>
               )}
             </Step>

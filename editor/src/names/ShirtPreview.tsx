@@ -225,6 +225,14 @@ const PACK = {
   chestSide: 0.2,
 };
 
+/**
+ * How wide a print on the back may be: the back panel at the shoulder
+ * blades, inside the sleeve seams and a margin, as a share of the flat
+ * chest width. 33 cm on 130/140.
+ */
+export const BACK_PRINT_SHARE = 0.85;
+export const backRoomCm = (chart: { chest: number }) => chart.chest * BACK_PRINT_SHARE;
+
 /** Each character's advance in cm at a cap height, as the print sets them (no extra spacing). */
 function advancesCm(family: string, text: string, heightCm: number, sample: string) {
   const fontCm = heightCm / capRatio(family, sample);
@@ -322,6 +330,25 @@ export function PackshotPreview({
     });
   };
 
+  // A name or number wider than the back is not drawn round the sides:
+  // the shirt says it does not fit, and the page says what to change.
+  const nameWidth = name ? textWidthCm(nameFamily, name, nameCm, "HANDE") : 0;
+  const numberWidth = number ? textWidthCm(numberFamily, number, numberCm) : 0;
+  const room = backRoomCm(chart);
+  const doesNotFit = (label: string, hCm: number, baseY: number) => {
+    const w = shownWidth(room, 0);
+    const h = Math.max(hCm, 4) * u;
+    const y0 = baseY - hCm * u - (h - hCm * u) / 2;
+    return (
+      <g>
+        <rect x={cx - w / 2} y={y0} width={w} height={h} rx={h * 0.18} fill="#dc2f3c" opacity={0.92} />
+        <text x={cx} y={y0 + h / 2} dominantBaseline="central" textAnchor="middle" fill="#fff" fontWeight={700} fontSize={Math.min(h * 0.36, (w * 0.9) / (label.length * 0.56))} style={{ fontFamily: "inherit" }}>
+          {label}
+        </text>
+      </g>
+    );
+  };
+
   const stroke = shade(shirtColor, -0.14);
   const body = `M152,${top} C170,${top + 14} 230,${top + 14} 248,${top} L330,${top + 26} L384,${top + 98} L336,${top + 126} L310,${top + 102} L310,${hem} L90,${hem} L90,${top + 102} L64,${top + 126} L16,${top + 98} L70,${top + 26} Z`;
   const drawn = (side: "back" | "front") => (
@@ -369,9 +396,9 @@ export function PackshotPreview({
   // The printed sizes, flat, for the caption.
   const cm = (n: number) => `${Math.round(n)}`;
   const caption = [
-    name ? `Namn ${cm(nameCm)} × ${cm(textWidthCm(nameFamily, name, nameCm, "HANDE"))} cm` : "",
-    number ? `nummer ${cm(numberCm)} × ${cm(textWidthCm(numberFamily, number, numberCm))} cm` : "",
-    `tröja ${size}: ${chart.chest} cm bred, ${chart.length} cm lång (platt)`,
+    name ? `Namn ${cm(nameCm)} × ${cm(nameWidth)} cm` : "",
+    number ? `nummer ${cm(numberCm)} × ${cm(numberWidth)} cm` : "",
+    `tröja ${size}: ${chart.chest} cm bred, ${chart.length} cm lång (platt), ryggen rymmer ca ${cm(room)} cm`,
   ].filter(Boolean);
 
   return (
@@ -381,8 +408,8 @@ export function PackshotPreview({
           <svg viewBox={`0 0 ${W} ${viewH}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Tröjans baksida">
             {photos ? <image href={back!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("back")}
             {backSponsor && box(backSponsor, 0, sponsorTop)}
-            {name && wrapped(name, nameFamily, nameCm, "HANDE", 0, nameBase)}
-            {number && wrapped(number, numberFamily, numberCm, "0123456789", 0, numberBase)}
+            {name && (nameWidth > room ? doesNotFit("Namnet får inte plats", nameCm, nameBase) : wrapped(name, nameFamily, nameCm, "HANDE", 0, nameBase))}
+            {number && (numberWidth > room ? doesNotFit("Numret får inte plats", numberCm, numberBase) : wrapped(number, numberFamily, numberCm, "0123456789", 0, numberBase))}
           </svg>
           <figcaption style={{ fontSize: 12.5, color: "#6b6b70" }}>Bak</figcaption>
         </figure>
