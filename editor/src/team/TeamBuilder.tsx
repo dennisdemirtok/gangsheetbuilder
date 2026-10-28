@@ -672,7 +672,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                     Då rekommenderar vi {data.press.vendor} {data.press.title}. Den sänker och lyfter plattan själv, så varje tröja får samma tryck och tid. Plattan på 38 × 38 cm rymmer en 25 cm-siffra, och teflonduk ingår.
                   </div>
                   {data.press.url && (
-                    <a href={data.press.url} target="_blank" rel="noopener" style={{ ...S.link, fontSize: 12.5 }}>
+                    <a href={data.press.url} target="_blank" rel="noreferrer" style={{ ...S.link, fontSize: 12.5 }}>
                       Läs mer om pressen
                     </a>
                   )}
