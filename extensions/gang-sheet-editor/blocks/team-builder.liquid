@@ -5,9 +5,17 @@
   recommended press are given by handle, since an app block may have only
   one product setting. All are rendered
   here so Shopify prices them for whoever is looking.
-  Partner clubs are
-  metaobjects of type "forening" (namn, ort, idrott, logga, logga_bredd_cm).
+  Clubs are metaobjects of type "forening" (namn, ort, idrott, logga,
+  logga_bredd_cm, visa_i_listan). Only partner clubs, marked visa_i_listan
+  after a signed agreement, are listed. Any other club is reached through
+  a page of its own whose metafield custom.forening points at it
+  (/pages/lag-<club>, template "lag"): that page offers its club and no
+  list. A club's logo is never shown to everyone without its OK.
 {%- endcomment -%}
+{%- assign team_linked = nil -%}
+{%- if page and page.metafields.custom.forening.value -%}
+  {%- assign team_linked = page.metafields.custom.forening.value -%}
+{%- endif -%}
 {%- assign team_shirt = block.settings.shirt_product -%}
 {%- assign team_prices = nil -%}
 {%- if block.settings.price_handle != blank -%}
@@ -74,9 +82,18 @@
         "image": {% if team_press.featured_image %}{{ team_press.featured_image | image_url: width: 300 | json }}{% else %}null{% endif %},
         "url": {{ team_press.url | json }}
       }{%- else -%}null{%- endif -%},
+      "linkedClub": {% if team_linked %}{{ team_linked.system.handle | json }}{% else %}null{% endif %},
+      "partnerUrl": {{ block.settings.partner_url | default: '/pages/partnerforening' | json }},
       "clubs": [
+        {%- assign team_sep = '' -%}
         {%- for club in shop.metaobjects.forening.values -%}
-          {"id": {{ club.system.handle | json }}, "name": {{ club.namn.value | json }}, "city": {{ club.ort.value | json }}, "sport": {{ club.idrott.value | json }}, "logo": {% if club.logga.value %}{{ club.logga.value | image_url: width: 2400 | json }}{% else %}null{% endif %}, "widthCm": {{ club.logga_bredd_cm.value | default: 6 | json }}}{% unless forloop.last %},{% endunless %}
+          {%- if team_linked -%}
+            {%- unless club.system.handle == team_linked.system.handle -%}{%- continue -%}{%- endunless -%}
+          {%- else -%}
+            {%- unless club.visa_i_listan.value == true -%}{%- continue -%}{%- endunless -%}
+          {%- endif -%}
+          {{ team_sep }}{"id": {{ club.system.handle | json }}, "name": {{ club.namn.value | json }}, "city": {{ club.ort.value | json }}, "sport": {{ club.idrott.value | json }}, "logo": {% if club.logga.value %}{{ club.logga.value | image_url: width: 2400 | json }}{% else %}null{% endif %}, "widthCm": {{ club.logga_bredd_cm.value | default: 6 | json }}}
+          {%- assign team_sep = ',' -%}
         {%- endfor -%}
       ]
     }
@@ -138,6 +155,12 @@
       "label": "Priser för loggor (handtag)",
       "default": "lagpaket-tryck",
       "info": "Varianterna ska heta \"Logga 8 cm\", \"Logga 15 cm\" och \"Logga 25 cm\"."
+    },
+    {
+      "type": "url",
+      "id": "partner_url",
+      "label": "Sida om partnerföreningar",
+      "info": "Länkas från föreningssteget. Lämna tomt för /pages/partnerforening."
     },
     {
       "type": "text",

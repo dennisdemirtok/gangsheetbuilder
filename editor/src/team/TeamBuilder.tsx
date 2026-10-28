@@ -22,8 +22,9 @@ import { fileFromUrl, orderTeam, type CartLine, type OrderProgress, type Piece }
  * The team page: shirts, a club, digits and sponsors in one order.
  *
  * 1. The shirt: one colour, a quantity per size.
- * 2. The club, if any: partner clubs have their logo saved; any other club
- *    uploads its own.
+ * 2. The club, if any: partner clubs (listed only with their written OK)
+ *    have their logo saved, a club's own page preselects it, and any other
+ *    club uploads its logo and confirms it may be printed.
  * 3. The digits 0-9, white or black from the shop's own stock: filled in
  *    from the number of players (1-15 needs eight ones) or the team's own
  *    numbers, then adjustable one by one.
@@ -125,7 +126,10 @@ export function TeamBuilder({ data }: { data: TeamData }) {
   const [color, setColor] = useState(colors[0] ?? "");
   const [qty, setQty] = useState<Record<string, number>>({});
 
-  const [clubId, setClubId] = useState<string | null>(null);
+  const [clubId, setClubId] = useState<string | null>(() => (data.linkedClub && data.clubs.some((c) => c.id === data.linkedClub) ? data.linkedClub : null));
+  // Logos the customer uploads (the club's own, sponsors) are only printed
+  // with their word that they may be.
+  const [rightsOk, setRightsOk] = useState(false);
   const [ownLogo, setOwnLogo] = useState<Upload | null>(null);
   const [ownName, setOwnName] = useState("");
   const [query, setQuery] = useState("");
@@ -247,7 +251,9 @@ export function TeamBuilder({ data }: { data: TeamData }) {
   const missingPrices =
     orderDigits.some((n, d) => n > 0 && !stockDigit(d)) || (hasLogo && logoQty > 0 && !logoPrice(logoWidthCm)) || (frontCount > 0 && !frontPrice);
   const sponsorsWithoutFile = sponsors.some((s) => s.qty > 0 && !s.upload);
-  const canOrder = subtotal > 0 && !missingPrices && !sponsorsWithoutFile && !progress;
+  const uploadsLogos = Boolean(ownLogo) || sponsors.some((s) => s.qty > 0 && s.upload);
+  const needsRights = uploadsLogos && !rightsOk;
+  const canOrder = subtotal > 0 && !missingPrices && !sponsorsWithoutFile && !needsRights && !progress;
 
   const smallest = sizes.find((s) => qty[s]) ?? sizes[0] ?? "130/140";
   // The preview follows the smallest size ordered until a size is picked under it.
@@ -282,7 +288,13 @@ export function TeamBuilder({ data }: { data: TeamData }) {
           price: p,
           widthCm: logoWidthCm,
           file: src ? () => fileFromUrl(src, logoName) : async () => ownLogo!.file,
-          properties: { ...team, Logga: `Klubbmärke ${logoName}`, Bredd: `${String(logoWidthCm).replace(".", ",")} cm`, Placering: "Bröst" },
+          properties: {
+            ...team,
+            Logga: `Klubbmärke ${logoName}`,
+            Bredd: `${String(logoWidthCm).replace(".", ",")} cm`,
+            Placering: "Bröst",
+            ...(club ? {} : { Loggrätt: "Intygad av kunden" }),
+          },
         });
       }
       if (frontCount && frontPrice) {
@@ -312,6 +324,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
           properties: {
             ...team,
             Logga: `Sponsor ${i + 1} (${file.name})`,
+            Loggrätt: "Intygad av kunden",
             Bredd: `${sp.widthCm} cm`,
             Placering: PLACES.find((x) => x.id === sp.place)!.label,
           },
@@ -368,6 +381,14 @@ export function TeamBuilder({ data }: { data: TeamData }) {
       </div>
       {missingPrices && <div style={S.error}>Den här storleken saknar pris. Välj en annan.</div>}
       {sponsorsWithoutFile && <div style={S.error}>Ladda upp sponsorloggan, eller ta bort raden.</div>}
+      {uploadsLogos && (
+        <label style={{ ...S.option, marginTop: 12 }}>
+          <input type="checkbox" checked={rightsOk} onChange={(e) => setRightsOk(e.target.checked)} style={{ accentColor: ACCENT, width: 18, height: 18, flexShrink: 0 }} />
+          <span style={{ fontSize: 13 }}>
+            Vi har rätt att trycka loggorna vi laddat upp. Föreningen och sponsorerna har godkänt det.
+          </span>
+        </label>
+      )}
       <button type="button" onClick={() => void order()} disabled={!canOrder} style={{ ...S.primary, marginTop: 14, ...(canOrder ? null : S.primaryOff) }}>
         {progress ? "Förbereder…" : "Lägg i varukorgen"}
       </button>
@@ -447,67 +468,89 @@ export function TeamBuilder({ data }: { data: TeamData }) {
           </Step>
 
           <Step n={2} title="Förening" aside="Valfritt">
-            <div style={S.row}>
-              <button
-                type="button"
-                aria-pressed={!clubId && !ownLogo}
-                onClick={() => {
-                  setClubId(null);
-                  setOwnLogo(null);
-                }}
-                style={{ ...S.chip, ...(!clubId && !ownLogo ? S.chipOn : null) }}
-              >
-                Ingen förening
-              </button>
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Sök förening, ort eller idrott"
-                aria-label="Sök förening"
-                style={{ ...S.input, flex: "1 1 200px" }}
-              />
-            </div>
-            <div style={S.clubList} role="listbox" aria-label="Föreningar">
-              {filteredClubs.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  role="option"
-                  aria-selected={c.id === clubId}
-                  onClick={() => {
-                    setClubId(c.id);
-                    setOwnLogo(null);
-                  }}
-                  style={{ ...S.clubRow, ...(c.id === clubId ? S.cardOn : null) }}
-                >
-                  {c.logo ? <img src={c.logo} alt="" style={{ width: 36, height: 40, objectFit: "contain", flexShrink: 0 }} /> : <span style={S.noLogo}>{c.name[0]}</span>}
-                  <span style={{ minWidth: 0, textAlign: "left" }}>
-                    <span style={{ display: "block", fontWeight: 600, fontSize: 14 }}>{c.name}</span>
-                    <span style={S.small}>{[c.sport, c.city].filter(Boolean).join(" · ")}</span>
-                  </span>
-                </button>
-              ))}
-              {filteredClubs.length === 0 && <div style={{ ...S.small, padding: 8 }}>Ingen förening matchar "{query}".</div>}
-            </div>
-            <div style={{ ...S.small, marginTop: 10 }}>
-              Hittar ni inte er förening?{" "}
-              <label style={{ ...S.link, cursor: "pointer" }}>
-                Ladda upp er logga
-                <input
-                  type="file"
-                  accept={ACCEPT}
-                  hidden
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (!f) return;
-                    setOwnLogo(toUpload(f));
-                    setClubId(null);
-                    e.target.value = "";
-                  }}
-                />
-              </label>
-            </div>
+            {data.linkedClub && club ? (
+              <div style={{ ...S.clubRow, ...S.cardOn, cursor: "default" }}>
+                {club.logo ? <img src={club.logo} alt="" style={{ width: 36, height: 40, objectFit: "contain", flexShrink: 0 }} /> : <span style={S.noLogo}>{club.name[0]}</span>}
+                <span style={{ minWidth: 0, textAlign: "left" }}>
+                  <span style={{ display: "block", fontWeight: 600, fontSize: 14 }}>{club.name}</span>
+                  <span style={S.small}>Er förenings sida · klubbmärket är sparat</span>
+                </span>
+              </div>
+            ) : (
+              <>
+                <div style={S.row}>
+                  <button
+                    type="button"
+                    aria-pressed={!clubId && !ownLogo}
+                    onClick={() => {
+                      setClubId(null);
+                      setOwnLogo(null);
+                    }}
+                    style={{ ...S.chip, ...(!clubId && !ownLogo ? S.chipOn : null) }}
+                  >
+                    Ingen förening
+                  </button>
+                  {data.clubs.length > 0 && (
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="Sök partnerförening"
+                      aria-label="Sök partnerförening"
+                      style={{ ...S.input, flex: "1 1 200px" }}
+                    />
+                  )}
+                  <label style={{ ...S.secondaryBtn, display: "inline-flex", alignItems: "center", cursor: "pointer" }}>
+                    Ladda upp er logga
+                    <input
+                      type="file"
+                      accept={ACCEPT}
+                      hidden
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        setOwnLogo(toUpload(f));
+                        setClubId(null);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+                {data.clubs.length > 0 && (
+                  <div style={S.clubList} role="listbox" aria-label="Partnerföreningar">
+                    {filteredClubs.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        role="option"
+                        aria-selected={c.id === clubId}
+                        onClick={() => {
+                          setClubId(c.id);
+                          setOwnLogo(null);
+                        }}
+                        style={{ ...S.clubRow, ...(c.id === clubId ? S.cardOn : null) }}
+                      >
+                        {c.logo ? <img src={c.logo} alt="" style={{ width: 36, height: 40, objectFit: "contain", flexShrink: 0 }} /> : <span style={S.noLogo}>{c.name[0]}</span>}
+                        <span style={{ minWidth: 0, textAlign: "left" }}>
+                          <span style={{ display: "block", fontWeight: 600, fontSize: 14 }}>{c.name}</span>
+                          <span style={S.small}>{[c.sport, c.city].filter(Boolean).join(" · ")}</span>
+                        </span>
+                      </button>
+                    ))}
+                    {filteredClubs.length === 0 && <div style={{ ...S.small, padding: 8 }}>Ingen partnerförening matchar "{query}". Ladda upp er logga i stället.</div>}
+                  </div>
+                )}
+                <div style={S.partner}>
+                  <strong style={{ fontSize: 13.5 }}>Är ni en förening?</strong>{" "}
+                  <span style={S.small}>
+                    Bli partnerförening: vi sparar klubbmärket, ni får en egen länk att dela med lagen, och en del av varje beställning går till lagkassan.
+                  </span>{" "}
+                  <a href={data.partnerUrl} style={{ ...S.link, fontSize: 13 }}>
+                    Läs mer
+                  </a>
+                </div>
+              </>
+            )}
             {ownLogo && (
               <div style={{ ...S.row, marginTop: 10 }}>
                 <span style={S.thumb}>{ownLogo.url ? <img src={ownLogo.url} alt="" style={{ maxWidth: "100%", maxHeight: "100%" }} /> : "Fil"}</span>
@@ -1217,6 +1260,7 @@ const S: Record<string, React.CSSProperties> = {
   },
   // Longhands: sizeChipOn changes only the colour.
   option: { display: "flex", alignItems: "flex-start", gap: 10, marginTop: 12, padding: "10px 12px", border: `1px solid ${LINE}`, borderRadius: 12, cursor: "pointer", fontSize: 14 },
+  partner: { marginTop: 12, padding: "10px 12px", borderRadius: 12, background: SOFT, lineHeight: 1.45 },
   sizeChip: { borderWidth: 1, borderStyle: "solid", borderColor: LINE, background: "#fff", color: INK, borderRadius: 999, padding: "4px 9px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
   sizeChipOn: { background: INK, borderColor: INK, color: "#fff", fontWeight: 600 },
   qtyBox: { display: "flex", flexDirection: "column", gap: 6, border: `1px solid ${LINE}`, borderRadius: 12, padding: 10 },

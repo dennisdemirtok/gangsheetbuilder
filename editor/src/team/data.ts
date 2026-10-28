@@ -8,7 +8,9 @@
  *   per figure; they ship from the shop's own stock, not the print shop,
  * - the price product's variants for logos, "Logga 8 cm" …, one price per
  *   piece,
- * - the partner clubs, metaobjects of type "forening" with a saved logo,
+ * - the clubs, metaobjects of type "forening" with a saved logo: the
+ *   partner clubs that agreed to be listed, or the one club whose own page
+ *   this is,
  * - the heat press recommended alongside, if one is chosen.
  */
 
@@ -77,6 +79,10 @@ export interface TeamData {
   prices: PriceList;
   digits: DigitStock;
   clubs: Club[];
+  /** Set on a club's own page (/pages/lag-<club>): that club, preselected, and no list. */
+  linkedClub: string | null;
+  /** Where "Bli partnerförening" leads. */
+  partnerUrl: string;
   press: Press | null;
 }
 
@@ -166,7 +172,10 @@ export function readTeamData(json: unknown): TeamData {
         }
       : null;
 
-  return { shirt, prices, digits, clubs, press };
+  const linkedClub = raw.linkedClub ? String(raw.linkedClub) : null;
+  const partnerUrl = raw.partnerUrl ? String(raw.partnerUrl) : "/pages/partnerforening";
+
+  return { shirt, prices, digits, clubs, linkedClub, partnerUrl, press };
 }
 
 /** Garment measurements (cm) for the preview: half chest and body length. */
