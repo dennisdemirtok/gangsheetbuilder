@@ -4,6 +4,8 @@ import { ReadySheetModal } from "./components/ReadySheet/ReadySheetModal";
 import { setAppProxyUrl } from "./services/api";
 import { NamesNumbers } from "./names/NamesNumbers";
 import { readPrices } from "./names/pricing";
+import { TeamBuilder } from "./team/TeamBuilder";
+import { readTeamData } from "./team/data";
 
 let activeRoot: Root | null = null;
 let uploadRoot: Root | null = null;
@@ -214,4 +216,24 @@ function openUpload(): void {
     variants = [];
   }
   createRoot(el).render(<NamesNumbers prices={readPrices(variants)} />);
+};
+
+/** The team page: shirts, club, digits and sponsors (blocks/team-builder.liquid). */
+(window as any).__gangsheetMountTeam = function (el: HTMLElement) {
+  if (el.dataset.mounted) return;
+  el.dataset.mounted = "1";
+  if (el.dataset.appProxyUrl) setAppProxyUrl(el.dataset.appProxyUrl);
+  if (!document.getElementById("gs-nn-styles")) {
+    const style = document.createElement("style");
+    style.id = "gs-nn-styles";
+    style.textContent = "@keyframes gs-nn-spin { to { transform: rotate(360deg); } }";
+    document.head.appendChild(style);
+  }
+  let data: unknown = {};
+  try {
+    data = JSON.parse(el.querySelector("script[data-team]")?.textContent || "{}");
+  } catch {
+    data = {};
+  }
+  createRoot(el).render(<TeamBuilder data={readTeamData(data)} />);
 };

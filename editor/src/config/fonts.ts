@@ -89,6 +89,9 @@ export const NUMBER_FONTS: TextFont[] = [
   { id: "tc-teknisk", name: "Teknisk", category: "sport", lineHeight: 1.0 },
   { id: "tc-liga", name: "Liga", category: "sport", lineHeight: 1.0 },
   { id: "tc-digital", name: "Digital", category: "sport", lineHeight: 1.0 },
+  // The shop's own team figures, first drawn for Sundsvalls HK (number-fonts/egna.py).
+  { id: "tc-egen-kantig", name: "Arena", category: "sport", lineHeight: 1.0 },
+  { id: "tc-egen-skugglinje", name: "Skugglinje", category: "sport", lineHeight: 1.0 },
 ];
 
 export const DEFAULT_FONT_ID = "anton";

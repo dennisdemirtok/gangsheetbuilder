@@ -43,6 +43,10 @@ export const NUMBER_STYLES: Style[] = [
   // thicker, the lines of neighbouring segments ran together in the joins.
   // Printed never thinner than MIN_LINE_MM, so 1 mm on 5 and 7 cm numbers.
   { id: "digital", label: "Digital", fontId: "tc-digital", outlineWidth: 0.008 },
+  // The team page's two styles: straight squared figures, and the same
+  // with a parallel shadow line cut into the right-hand edge.
+  { id: "arena", label: "Arena", fontId: "tc-egen-kantig" },
+  { id: "skugglinje", label: "Skugglinje", fontId: "tc-egen-skugglinje" },
 ];
 
 /** A few more, for a team that wants something of its own. */
