@@ -843,22 +843,33 @@ function Stepper({ value, onChange, label }: { value: number; onChange: (v: numb
 /**
  * Back and front of the shirt to scale, on the shirt's own packshots when
  * it has them. Those are ghost-mannequin shots of a round form: collar to
- * hem is the size chart's length on 98 % of the picture's height, and the
+ * hem is the size chart's length on 98.3 % of the shot's height, and the
  * body shows as wide as its diameter (chest × 2 / π: 25 cm on 130/140,
- * whose flat width is 39 cm). A print is flat on the fabric and wraps round
- * the form, so each figure is placed by its distance along the fabric and
- * narrowed where the body turns away; drawn flat, a 27 cm number filled the
- * whole back.
+ * whose flat width is 39 cm). A number is flat on the fabric and wraps
+ * round the form, so each figure is placed by its distance along the
+ * fabric and narrowed where the body turns away; drawn flat, a 27 cm number
+ * filled the whole back. Logos keep their own proportions and are only
+ * placed that way, so a club crest never looks squashed.
+ *
+ * The shot sits in the shop's product-image format, 4:5 on #f3f2ee with the
+ * shirt 84 % high from 8 % down (team/produktbilder/make_cards.py), which
+ * leaves air round it. New Wave's own shots (white, narrower) are fitted
+ * into the same place and their white multiplied into the grey, so both
+ * kinds line up.
  *
  * Without packshots a flat shirt is drawn instead, 220 units across the
  * half chest, and nothing wraps.
  */
-const PACK = {
-  w: 760,
+export const PACK = {
+  w: 800,
   h: 1000,
-  /** Collar top and the share of the height from collar to hem. */
-  collar: 12,
-  length: 0.98,
+  bg: "#f3f2ee",
+  /** Where the shot itself sits in the picture. */
+  shotTop: 80,
+  shotHeight: 840,
+  /** Collar and length as shares of the shot's height. */
+  collar: 0.008,
+  length: 0.983,
   /** Figures start this share of the length below the collar, chest prints this share. */
   numberAt: 0.19,
   logoAt: 0.2,
@@ -867,6 +878,43 @@ const PACK = {
 };
 
 export type FrontPlace = "left" | "center";
+
+/** An image's width / height once it has loaded (null until then). */
+export function useAspect(url: string | null | undefined): number | null {
+  const [aspect, setAspect] = useState<number | null>(null);
+  useEffect(() => {
+    setAspect(null);
+    if (!url) return;
+    let alive = true;
+    const img = new Image();
+    img.onload = () => alive && img.naturalHeight && setAspect(img.naturalWidth / img.naturalHeight);
+    img.src = url;
+    return () => {
+      alive = false;
+    };
+  }, [url]);
+  return aspect;
+}
+
+/** A logo at its own proportions, `width` wide, centred on x. */
+export function FittedImage({ href, cx, y, width, fallback }: { href: string; cx: number; y: number; width: number; fallback: number }) {
+  const aspect = useAspect(href) ?? fallback;
+  return <image href={href} x={cx - width / 2} y={y} width={width} height={width / aspect} />;
+}
+
+/** The packshot in its place: a 4:5 product image fills the picture; a narrower shot is fitted into the shirt's area. */
+export function Shot({ href }: { href: string }) {
+  const aspect = useAspect(href);
+  if (aspect === null) return <rect width={PACK.w} height={PACK.h} fill={PACK.bg} />;
+  if (Math.abs(aspect - PACK.w / PACK.h) < 0.02) return <image href={href} x={0} y={0} width={PACK.w} height={PACK.h} />;
+  const w = PACK.shotHeight * aspect;
+  return (
+    <>
+      <rect width={PACK.w} height={PACK.h} fill={PACK.bg} />
+      <image href={href} x={(PACK.w - w) / 2} y={PACK.shotTop} width={w} height={PACK.shotHeight} style={{ mixBlendMode: "multiply" }} />
+    </>
+  );
+}
 
 function Preview({
   shirtColor,
@@ -901,12 +949,13 @@ function Preview({
   frontNumber: { heightCm: number; place: FrontPlace } | null;
   sponsors: Sponsor[];
 }) {
+  const [zoomed, setZoomed] = useState<"back" | "front" | null>(null);
   const chart = SIZE_CHART[size] ?? SIZE_CHART["130/140"]!;
   const photos = Boolean(front && back);
   // Units per cm and where the shirt starts, in the viewBox.
   const W = photos ? PACK.w : 400;
-  const top = photos ? PACK.collar : 34;
-  const u = photos ? (PACK.h * PACK.length) / chart.length : 220 / chart.chest;
+  const top = photos ? PACK.shotTop + PACK.collar * PACK.shotHeight : 34;
+  const u = photos ? (PACK.shotHeight * PACK.length) / chart.length : 220 / chart.chest;
   const hem = top + chart.length * u;
   const viewH = photos ? PACK.h : Math.ceil(hem + 8);
   const cx = W / 2;
@@ -959,19 +1008,20 @@ function Preview({
   const backSponsor = sponsors.find((s) => s.place === "back" && s.qty > 0);
   const chest = sponsors.find((s) => s.place === "chest" && s.qty > 0);
   const sleeve = sponsors.find((s) => s.place === "sleeve" && s.qty > 0);
-  /** A logo of `widthCm` on the fabric, centred on `centreCm`, as wide as it shows on the body. */
-  const shownWidth = (widthCm: number, centreCm: number) =>
-    photos ? R * (Math.sin(angle(centreCm + widthCm / 2)) - Math.sin(angle(centreCm - widthCm / 2))) * u : widthCm * u;
-  const sponsorBox = (sp: Sponsor, centreCm: number, y: number, extra?: string, x?: number) => {
-    const w = extra ? sp.widthCm * u : shownWidth(sp.widthCm, centreCm);
-    const h = sp.widthCm * u * 0.4;
-    const left = (x ?? toX(centreCm)) - w / 2;
-    return sp.upload?.url ? (
-      <image href={sp.upload.url} x={left} y={y} width={w} height={h} preserveAspectRatio="none" transform={extra} />
-    ) : (
+  const sponsorBox = (sp: Sponsor, x: number, y: number, extra?: string) => {
+    const w = sp.widthCm * u;
+    if (sp.upload?.url) {
+      return (
+        <g transform={extra}>
+          <FittedImage href={sp.upload.url} cx={x} y={y} width={w} fallback={2.5} />
+        </g>
+      );
+    }
+    const h = w * 0.4;
+    return (
       <g transform={extra}>
-        <rect x={left} y={y} width={w} height={h} rx={3} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={photos ? 3 : 1} opacity={0.8} />
-        <text x={left + w / 2} y={y + h / 2 + h * 0.15} textAnchor="middle" fontSize={Math.min(photos ? 30 : 12, h * 0.45)} fill={ink} opacity={0.85} fontFamily="inherit">
+        <rect x={x - w / 2} y={y} width={w} height={h} rx={3} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={photos ? 3 : 1} opacity={0.8} />
+        <text x={x} y={y + h / 2 + h * 0.15} textAnchor="middle" fontSize={Math.min(photos ? 30 : 12, h * 0.45)} fill={ink} opacity={0.85} fontFamily="inherit">
           SPONSOR
         </text>
       </g>
@@ -985,44 +1035,54 @@ function Preview({
   const side = PACK.chestSide * chart.chest;
   const shown = number.replace(/\D/g, "").slice(0, 2);
   const frontAt = frontNumber?.place === "center" ? 0 : -side;
-  const chestSponsorTop =
-    frontNumber?.place === "center" ? chestTop + (frontNumber.heightCm + 3) * u : top + 0.33 * L * u;
+  // A front sponsor goes under whatever is on the chest: the crest (about
+  // 1.2 × its width tall) and the small number.
+  const chestBottomCm = Math.max(logo ? logo.widthCm * 1.2 : 0, frontNumber ? frontNumber.heightCm : 0);
+  const chestSponsorTop = Math.max(top + 0.3 * L * u, chestTop + (chestBottomCm + 2.5) * u);
   const backWidth = shown ? numberWidthCm(fontId, shown, heightCm) : 0;
   const cm = (n: number) => `${Math.round(n * 10) / 10}`.replace(".", ",");
 
+  const picture = (which: "back" | "front") => (
+    <svg
+      viewBox={`0 0 ${W} ${viewH}`}
+      style={{ width: "100%", height: "auto", display: "block" }}
+      role="img"
+      aria-label={which === "back" ? "Tröjans baksida" : "Tröjans framsida"}
+    >
+      {which === "back" ? (
+        <>
+          {photos ? <Shot href={back!} /> : drawn("back")}
+          {backSponsor && sponsorBox(backSponsor, cx, sponsorTop)}
+          {figures(shown, heightCm, 0, numberTop)}
+        </>
+      ) : (
+        <>
+          {photos ? <Shot href={front!} /> : drawn("front")}
+          {logo &&
+            (logo.src ? (
+              <FittedImage href={logo.src} cx={toX(side)} y={chestTop} width={logo.widthCm * u} fallback={0.86} />
+            ) : (
+              <circle cx={toX(side)} cy={chestTop + (logo.widthCm * u) / 2} r={(logo.widthCm * u) / 2} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={photos ? 3 : 1} />
+            ))}
+          {frontNumber && shown && figures(shown, frontNumber.heightCm, frontAt, chestTop)}
+          {chest && sponsorBox(chest, cx, chestSponsorTop)}
+          {sleeve && (photos ? sponsorBox(sleeve, W * 0.12, PACK.h * 0.22, `rotate(-62 ${W * 0.12} ${PACK.h * 0.24})`) : sponsorBox(sleeve, 52, top + 64, `rotate(-52 52 ${top + 70})`))}
+        </>
+      )}
+    </svg>
+  );
+
   return (
     <div style={S.previewCard}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-        <figure style={{ margin: 0, textAlign: "center" }}>
-          <svg viewBox={`0 0 ${W} ${viewH}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Tröjans baksida">
-            {photos ? <image href={back!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("back")}
-            {backSponsor && sponsorBox(backSponsor, 0, sponsorTop)}
-            {figures(shown, heightCm, 0, numberTop)}
-          </svg>
-          <figcaption style={S.small}>Bak</figcaption>
-        </figure>
-        <figure style={{ margin: 0, textAlign: "center" }}>
-          <svg viewBox={`0 0 ${W} ${viewH}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Tröjans framsida">
-            {photos ? <image href={front!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("front")}
-            {logo &&
-              (logo.src ? (
-                <image
-                  href={logo.src}
-                  x={toX(side) - shownWidth(logo.widthCm, side) / 2}
-                  y={chestTop}
-                  width={shownWidth(logo.widthCm, side)}
-                  height={logo.widthCm * u * 1.2}
-                  preserveAspectRatio="none"
-                />
-              ) : (
-                <ellipse cx={toX(side)} cy={chestTop + (logo.widthCm * u) / 2} rx={shownWidth(logo.widthCm, side) / 2} ry={(logo.widthCm * u) / 2} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={photos ? 3 : 1} />
-              ))}
-            {frontNumber && shown && figures(shown, frontNumber.heightCm, frontAt, chestTop)}
-            {chest && sponsorBox(chest, 0, chestSponsorTop)}
-            {sleeve && (photos ? sponsorBox(sleeve, 0, PACK.h * 0.2, `rotate(-62 ${W * 0.1} ${PACK.h * 0.22})`, W * 0.1) : sponsorBox(sleeve, 0, top + 64, `rotate(-52 52 ${top + 70})`, 52))}
-          </svg>
-          <figcaption style={S.small}>Fram</figcaption>
-        </figure>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+        {(["back", "front"] as const).map((which) => (
+          <figure key={which} style={{ margin: 0, textAlign: "center" }}>
+            <button type="button" onClick={() => setZoomed(which)} style={S.pictureBtn} aria-label={`Förstora ${which === "back" ? "baksidan" : "framsidan"}`}>
+              {picture(which)}
+            </button>
+            <figcaption style={S.small}>{which === "back" ? "Bak" : "Fram"} · klicka för att förstora</figcaption>
+          </figure>
+        ))}
       </div>
       <div style={{ ...S.small, marginTop: 8, textAlign: "center" }}>
         {shown ? `Nummer ${shown}: ${cm(heightCm)} × ${cm(backWidth)} cm` : "Inget nummer"} · tröja {size}: {chart.chest} cm bred, {chart.length} cm lång (platt)
@@ -1041,6 +1101,64 @@ function Preview({
           ))}
         </div>
       </div>
+      {zoomed && <Zoom side={zoomed} onSide={setZoomed} onClose={() => setZoomed(null)} picture={picture} />}
+    </div>
+  );
+}
+
+/**
+ * The preview large: click (or tap) to look closer at the print, move to
+ * look around, click again to step back. Esc or the cross closes it.
+ */
+export function Zoom({
+  side,
+  onSide,
+  onClose,
+  picture,
+}: {
+  side: "back" | "front";
+  onSide: (s: "back" | "front") => void;
+  onClose: () => void;
+  picture: (s: "back" | "front") => React.ReactNode;
+}) {
+  const [close, setClose] = useState(false);
+  const [origin, setOrigin] = useState("50% 40%");
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  const aim = (e: React.PointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setOrigin(`${((e.clientX - r.left) / r.width) * 100}% ${((e.clientY - r.top) / r.height) * 100}%`);
+  };
+  return (
+    <div style={S.backdrop} role="dialog" aria-modal="true" aria-label="Förstorad förhandsvisning" onClick={onClose}>
+      <div style={S.zoomPanel} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 6 }}>
+            {(["back", "front"] as const).map((s) => (
+              <button key={s} type="button" aria-pressed={s === side} onClick={() => onSide(s)} style={{ ...S.sizeChip, ...(s === side ? S.sizeChipOn : null) }}>
+                {s === "back" ? "Bak" : "Fram"}
+              </button>
+            ))}
+          </div>
+          <span style={S.small}>{close ? "Flytta för att titta runt · klicka för att gå ut" : "Klicka på tröjan för att zooma in"}</span>
+          <button type="button" onClick={onClose} aria-label="Stäng" style={S.zoomClose}>
+            ×
+          </button>
+        </div>
+        <div
+          style={{ overflow: "hidden", borderRadius: 12, cursor: close ? "zoom-out" : "zoom-in", touchAction: close ? "none" : "auto" }}
+          onClick={(e) => {
+            if (!close) aim(e as unknown as React.PointerEvent<HTMLDivElement>);
+            setClose((c) => !c);
+          }}
+          onPointerMove={(e) => close && aim(e)}
+        >
+          <div style={{ transform: close ? "scale(2.6)" : "none", transformOrigin: origin, transition: "transform 0.2s ease" }}>{picture(side)}</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1048,6 +1166,9 @@ function Preview({
 const S: Record<string, React.CSSProperties> = {
   root: { fontFamily: "inherit", color: INK, width: "100%" },
   previewCard: { background: SOFT, borderRadius: 18, padding: 14 },
+  pictureBtn: { display: "block", width: "100%", padding: 0, border: "none", background: "none", cursor: "zoom-in", borderRadius: 10, overflow: "hidden" },
+  zoomPanel: { width: "min(92vw, 640px)", maxHeight: "94vh", overflowY: "auto", background: "#fff", borderRadius: 18, padding: 16, boxShadow: "0 24px 80px rgba(0,0,0,0.25)" },
+  zoomClose: { width: 36, height: 36, borderRadius: "50%", border: "none", background: SOFT, fontSize: 22, cursor: "pointer", color: INK, flexShrink: 0 },
   small: { fontSize: 12.5, color: MUTED, lineHeight: 1.45 },
   step: { border: `1px solid ${LINE}`, borderRadius: 16, padding: "16px 16px 18px", background: "#fff" },
   stepHead: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12 },
