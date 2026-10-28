@@ -405,6 +405,7 @@ export function NamesPage({ data }: { data: NamesPageData }) {
         numberCm={showNumbers ? numberCm : 20}
         initialsCm={INITIALS_CM}
         sponsors={previewSponsors}
+        size={shownSize}
       />
       <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
         {showTable && filled.length > 0 ? (

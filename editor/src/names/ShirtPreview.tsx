@@ -208,19 +208,31 @@ export function textWidthCm(family: string, text: string, heightCm: number, samp
 }
 
 /**
- * The packshots are ghost-mannequin shots: the body is round, so its
- * visible width says little, but collar to hem is the size chart's length
- * on 98 % of the picture's height. That length sets the scale, as on the
- * team page, so a 25 cm number on 110/120 takes the room it will.
+ * The packshots are ghost-mannequin shots of a round form: collar to hem
+ * is the size chart's length on 98 % of the picture's height, and the body
+ * shows as wide as its diameter (chest × 2 / π: 25 cm on 130/140, whose
+ * flat width is 39 cm). A print lies flat on the fabric and wraps round
+ * the form, so each letter and figure is placed by its distance along the
+ * fabric and narrowed where the body turns away, as on the team page;
+ * drawn flat, a long name or a 25 cm number filled the whole back.
  */
 const PACK = {
   w: 760,
   h: 1000,
   collar: 12,
   length: 0.98,
-  /** Centre of the club logo across the picture (the wearer's left chest). */
-  logoX: 0.645,
+  /** The club logo's centre this share of the flat width from the middle (the wearer's left chest). */
+  chestSide: 0.2,
 };
+
+/** Each character's advance in cm at a cap height, as the print sets them (no extra spacing). */
+function advancesCm(family: string, text: string, heightCm: number, sample: string) {
+  const fontCm = heightCm / capRatio(family, sample);
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (ctx) ctx.font = `100px "${family}"`;
+  const widths = [...text].map((ch) => (ctx ? (ctx.measureText(ch).width / 100) * fontCm : fontCm * 0.55));
+  return { widths, fontCm };
+}
 
 export interface PreviewLogo {
   src: string | null;
@@ -232,7 +244,7 @@ export interface PreviewLogo {
  * Back and front of the shirt with the chosen row on it: the name over
  * the number on the back, initials under the club logo on the front, and
  * the sponsors where they go. On the shirt's own packshots when it has
- * them; a flat shirt is drawn when not.
+ * them; a flat shirt is drawn when not, and nothing wraps.
  */
 export function PackshotPreview({
   front,
@@ -249,6 +261,7 @@ export function PackshotPreview({
   numberCm,
   initialsCm,
   sponsors,
+  size,
 }: {
   front: string | null;
   back: string | null;
@@ -265,6 +278,8 @@ export function PackshotPreview({
   numberCm: number;
   initialsCm: number;
   sponsors: PreviewLogo[];
+  /** The size shown, for the caption. */
+  size: string;
 }) {
   const photos = Boolean(front && back);
   const W = photos ? PACK.w : 400;
@@ -274,6 +289,38 @@ export function PackshotPreview({
   const hem = top + L;
   const viewH = photos ? PACK.h : Math.ceil(hem + 8);
   const cx = W / 2;
+
+  // Along the fabric (cm from the middle) to across the picture: the round
+  // form's radius is the chest circumference over 2π.
+  const R = (2 * chart.chest) / (2 * Math.PI);
+  const angle = (xCm: number) => Math.max(-Math.PI / 2, Math.min(Math.PI / 2, xCm / R));
+  const toX = (xCm: number) => cx + (photos ? R * Math.sin(angle(xCm)) : xCm) * u;
+  const squeeze = (xCm: number) => (photos ? Math.cos(angle(xCm)) : 1);
+  /** How wide something `widthCm` across, centred on `centreCm`, shows on the body. */
+  const shownWidth = (widthCm: number, centreCm: number) =>
+    photos ? R * (Math.sin(angle(centreCm + widthCm / 2)) - Math.sin(angle(centreCm - widthCm / 2))) * u : widthCm * u;
+
+  /** Text on the fabric, centred on `centreCm`, its baseline at `baseY`: each character where it falls on the body. */
+  const wrapped = (text: string, family: string, hCm: number, sample: string, centreCm: number, baseY: number) => {
+    const { widths, fontCm } = advancesCm(family, text, hCm, sample);
+    let x = centreCm - widths.reduce((a, b) => a + b, 0) / 2;
+    return [...text].map((ch, i) => {
+      const mid = x + widths[i]! / 2;
+      x += widths[i]!;
+      return ch.trim() ? (
+        <text
+          key={i}
+          transform={`translate(${toX(mid)} ${baseY}) scale(${squeeze(mid)} 1)`}
+          textAnchor="middle"
+          fontSize={fontCm * u}
+          fill={ink}
+          fontFamily={`"${family}", sans-serif`}
+        >
+          {ch}
+        </text>
+      ) : null;
+    });
+  };
 
   const stroke = shade(shirtColor, -0.14);
   const body = `M152,${top} C170,${top + 14} 230,${top + 14} 248,${top} L330,${top + 26} L384,${top + 98} L336,${top + 126} L310,${top + 102} L310,${hem} L90,${hem} L90,${top + 102} L64,${top + 126} L16,${top + 98} L70,${top + 26} Z`;
@@ -285,15 +332,17 @@ export function PackshotPreview({
   );
 
   const line = photos ? 3 : 1;
-  const box = (sp: PreviewLogo, x: number, y: number, transform?: string) => {
-    const w = sp.widthCm * u;
-    const h = w * 0.4;
+  /** A sponsor centred on `centreCm` along the fabric; on the sleeve, at `x` and turned, flat. */
+  const box = (sp: PreviewLogo, centreCm: number, y: number, sleeve?: { x: number; transform: string }) => {
+    const w = sleeve ? sp.widthCm * u : shownWidth(sp.widthCm, centreCm);
+    const h = sp.widthCm * u * 0.4;
+    const left = (sleeve?.x ?? toX(centreCm)) - w / 2;
     return sp.src ? (
-      <image href={sp.src} x={x - w / 2} y={y} width={w} height={h} preserveAspectRatio="xMidYMid meet" transform={transform} />
+      <image href={sp.src} x={left} y={y} width={w} height={h} preserveAspectRatio="none" transform={sleeve?.transform} />
     ) : (
-      <g transform={transform}>
-        <rect x={x - w / 2} y={y} width={w} height={h} rx={3} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={line} opacity={0.8} />
-        <text x={x} y={y + h / 2 + h * 0.15} textAnchor="middle" fontSize={Math.min(photos ? 30 : 12, h * 0.45)} fill={ink} opacity={0.85} fontFamily="inherit">
+      <g transform={sleeve?.transform}>
+        <rect x={left} y={y} width={w} height={h} rx={3} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={line} opacity={0.8} />
+        <text x={left + w / 2} y={y + h / 2 + h * 0.15} textAnchor="middle" fontSize={Math.min(photos ? 30 : 12, h * 0.45)} fill={ink} opacity={0.85} fontFamily="inherit">
           SPONSOR
         </text>
       </g>
@@ -314,47 +363,48 @@ export function PackshotPreview({
   // Front: the club logo (a placeholder) on the left chest, initials under it.
   const logoCm = 7;
   const logoTop = top + 0.2 * L;
-  const logoX = photos ? W * PACK.logoX : 255;
+  const side = PACK.chestSide * chart.chest;
   const initialsBase = logoTop + logoCm * u + 1.5 * u + initialsCm * u;
 
+  // The printed sizes, flat, for the caption.
+  const cm = (n: number) => `${Math.round(n)}`;
+  const caption = [
+    name ? `Namn ${cm(nameCm)} × ${cm(textWidthCm(nameFamily, name, nameCm, "HANDE"))} cm` : "",
+    number ? `nummer ${cm(numberCm)} × ${cm(textWidthCm(numberFamily, number, numberCm))} cm` : "",
+    `tröja ${size}: ${chart.chest} cm bred, ${chart.length} cm lång (platt)`,
+  ].filter(Boolean);
+
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-      <figure style={{ margin: 0, textAlign: "center" }}>
-        <svg viewBox={`0 0 ${W} ${viewH}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Tröjans baksida">
-          {photos ? <image href={back!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("back")}
-          {backSponsor && box(backSponsor, cx, sponsorTop)}
-          {name && (
-            <text x={cx} y={nameBase} textAnchor="middle" fontSize={(nameCm * u) / capRatio(nameFamily, "HANDE")} fill={ink} fontFamily={`"${nameFamily}", sans-serif`} style={{ letterSpacing: "0.02em" }}>
-              {name}
-            </text>
-          )}
-          {number && (
-            <text x={cx} y={numberBase} textAnchor="middle" fontSize={(numberCm * u) / capRatio(numberFamily, "0123456789")} fill={ink} fontFamily={`"${numberFamily}", sans-serif`}>
-              {number}
-            </text>
-          )}
-        </svg>
-        <figcaption style={{ fontSize: 12.5, color: "#6b6b70" }}>Bak</figcaption>
-      </figure>
-      <figure style={{ margin: 0, textAlign: "center" }}>
-        <svg viewBox={`0 0 ${W} ${viewH}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Tröjans framsida">
-          {photos ? <image href={front!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("front")}
-          {initials && (
-            <>
-              <circle cx={logoX} cy={logoTop + (logoCm * u) / 2} r={(logoCm * u) / 2} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={line} opacity={0.6} />
-              <text x={logoX} y={logoTop + (logoCm * u) / 2 + 2.2 * u * 0.35} textAnchor="middle" fontSize={2.2 * u} fill={ink} opacity={0.6} fontFamily="inherit">
-                LOGGA
-              </text>
-              <text x={logoX} y={initialsBase} textAnchor="middle" fontSize={(initialsCm * u) / capRatio(nameFamily, "HANDE")} fill={ink} fontFamily={`"${nameFamily}", sans-serif`}>
-                {initials}
-              </text>
-            </>
-          )}
-          {chest && box(chest, cx, top + 0.36 * L)}
-          {sleeve && (photos ? box(sleeve, W * 0.1, PACK.h * 0.2, `rotate(-62 ${W * 0.1} ${PACK.h * 0.22})`) : box(sleeve, 52, top + 64, `rotate(-52 52 ${top + 70})`))}
-        </svg>
-        <figcaption style={{ fontSize: 12.5, color: "#6b6b70" }}>Fram</figcaption>
-      </figure>
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        <figure style={{ margin: 0, textAlign: "center" }}>
+          <svg viewBox={`0 0 ${W} ${viewH}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Tröjans baksida">
+            {photos ? <image href={back!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("back")}
+            {backSponsor && box(backSponsor, 0, sponsorTop)}
+            {name && wrapped(name, nameFamily, nameCm, "HANDE", 0, nameBase)}
+            {number && wrapped(number, numberFamily, numberCm, "0123456789", 0, numberBase)}
+          </svg>
+          <figcaption style={{ fontSize: 12.5, color: "#6b6b70" }}>Bak</figcaption>
+        </figure>
+        <figure style={{ margin: 0, textAlign: "center" }}>
+          <svg viewBox={`0 0 ${W} ${viewH}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Tröjans framsida">
+            {photos ? <image href={front!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("front")}
+            {initials && (
+              <>
+                <ellipse cx={toX(side)} cy={logoTop + (logoCm * u) / 2} rx={shownWidth(logoCm, side) / 2} ry={(logoCm * u) / 2} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={line} opacity={0.6} />
+                <text x={toX(side)} y={logoTop + (logoCm * u) / 2 + 2.2 * u * 0.35} textAnchor="middle" fontSize={2.2 * u} fill={ink} opacity={0.6} fontFamily="inherit" transform={`translate(${toX(side) * (1 - squeeze(side))} 0) scale(${squeeze(side)} 1)`}>
+                  LOGGA
+                </text>
+                {wrapped(initials, nameFamily, initialsCm, "HANDE", side, initialsBase)}
+              </>
+            )}
+            {chest && box(chest, 0, top + 0.36 * L)}
+            {sleeve && (photos ? box(sleeve, 0, PACK.h * 0.2, { x: W * 0.1, transform: `rotate(-62 ${W * 0.1} ${PACK.h * 0.22})` }) : box(sleeve, 0, top + 64, { x: 52, transform: `rotate(-52 52 ${top + 70})` }))}
+          </svg>
+          <figcaption style={{ fontSize: 12.5, color: "#6b6b70" }}>Fram</figcaption>
+        </figure>
+      </div>
+      <div style={{ fontSize: 12.5, color: "#6b6b70", lineHeight: 1.45, marginTop: 6, textAlign: "center" }}>{caption.join(" · ")}</div>
     </div>
   );
 }
