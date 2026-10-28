@@ -113,8 +113,10 @@ export function NamesPage({ data }: { data: NamesPageData }) {
   const [ink, setInk] = useState("#ffffff");
   const [numberStyle, setNumberStyle] = useState(FIGURE_STYLES[0]!.id);
   const [numberCm, setNumberCm] = useState(20);
-  const [nameStyle, setNameStyle] = useState(NAME_STYLES[0]!.id);
-  const [nameCm, setNameCm] = useState(7);
+  // Block 5 cm: narrow enough that most surnames fit the back of a junior
+  // shirt (ANDERSSON 25 cm; in Smal 7 cm it is 50 cm on a 33 cm back).
+  const [nameStyle, setNameStyle] = useState("block");
+  const [nameCm, setNameCm] = useState(5);
   const [uppercase, setUppercase] = useState(true);
 
   const [rows, setRows] = useState<Row[]>(() => [newRow(), newRow(), newRow()]);
