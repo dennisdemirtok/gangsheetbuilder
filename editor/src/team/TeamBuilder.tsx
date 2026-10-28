@@ -919,7 +919,8 @@ const S: Record<string, React.CSSProperties> = {
     background: "#fff",
     minWidth: 0,
   },
-  sizeChip: { border: `1px solid ${LINE}`, background: "#fff", color: INK, borderRadius: 999, padding: "4px 9px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
+  // Longhands: sizeChipOn changes only the colour.
+  sizeChip: { borderWidth: 1, borderStyle: "solid", borderColor: LINE, background: "#fff", color: INK, borderRadius: 999, padding: "4px 9px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
   sizeChipOn: { background: INK, borderColor: INK, color: "#fff", fontWeight: 600 },
   qtyBox: { display: "flex", flexDirection: "column", gap: 6, border: `1px solid ${LINE}`, borderRadius: 12, padding: 10 },
   stepper: { display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid rgba(0,0,0,0.16)", borderRadius: 10, padding: 2, height: 40, boxSizing: "border-box", background: "#fff", minWidth: 0, width: "100%" },
