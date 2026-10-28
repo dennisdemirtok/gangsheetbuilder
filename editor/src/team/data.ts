@@ -56,7 +56,7 @@ export interface Price {
   price: number;
 }
 
-/** "logo:8" … */
+/** "logo:8", and "front:7" for a small number printed on the front. */
 export type PriceList = Map<string, Price>;
 
 /** A stock figure: digitStockKey(style, height, colour, figure) → variant. */
@@ -81,6 +81,13 @@ export interface TeamData {
 }
 
 export const DIGIT_HEIGHTS_CM = [20, 25];
+/** Small numbers for the front, printed whole ("13" is one piece). */
+export const FRONT_HEIGHTS_CM = [5, 7, 10];
+
+export function frontKey(cm: number): string {
+  return `front:${cm}`;
+}
+
 /** Logo widths sold, each the most a logo at that price may measure. */
 export const LOGO_WIDTHS_CM = [8, 15, 25];
 
@@ -100,9 +107,10 @@ export function readTeamData(json: unknown): TeamData {
 
   const prices: PriceList = new Map();
   for (const v of Array.isArray(raw.prices) ? raw.prices : []) {
-    const m = /^logga\s+(\d+)\s*cm/i.exec(String(v?.title ?? "").trim());
+    const m = /^(logga|nummer)\s+(\d+)\s*cm/i.exec(String(v?.title ?? "").trim());
     if (!m) continue;
-    prices.set(`logo:${parseInt(m[1]!, 10)}`, { variantId: String(v.id), price: num(v.price_cents) / 100 });
+    const kind = m[1]!.toLowerCase() === "logga" ? "logo" : "front";
+    prices.set(`${kind}:${parseInt(m[2]!, 10)}`, { variantId: String(v.id), price: num(v.price_cents) / 100 });
   }
 
   const digits: DigitStock = new Map();

@@ -4,8 +4,9 @@
  * - shirts: Clique from New Wave, ordered by the shop on newwave.se and
  *   delivered by New Wave straight to the customer;
  * - digits: product "Lagsiffror", picked from the shop's own stock in Sweden;
- * - logos: club and sponsor logos on the order's print sheet, printed in
- *   Poland and sent to the shop, which packs them with the digits.
+ * - logos: club and sponsor logos, and small front numbers, on the order's
+ *   print sheet, printed in Poland and sent to the shop, which packs them
+ *   with the digits.
  *
  * Kept free of server imports so the pages can use it too.
  */
@@ -107,6 +108,14 @@ export function splitTeamOrder(lines: TeamLine[], productTypes: Map<string, stri
         label: prop(line, "Logga")!,
         quantity: line.quantity ?? 1,
         width: prop(line, "Bredd"),
+        placement: prop(line, "Placering"),
+      });
+    } else if (prop(line, "_nn") && prop(line, "Framnummer")) {
+      // Small front numbers print on the same sheet as the logos.
+      out.logos.push({
+        label: `Front numbers ${(line.variant_title || "").replace(/^nummer\s*/i, "")}: ${prop(line, "Framnummer")}`.replace(/\s+:/, ":"),
+        quantity: line.quantity ?? 1,
+        width: line.variant_title || null,
         placement: prop(line, "Placering"),
       });
     }

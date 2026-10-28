@@ -4,10 +4,12 @@ import { contrastOf } from "../names/catalog";
 import {
   DIGIT_HEIGHTS_CM,
   DIGIT_INKS,
+  FRONT_HEIGHTS_CM,
   LOGO_WIDTHS_CM,
   SIZE_CHART,
   countDigits,
   digitStockKey,
+  frontKey,
   kr,
   logoKey,
   parseNumbers,
@@ -77,7 +79,7 @@ const shirtHex = (name: string) => SHIRT_HEX[name.toLowerCase()] ?? "#9a9ca0";
 
 const PLACES = [
   { id: "back", label: "Rygg, över numret" },
-  { id: "chest", label: "Bröst" },
+  { id: "chest", label: "Fram, mitten" },
   { id: "sleeve", label: "Ärm" },
 ] as const;
 type Place = (typeof PLACES)[number]["id"];
@@ -137,6 +139,11 @@ export function TeamBuilder({ data }: { data: TeamData }) {
   const [ownNumbers, setOwnNumbers] = useState("");
   const [digits, setDigits] = useState<number[]>(Array(10).fill(0));
   const [previewNumber, setPreviewNumber] = useState("10");
+  // The team's numbers, from the player count or typed in: one small front number each.
+  const [numbers, setNumbers] = useState<string[]>([]);
+  const [frontOn, setFrontOn] = useState(false);
+  const [frontCm, setFrontCm] = useState(7);
+  const [frontPlace, setFrontPlace] = useState<FrontPlace>("left");
   const [previewSize, setPreviewSize] = useState<string | null>(null);
 
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
@@ -189,6 +196,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
     setOwnNumbers("");
     setError(null);
     const numbers = Array.from({ length: n }, (_, i) => String(i + 1));
+    setNumbers(numbers);
     setDigits(countDigits(numbers));
     setPreviewNumber(numbers.find((x) => x.length === 2) ?? numbers[0]!);
   };
@@ -202,6 +210,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
     }
     setError(null);
     setPlayers("");
+    setNumbers(numbers);
     setDigits(countDigits(numbers));
     setPreviewNumber(numbers.find((x) => x.length === 2) ?? numbers[0]!);
   };
@@ -229,9 +238,14 @@ export function TeamBuilder({ data }: { data: TeamData }) {
     const p = logoPrice(sp.widthCm);
     if (p && sp.qty && sp.upload) lines.push({ label: `Sponsorlogga ${i + 1}`, detail: `${sp.widthCm} cm, ${PLACES.find((x) => x.id === sp.place)!.label.toLowerCase()}`, qty: sp.qty, unit: p.price });
   });
+  const frontPrice = data.prices.get(frontKey(frontCm)) ?? null;
+  const frontCount = frontOn ? numbers.length : 0;
+  const frontLabel = frontPlace === "center" ? "mitt fram" : "vänster bröst";
+  if (frontCount && frontPrice) lines.push({ label: `Nummer fram ${frontCm} cm`, detail: frontLabel, qty: frontCount, unit: frontPrice.price });
   if (withPress && data.press) lines.push({ label: `${data.press.vendor} ${data.press.title}`.trim(), detail: "Värmepress", qty: 1, unit: data.press.price });
   const subtotal = lines.reduce((s, l) => s + l.qty * l.unit, 0);
-  const missingPrices = orderDigits.some((n, d) => n > 0 && !stockDigit(d)) || (hasLogo && logoQty > 0 && !logoPrice(logoWidthCm));
+  const missingPrices =
+    orderDigits.some((n, d) => n > 0 && !stockDigit(d)) || (hasLogo && logoQty > 0 && !logoPrice(logoWidthCm)) || (frontCount > 0 && !frontPrice);
   const sponsorsWithoutFile = sponsors.some((s) => s.qty > 0 && !s.upload);
   const canOrder = subtotal > 0 && !missingPrices && !sponsorsWithoutFile && !progress;
 
@@ -270,6 +284,19 @@ export function TeamBuilder({ data }: { data: TeamData }) {
           file: src ? () => fileFromUrl(src, logoName) : async () => ownLogo!.file,
           properties: { ...team, Logga: `Klubbmärke ${logoName}`, Bredd: `${String(logoWidthCm).replace(".", ",")} cm`, Placering: "Bröst" },
         });
+      }
+      if (frontCount && frontPrice) {
+        for (const n of numbers) {
+          pieces.push({
+            key: `front|${n}`,
+            line: "front",
+            label: n,
+            count: 1,
+            price: frontPrice,
+            text: { spec: { text: n, fontId: style.fontId, color: ink, outline: 0, outlineColor: "#111111", align: "center" }, heightCm: frontCm },
+            properties: { ...team, Framnummer: numbers.join(", "), Stil: `${style.label}, ${inkLabel}`, Placering: frontPlace === "center" ? "Mitt fram" : "Vänster bröst" },
+          });
+        }
       }
       sponsors.forEach((sp, i) => {
         const p = logoPrice(sp.widthCm);
@@ -361,6 +388,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                 back={packshot?.back ?? null}
                 ink={ink}
                 family={family}
+                fontId={style.fontId}
                 heightCm={heightCm}
                 number={previewNumber}
                 onNumber={setPreviewNumber}
@@ -368,6 +396,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                 sizes={sizes}
                 onSize={setPreviewSize}
                 logo={hasLogo ? { src: logoSrc, widthCm: logoWidthCm } : null}
+                frontNumber={frontOn ? { heightCm: frontCm, place: frontPlace } : null}
                 sponsors={sponsors}
               />
             </div>
@@ -590,6 +619,55 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                 </span>
               </span>
             </label>
+            <div style={{ ...S.option, display: "block", cursor: "default" }}>
+              <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
+                <input type="checkbox" checked={frontOn} onChange={(e) => setFrontOn(e.target.checked)} style={{ accentColor: ACCENT, width: 18, height: 18, flexShrink: 0 }} />
+                <span>
+                  <strong>Litet nummer fram</strong>
+                  <span style={{ ...S.small, display: "block" }}>
+                    Samma nummer på bröstet, tryckt i ett stycke. Bredvid klubbmärket eller mitt fram.
+                  </span>
+                </span>
+              </label>
+              {frontOn && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10, paddingLeft: 28 }}>
+                  <div style={S.row}>
+                    <span style={S.fieldLabel}>Höjd</span>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {FRONT_HEIGHTS_CM.map((h) => {
+                        const p = data.prices.get(frontKey(h));
+                        return (
+                          <button key={h} type="button" aria-pressed={h === frontCm} onClick={() => setFrontCm(h)} style={{ ...S.chip, ...(h === frontCm ? S.chipOn : null) }}>
+                            <span style={{ fontWeight: 600 }}>{h} cm</span>
+                            {p && <span style={{ fontSize: 11.5, opacity: 0.75 }}>{kr(p.price)}/st</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div style={S.row}>
+                    <span style={S.fieldLabel}>Plats</span>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {(
+                        [
+                          { id: "left", label: "Vänster bröst" },
+                          { id: "center", label: "Mitt fram" },
+                        ] as const
+                      ).map((o) => (
+                        <button key={o.id} type="button" aria-pressed={o.id === frontPlace} onClick={() => setFrontPlace(o.id)} style={{ ...S.chip, ...(o.id === frontPlace ? S.chipOn : null) }}>
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <span style={S.small}>
+                    {numbers.length
+                      ? `${numbers.length} nummer: ${numbers.slice(0, 12).join(", ")}${numbers.length > 12 ? " …" : ""}`
+                      : "Skriv antal spelare eller era nummer ovan, så trycks ett nummer per spelare."}
+                  </span>
+                </div>
+              )}
+            </div>
           </Step>
 
           <Step n={4} title="Sponsorloggor" aside="Tillval">
@@ -695,6 +773,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                 back={packshot?.back ?? null}
                 ink={ink}
                 family={family}
+                fontId={style.fontId}
                 heightCm={heightCm}
                 number={previewNumber}
                 onNumber={setPreviewNumber}
@@ -702,6 +781,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                 sizes={sizes}
                 onSize={setPreviewSize}
                 logo={hasLogo ? { src: logoSrc, widthCm: logoWidthCm } : null}
+                frontNumber={frontOn ? { heightCm: frontCm, place: frontPlace } : null}
                 sponsors={sponsors}
               />
               {summary}
@@ -762,13 +842,16 @@ function Stepper({ value, onChange, label }: { value: number; onChange: (v: numb
 
 /**
  * Back and front of the shirt to scale, on the shirt's own packshots when
- * it has them. Those are ghost-mannequin shots: the body is round, so its
- * visible width says little, but collar to hem is the size chart's length
- * on 98 % of the picture's height. That length sets the scale, and a 20 cm
- * figure on 110/120 takes the room it will.
+ * it has them. Those are ghost-mannequin shots of a round form: collar to
+ * hem is the size chart's length on 98 % of the picture's height, and the
+ * body shows as wide as its diameter (chest × 2 / π: 25 cm on 130/140,
+ * whose flat width is 39 cm). A print is flat on the fabric and wraps round
+ * the form, so each figure is placed by its distance along the fabric and
+ * narrowed where the body turns away; drawn flat, a 27 cm number filled the
+ * whole back.
  *
  * Without packshots a flat shirt is drawn instead, 220 units across the
- * half chest.
+ * half chest, and nothing wraps.
  */
 const PACK = {
   w: 760,
@@ -776,12 +859,14 @@ const PACK = {
   /** Collar top and the share of the height from collar to hem. */
   collar: 12,
   length: 0.98,
-  /** Figures start this share of the length below the collar, the club logo this share. */
+  /** Figures start this share of the length below the collar, chest prints this share. */
   numberAt: 0.19,
   logoAt: 0.2,
-  /** Centre of the club logo across the picture (the wearer's left chest). */
-  logoX: 0.645,
+  /** Chest logo and small front number: their centres this share of the flat width from the middle. */
+  chestSide: 0.2,
 };
+
+export type FrontPlace = "left" | "center";
 
 function Preview({
   shirtColor,
@@ -789,6 +874,7 @@ function Preview({
   back,
   ink,
   family,
+  fontId,
   heightCm,
   number,
   onNumber,
@@ -796,6 +882,7 @@ function Preview({
   sizes,
   onSize,
   logo,
+  frontNumber,
   sponsors,
 }: {
   shirtColor: string;
@@ -803,6 +890,7 @@ function Preview({
   back: string | null;
   ink: string;
   family: string;
+  fontId: string;
   heightCm: number;
   number: string;
   onNumber: (v: string) => void;
@@ -810,6 +898,7 @@ function Preview({
   sizes: string[];
   onSize: (v: string) => void;
   logo: { src: string | null; widthCm: number } | null;
+  frontNumber: { heightCm: number; place: FrontPlace } | null;
   sponsors: Sponsor[];
 }) {
   const chart = SIZE_CHART[size] ?? SIZE_CHART["130/140"]!;
@@ -821,6 +910,14 @@ function Preview({
   const hem = top + chart.length * u;
   const viewH = photos ? PACK.h : Math.ceil(hem + 8);
   const cx = W / 2;
+  const L = chart.length;
+
+  // Along the fabric (cm from the middle) to across the picture: the round
+  // form's radius is the chest circumference over 2π.
+  const R = (2 * chart.chest) / (2 * Math.PI);
+  const angle = (xCm: number) => Math.max(-Math.PI / 2, Math.min(Math.PI / 2, xCm / R));
+  const toX = (xCm: number) => cx + (photos ? R * Math.sin(angle(xCm)) : xCm) * u;
+  const squeeze = (xCm: number) => (photos ? Math.cos(angle(xCm)) : 1);
 
   const stroke = contrastOf(shirtColor) === "#111111" ? "rgba(0,0,0,0.18)" : "rgba(0,0,0,0.3)";
   const body = `M152,${top} C170,${top + 14} 230,${top + 14} 248,${top} L330,${top + 26} L384,${top + 98} L336,${top + 126} L310,${top + 102} L310,${hem} L90,${hem} L90,${top + 102} L64,${top + 126} L16,${top + 98} L70,${top + 26} Z`;
@@ -835,31 +932,63 @@ function Preview({
     </>
   );
 
+  /** A number on the fabric, centred on `centreCm`, each figure where it falls on the body. */
+  const figures = (text: string, hCm: number, centreCm: number, topY: number) => {
+    const widths = [...text].map((ch) => numberWidthCm(fontId, ch, hCm));
+    const gap = FIGURE_GAP * hCm;
+    const total = widths.reduce((a, b) => a + b, 0) + gap * Math.max(0, widths.length - 1);
+    let x = centreCm - total / 2;
+    return [...text].map((ch, i) => {
+      const mid = x + widths[i]! / 2;
+      x += widths[i]! + gap;
+      return (
+        <text
+          key={i}
+          transform={`translate(${toX(mid)} ${topY + hCm * u}) scale(${squeeze(mid)} 1)`}
+          textAnchor="middle"
+          fontSize={(hCm * u) / 0.7}
+          fill={ink}
+          fontFamily={`"${family}", sans-serif`}
+        >
+          {ch}
+        </text>
+      );
+    });
+  };
+
   const backSponsor = sponsors.find((s) => s.place === "back" && s.qty > 0);
   const chest = sponsors.find((s) => s.place === "chest" && s.qty > 0);
   const sleeve = sponsors.find((s) => s.place === "sleeve" && s.qty > 0);
-  const sponsorBox = (sp: Sponsor, x: number, y: number, extra?: string) => {
-    const w = sp.widthCm * u;
-    const h = w * 0.4;
+  /** A logo of `widthCm` on the fabric, centred on `centreCm`, as wide as it shows on the body. */
+  const shownWidth = (widthCm: number, centreCm: number) =>
+    photos ? R * (Math.sin(angle(centreCm + widthCm / 2)) - Math.sin(angle(centreCm - widthCm / 2))) * u : widthCm * u;
+  const sponsorBox = (sp: Sponsor, centreCm: number, y: number, extra?: string, x?: number) => {
+    const w = extra ? sp.widthCm * u : shownWidth(sp.widthCm, centreCm);
+    const h = sp.widthCm * u * 0.4;
+    const left = (x ?? toX(centreCm)) - w / 2;
     return sp.upload?.url ? (
-      <image href={sp.upload.url} x={x - w / 2} y={y} width={w} height={h} preserveAspectRatio="xMidYMid meet" transform={extra} />
+      <image href={sp.upload.url} x={left} y={y} width={w} height={h} preserveAspectRatio="none" transform={extra} />
     ) : (
       <g transform={extra}>
-        <rect x={x - w / 2} y={y} width={w} height={h} rx={3} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={photos ? 3 : 1} opacity={0.8} />
-        <text x={x} y={y + h / 2 + h * 0.15} textAnchor="middle" fontSize={Math.min(photos ? 30 : 12, h * 0.45)} fill={ink} opacity={0.85} fontFamily="inherit">
+        <rect x={left} y={y} width={w} height={h} rx={3} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={photos ? 3 : 1} opacity={0.8} />
+        <text x={left + w / 2} y={y + h / 2 + h * 0.15} textAnchor="middle" fontSize={Math.min(photos ? 30 : 12, h * 0.45)} fill={ink} opacity={0.85} fontFamily="inherit">
           SPONSOR
         </text>
       </g>
     );
   };
 
-  let numberTop = top + PACK.numberAt * chart.length * u;
-  const sponsorTop = top + 0.11 * chart.length * u;
+  let numberTop = top + PACK.numberAt * L * u;
+  const sponsorTop = top + 0.11 * L * u;
   if (backSponsor) numberTop = Math.max(numberTop, sponsorTop + backSponsor.widthCm * u * 0.4 + 2 * u);
-  const digitsH = heightCm * u;
-  const logoTop = top + PACK.logoAt * chart.length * u;
-  const logoX = photos ? W * PACK.logoX : 255;
+  const chestTop = top + PACK.logoAt * L * u;
+  const side = PACK.chestSide * chart.chest;
   const shown = number.replace(/\D/g, "").slice(0, 2);
+  const frontAt = frontNumber?.place === "center" ? 0 : -side;
+  const chestSponsorTop =
+    frontNumber?.place === "center" ? chestTop + (frontNumber.heightCm + 3) * u : top + 0.33 * L * u;
+  const backWidth = shown ? numberWidthCm(fontId, shown, heightCm) : 0;
+  const cm = (n: number) => `${Math.round(n * 10) / 10}`.replace(".", ",");
 
   return (
     <div style={S.previewCard}>
@@ -867,10 +996,8 @@ function Preview({
         <figure style={{ margin: 0, textAlign: "center" }}>
           <svg viewBox={`0 0 ${W} ${viewH}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Tröjans baksida">
             {photos ? <image href={back!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("back")}
-            {backSponsor && sponsorBox(backSponsor, cx, sponsorTop)}
-            <text x={cx} y={numberTop + digitsH} textAnchor="middle" fontSize={digitsH / 0.7} fill={ink} fontFamily={`"${family}", sans-serif`}>
-              {shown}
-            </text>
+            {backSponsor && sponsorBox(backSponsor, 0, sponsorTop)}
+            {figures(shown, heightCm, 0, numberTop)}
           </svg>
           <figcaption style={S.small}>Bak</figcaption>
         </figure>
@@ -879,15 +1006,26 @@ function Preview({
             {photos ? <image href={front!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("front")}
             {logo &&
               (logo.src ? (
-                <image href={logo.src} x={logoX - (logo.widthCm * u) / 2} y={logoTop} width={logo.widthCm * u} height={logo.widthCm * u * 1.2} preserveAspectRatio="xMidYMin meet" />
+                <image
+                  href={logo.src}
+                  x={toX(side) - shownWidth(logo.widthCm, side) / 2}
+                  y={chestTop}
+                  width={shownWidth(logo.widthCm, side)}
+                  height={logo.widthCm * u * 1.2}
+                  preserveAspectRatio="none"
+                />
               ) : (
-                <circle cx={logoX} cy={logoTop + (logo.widthCm * u) / 2} r={(logo.widthCm * u) / 2} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={photos ? 3 : 1} />
+                <ellipse cx={toX(side)} cy={chestTop + (logo.widthCm * u) / 2} rx={shownWidth(logo.widthCm, side) / 2} ry={(logo.widthCm * u) / 2} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={photos ? 3 : 1} />
               ))}
-            {chest && sponsorBox(chest, cx, top + 0.36 * chart.length * u)}
-            {sleeve && (photos ? sponsorBox(sleeve, W * 0.1, PACK.h * 0.2, `rotate(-62 ${W * 0.1} ${PACK.h * 0.22})`) : sponsorBox(sleeve, 52, top + 64, `rotate(-52 52 ${top + 70})`))}
+            {frontNumber && shown && figures(shown, frontNumber.heightCm, frontAt, chestTop)}
+            {chest && sponsorBox(chest, 0, chestSponsorTop)}
+            {sleeve && (photos ? sponsorBox(sleeve, 0, PACK.h * 0.2, `rotate(-62 ${W * 0.1} ${PACK.h * 0.22})`, W * 0.1) : sponsorBox(sleeve, 0, top + 64, `rotate(-52 52 ${top + 70})`, 52))}
           </svg>
           <figcaption style={S.small}>Fram</figcaption>
         </figure>
+      </div>
+      <div style={{ ...S.small, marginTop: 8, textAlign: "center" }}>
+        {shown ? `Nummer ${shown}: ${cm(heightCm)} × ${cm(backWidth)} cm` : "Inget nummer"} · tröja {size}: {chart.chest} cm bred, {chart.length} cm lång (platt)
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
