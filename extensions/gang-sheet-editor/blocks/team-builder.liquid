@@ -1,14 +1,21 @@
 {%- comment -%}
   Lagpaket: shirts, club logo, digits 0-9 and sponsor logos in one order.
-  The shirt, the prices ("Siffra 20 cm", "Logga 8 cm" … on the price
-  product) and the recommended press are products chosen in the block's
-  settings, rendered here so Shopify prices them for whoever is looking.
+  The shirt is the block's product setting; the price product ("Siffra
+  20 cm", "Logga 8 cm" …) and the recommended press are given by handle,
+  since an app block may have only one product setting. All are rendered
+  here so Shopify prices them for whoever is looking.
   Partner clubs are
   metaobjects of type "forening" (namn, ort, idrott, logga, logga_bredd_cm).
 {%- endcomment -%}
 {%- assign team_shirt = block.settings.shirt_product -%}
-{%- assign team_prices = block.settings.price_product -%}
-{%- assign team_press = block.settings.press_product -%}
+{%- assign team_prices = nil -%}
+{%- if block.settings.price_handle != blank -%}
+  {%- assign team_prices = all_products[block.settings.price_handle] -%}
+{%- endif -%}
+{%- assign team_press = nil -%}
+{%- if block.settings.press_handle != blank -%}
+  {%- assign team_press = all_products[block.settings.press_handle] -%}
+{%- endif -%}
 {%- comment -%} Anchor for the page's "Bygg ert lagpaket" button, clear of the sticky header. {%- endcomment -%}
 <span id="lagpaket" style="display: block; position: relative; top: -96px; visibility: hidden;"></span>
 <div
@@ -41,13 +48,13 @@
         ]
       }{%- else -%}null{%- endif -%},
       "prices": [
-        {%- if team_prices -%}
+        {%- if team_prices and team_prices.id -%}
           {%- for variant in team_prices.variants -%}
             {"id": {{ variant.id }}, "title": {{ variant.title | json }}, "price_cents": {{ variant.price }}}{% unless forloop.last %},{% endunless %}
           {%- endfor -%}
         {%- endif -%}
       ],
-      "press": {%- if team_press -%}{
+      "press": {%- if team_press and team_press.id -%}{
         "variantId": {{ team_press.selected_or_first_available_variant.id }},
         "title": {{ team_press.title | json }},
         "vendor": {{ team_press.vendor | json }},
@@ -107,15 +114,17 @@
       "info": "Varianterna ska ha färg som första alternativ och storlek som andra."
     },
     {
-      "type": "product",
-      "id": "price_product",
-      "label": "Produkt med priserna",
+      "type": "text",
+      "id": "price_handle",
+      "label": "Produkt med priserna (handtag)",
+      "default": "lagpaket-tryck",
       "info": "Varianterna ska heta \"Siffra 20 cm\", \"Siffra 25 cm\", \"Logga 8 cm\", \"Logga 15 cm\" och \"Logga 25 cm\"."
     },
     {
-      "type": "product",
-      "id": "press_product",
-      "label": "Rekommenderad press",
+      "type": "text",
+      "id": "press_handle",
+      "label": "Rekommenderad press (handtag)",
+      "default": "htvront-auto-heat-press-2",
       "info": "Visas som tillval för föreningar som pressar själva. Lämna tomt för att dölja."
     }
   ]
