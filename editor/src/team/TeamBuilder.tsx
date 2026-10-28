@@ -25,8 +25,9 @@ import { fileFromUrl, orderTeam, type OrderProgress, type Piece } from "./order"
  *    eight ones) or the team's own numbers, then adjustable one by one.
  * 4. Sponsor logos, as many as the team has.
  *
- * The shirt beside it shows the back and front to scale for the smallest
- * size ordered, so a 25 cm number on a 110/120 shirt looks as big as it is.
+ * The shirt beside it shows the back and front to scale, for the smallest
+ * size ordered unless another is picked under it, so a 25 cm number on a
+ * 110/120 shirt looks as big as it is.
  */
 
 const ACCENT = "#dc2f3c";
@@ -133,6 +134,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
   const [ownNumbers, setOwnNumbers] = useState("");
   const [digits, setDigits] = useState<number[]>(Array(10).fill(0));
   const [previewNumber, setPreviewNumber] = useState("10");
+  const [previewSize, setPreviewSize] = useState<string | null>(null);
 
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
   const [progress, setProgress] = useState<OrderProgress | null>(null);
@@ -172,15 +174,28 @@ export function TeamBuilder({ data }: { data: TeamData }) {
     return data.clubs.filter((c) => [c.name, c.city, c.sport].join(" ").toLocaleLowerCase("sv-SE").includes(q));
   }, [data.clubs, query]);
 
-  const fillDigits = () => {
-    const own = parseNumbers(ownNumbers);
-    const n = Math.max(0, Math.min(99, parseInt(players, 10) || 0));
-    const numbers = own.length ? own : Array.from({ length: n }, (_, i) => String(i + 1));
+  // The digits follow the number of players as it is typed: 1-15 needs
+  // eight ones and one of every other figure.
+  const fromPlayers = (value: string) => {
+    setPlayers(value);
+    const n = Math.max(0, Math.min(99, parseInt(value, 10) || 0));
+    if (!n) return;
+    setOwnNumbers("");
+    setError(null);
+    const numbers = Array.from({ length: n }, (_, i) => String(i + 1));
+    setDigits(countDigits(numbers));
+    setPreviewNumber(numbers.find((x) => x.length === 2) ?? numbers[0]!);
+  };
+
+  // A team's own numbers ("1, 4, 7, 23") are used when asked, not while typing.
+  const fromOwnNumbers = () => {
+    const numbers = parseNumbers(ownNumbers);
     if (numbers.length === 0) {
-      setError("Skriv hur många spelare ni är, eller era egna nummer.");
+      setError("Skriv era nummer, till exempel 1, 4, 7, 23.");
       return;
     }
     setError(null);
+    setPlayers("");
     setDigits(countDigits(numbers));
     setPreviewNumber(numbers.find((x) => x.length === 2) ?? numbers[0]!);
   };
@@ -211,7 +226,9 @@ export function TeamBuilder({ data }: { data: TeamData }) {
   const canOrder = subtotal > 0 && !missingPrices && !sponsorsWithoutFile && !progress;
 
   const smallest = sizes.find((s) => qty[s]) ?? sizes[0] ?? "130/140";
-  const packshot = variantFor(smallest) ?? shirt?.variants.find((v) => v.color === color) ?? null;
+  // The preview follows the smallest size ordered until a size is picked under it.
+  const shownSize = previewSize && sizes.includes(previewSize) ? previewSize : smallest;
+  const packshot = variantFor(shownSize) ?? shirt?.variants.find((v) => v.color === color) ?? null;
   const chart = SIZE_CHART[smallest] ?? SIZE_CHART["130/140"]!;
   const twoWide = numberWidthCm(style.fontId, "88", heightCm);
   const tooWide = twoWide > chart.chest * 0.75;
@@ -347,7 +364,9 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                 heightCm={heightCm}
                 number={previewNumber}
                 onNumber={setPreviewNumber}
-                size={smallest}
+                size={shownSize}
+                sizes={sizes}
+                onSize={setPreviewSize}
                 logo={hasLogo ? { src: logoSrc, widthCm: logoWidthCm } : null}
                 sponsors={sponsors}
               />
@@ -469,6 +488,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
             {hasLogo && (
               <div style={{ ...S.row, marginTop: 12 }}>
                 <span style={S.fieldLabel}>Klubbmärken</span>
+                <div style={{ width: 140 }}>
                 <Stepper
                   value={logoQty}
                   onChange={(v) => {
@@ -477,6 +497,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                   }}
                   label="Antal klubbmärken"
                 />
+                </div>
                 <span style={S.small}>
                   {String(logoWidthCm).replace(".", ",")} cm på bröstet
                   {logoPrice(logoWidthCm) ? ` · ${kr(logoPrice(logoWidthCm)!.price)}/st` : ""}
@@ -532,17 +553,25 @@ export function TeamBuilder({ data }: { data: TeamData }) {
             <div style={{ display: "grid", gridTemplateColumns: wide ? "120px minmax(0, 1fr) auto" : "minmax(0, 1fr)", gap: 8, alignItems: "end", marginTop: 14 }}>
               <label style={S.field}>
                 <span style={S.fieldTop}>Antal spelare</span>
-                <input type="number" min={1} max={99} inputMode="numeric" value={players} onChange={(e) => setPlayers(e.target.value)} placeholder="15" aria-label="Antal spelare" style={S.input} />
+                <input type="number" min={1} max={99} inputMode="numeric" value={players} onChange={(e) => fromPlayers(e.target.value)} placeholder="15" aria-label="Antal spelare" style={S.input} />
               </label>
               <label style={S.field}>
                 <span style={S.fieldTop}>eller era nummer</span>
-                <input type="text" value={ownNumbers} onChange={(e) => setOwnNumbers(e.target.value)} placeholder="1, 4, 7, 10, 23" aria-label="Era egna nummer" style={S.input} />
+                <input
+                  type="text"
+                  value={ownNumbers}
+                  onChange={(e) => setOwnNumbers(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && fromOwnNumbers()}
+                  placeholder="1, 4, 7, 10, 23"
+                  aria-label="Era egna nummer"
+                  style={S.input}
+                />
               </label>
-              <button type="button" onClick={fillDigits} style={S.secondaryBtn}>
-                Fyll i siffrorna
+              <button type="button" onClick={fromOwnNumbers} style={S.secondaryBtn}>
+                Använd numren
               </button>
             </div>
-            <div style={{ ...S.small, marginTop: 6 }}>Spelare 1-15 behöver till exempel 21 siffror: åtta ettor och en av varje annan. Ändra antalet under varje siffra.</div>
+            <div style={{ ...S.small, marginTop: 6 }}>Siffrorna räknas ut direkt när ni skriver antal spelare: 1-15 behöver 21 siffror, åtta ettor och en av varje annan. Har ni egna nummer, skriv dem och klicka Använd numren. Antalet under varje siffra går att ändra.</div>
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${wide ? 5 : 3}, minmax(0, 1fr))`, gap: 8, marginTop: 12 }}>
               {digits.map((n, d) => (
                 <div key={d} style={S.digit}>
@@ -632,7 +661,9 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                 heightCm={heightCm}
                 number={previewNumber}
                 onNumber={setPreviewNumber}
-                size={smallest}
+                size={shownSize}
+                sizes={sizes}
+                onSize={setPreviewSize}
                 logo={hasLogo ? { src: logoSrc, widthCm: logoWidthCm } : null}
                 sponsors={sponsors}
               />
@@ -725,6 +756,8 @@ function Preview({
   number,
   onNumber,
   size,
+  sizes,
+  onSize,
   logo,
   sponsors,
 }: {
@@ -737,6 +770,8 @@ function Preview({
   number: string;
   onNumber: (v: string) => void;
   size: string;
+  sizes: string[];
+  onSize: (v: string) => void;
   logo: { src: string | null; widthCm: number } | null;
   sponsors: Sponsor[];
 }) {
@@ -822,7 +857,14 @@ function Preview({
           Visa nummer
           <input type="text" inputMode="numeric" maxLength={2} value={number} onChange={(e) => onNumber(e.target.value)} style={{ ...S.input, width: 64, padding: "6px 8px" }} />
         </label>
-        <span style={S.small}>Skala: storlek {size}</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }} role="group" aria-label="Visa på storlek">
+          <span style={S.small}>Storlek</span>
+          {sizes.map((s) => (
+            <button key={s} type="button" aria-pressed={s === size} onClick={() => onSize(s)} style={{ ...S.sizeChip, ...(s === size ? S.sizeChipOn : null) }}>
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -877,9 +919,11 @@ const S: Record<string, React.CSSProperties> = {
     background: "#fff",
     minWidth: 0,
   },
+  sizeChip: { border: `1px solid ${LINE}`, background: "#fff", color: INK, borderRadius: 999, padding: "4px 9px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
+  sizeChipOn: { background: INK, borderColor: INK, color: "#fff", fontWeight: 600 },
   qtyBox: { display: "flex", flexDirection: "column", gap: 6, border: `1px solid ${LINE}`, borderRadius: 12, padding: 10 },
-  stepper: { display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid rgba(0,0,0,0.16)", borderRadius: 10, padding: 2, height: 40, boxSizing: "border-box", background: "#fff", minWidth: 104 },
-  stepBtn: { width: 28, height: 32, border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: INK, fontFamily: "inherit", padding: 0, flexShrink: 0 },
+  stepper: { display: "flex", alignItems: "center", justifyContent: "space-between", border: "1px solid rgba(0,0,0,0.16)", borderRadius: 10, padding: 2, height: 40, boxSizing: "border-box", background: "#fff", minWidth: 0, width: "100%" },
+  stepBtn: { width: 24, height: 32, border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: INK, fontFamily: "inherit", padding: 0, flexShrink: 0 },
   stepInput: { width: "100%", minWidth: 0, border: "none", textAlign: "center", font: "inherit", fontSize: 16, fontVariantNumeric: "tabular-nums", background: "transparent", color: INK, MozAppearance: "textfield" } as React.CSSProperties,
   clubList: { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8, marginTop: 10, maxHeight: 260, overflowY: "auto", padding: 2 },
   clubRow: { display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", border: `1px solid ${LINE}`, borderRadius: 12, background: "#fff", cursor: "pointer", font: "inherit", color: INK },
