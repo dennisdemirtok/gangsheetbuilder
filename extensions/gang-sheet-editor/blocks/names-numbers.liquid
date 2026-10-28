@@ -1,14 +1,35 @@
 {%- comment -%}
   Namn och Siffror: the team names-and-numbers configurator, inline on the
-  product page. The prices are this product's own variants ("Namn 7 cm",
-  "Nummer 25 cm" …), rendered here so Shopify prices them for whoever is
-  looking — a B2B company sees its catalogue price without the app knowing.
+  product page. The printed pieces are this product's own variants ("Namn
+  7 cm", "Nummer 10 cm", "Initialer 3 cm" …). As on the team page, 20 and
+  25 cm numbers are stock digits ("Arena 20 cm" / "Vit" / "7"), sponsor
+  logos are priced by the team page's price product, and the shirt and
+  press are offered alongside; an app block may have only one product
+  setting, so those are given by handle. All are rendered here so Shopify
+  prices them for whoever is looking (B2B catalogues included).
 {%- endcomment -%}
 {%- assign nn_product = block.settings.product | default: product -%}
+{%- assign nn_shirt = nil -%}
+{%- if block.settings.shirt_handle != blank -%}
+  {%- assign nn_shirt = all_products[block.settings.shirt_handle] -%}
+{%- endif -%}
+{%- assign nn_prices = nil -%}
+{%- if block.settings.price_handle != blank -%}
+  {%- assign nn_prices = all_products[block.settings.price_handle] -%}
+{%- endif -%}
+{%- assign nn_digits = nil -%}
+{%- if block.settings.digits_handle != blank -%}
+  {%- assign nn_digits = all_products[block.settings.digits_handle] -%}
+{%- endif -%}
+{%- assign nn_press = nil -%}
+{%- if block.settings.press_handle != blank -%}
+  {%- assign nn_press = all_products[block.settings.press_handle] -%}
+{%- endif -%}
 <div
   id="gs-nn-{{ block.id }}"
   class="gs-nn-root"
   data-app-proxy-url="/apps/gangsheet"
+  data-template-url="{{ block.settings.template_url | escape }}"
   style="min-height: 560px; width: 100%;"
   {{ block.shopify_attributes }}
 >
@@ -19,6 +40,53 @@
       {%- endfor -%}
     ]
   </script>
+  <script type="application/json" data-team>
+    {
+      "shirt": {%- if nn_shirt and nn_shirt.id -%}{
+        "title": {{ nn_shirt.title | json }},
+        "vendor": {{ nn_shirt.vendor | json }},
+        "url": {{ nn_shirt.url | json }},
+        "variants": [
+          {%- for variant in nn_shirt.variants -%}
+            {%- comment -%} The back packshot is the image whose alt names the colour and "baksida". {%- endcomment -%}
+            {%- assign nn_color = variant.option1 | downcase -%}
+            {%- assign nn_back = nil -%}
+            {%- for img in nn_shirt.images -%}
+              {%- assign nn_alt = img.alt | downcase -%}
+              {%- if nn_alt contains nn_color and nn_alt contains 'baksida' -%}
+                {%- assign nn_back = img -%}
+                {%- break -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {"id": {{ variant.id }}, "color": {{ variant.option1 | json }}, "size": {{ variant.option2 | json }}, "price_cents": {{ variant.price }}, "available": {{ variant.available | json }}, "image": {% if variant.featured_image %}{{ variant.featured_image | image_url: width: 300 | json }}{% else %}null{% endif %}, "front": {% if variant.featured_image %}{{ variant.featured_image | image_url: width: 900 | json }}{% else %}null{% endif %}, "back": {% if nn_back %}{{ nn_back | image_url: width: 900 | json }}{% else %}null{% endif %}}{% unless forloop.last %},{% endunless %}
+          {%- endfor -%}
+        ]
+      }{%- else -%}null{%- endif -%},
+      "prices": [
+        {%- if nn_prices and nn_prices.id -%}
+          {%- for variant in nn_prices.variants -%}
+            {"id": {{ variant.id }}, "title": {{ variant.title | json }}, "price_cents": {{ variant.price }}}{% unless forloop.last %},{% endunless %}
+          {%- endfor -%}
+        {%- endif -%}
+      ],
+      "digits": [
+        {%- if nn_digits and nn_digits.id -%}
+          {%- for variant in nn_digits.variants -%}
+            {"id": {{ variant.id }}, "style": {{ variant.option1 | json }}, "color": {{ variant.option2 | json }}, "digit": {{ variant.option3 | json }}, "price_cents": {{ variant.price }}}{% unless forloop.last %},{% endunless %}
+          {%- endfor -%}
+        {%- endif -%}
+      ],
+      "press": {%- if nn_press and nn_press.id -%}{
+        "variantId": {{ nn_press.selected_or_first_available_variant.id }},
+        "title": {{ nn_press.title | json }},
+        "vendor": {{ nn_press.vendor | json }},
+        "price_cents": {{ nn_press.selected_or_first_available_variant.price }},
+        "image": {% if nn_press.featured_image %}{{ nn_press.featured_image | image_url: width: 300 | json }}{% else %}null{% endif %},
+        "url": {{ nn_press.url | json }}
+      }{%- else -%}null{%- endif -%},
+      "clubs": []
+    }
+  </script>
   <div style="display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 320px; color: #6b6b70; font-size: 14px;">
     <span style="width: 18px; height: 18px; border-radius: 50%; border: 2px solid #dc2f3c; border-top-color: transparent; display: inline-block; animation: gs-nn-load 0.8s linear infinite;"></span>
     Laddar…
@@ -28,7 +96,7 @@
 <style>
   @keyframes gs-nn-load { to { transform: rotate(360deg); } }
   .gs-nn-root img, .gs-nn-root svg { max-width: none; }
-  .gs-nn-root button { font: inherit; }
+  .gs-nn-root button, .gs-nn-root input, .gs-nn-root select { font: inherit; }
 </style>
 
 <script>
@@ -61,7 +129,42 @@
       "type": "product",
       "id": "product",
       "label": "Produkt med storlekarna",
-      "info": "Lämnas tom används sidans produkt. Varianterna ska heta t.ex. \"Namn 7 cm\" och \"Nummer 25 cm\"."
+      "info": "Lämnas tom används sidans produkt. Varianterna ska heta t.ex. \"Namn 7 cm\", \"Nummer 10 cm\" och \"Initialer 3 cm\"."
+    },
+    {
+      "type": "text",
+      "id": "digits_handle",
+      "label": "Siffror i lager (handtag)",
+      "default": "lagsiffror",
+      "info": "20 och 25 cm-nummer. Tre alternativ: stil och höjd (\"Arena 20 cm\"), färg (\"Vit\", \"Svart\") och siffra (0-9)."
+    },
+    {
+      "type": "text",
+      "id": "price_handle",
+      "label": "Priser för sponsorloggor (handtag)",
+      "default": "lagpaket-tryck",
+      "info": "Varianterna ska heta \"Logga 8 cm\", \"Logga 15 cm\" och \"Logga 25 cm\"."
+    },
+    {
+      "type": "text",
+      "id": "shirt_handle",
+      "label": "Tröja (handtag)",
+      "default": "clique-basic-active-t-junior",
+      "info": "Visas i förhandsvisningen och som tillval. Färg som första alternativ, storlek som andra."
+    },
+    {
+      "type": "text",
+      "id": "press_handle",
+      "label": "Rekommenderad press (handtag)",
+      "default": "htvront-auto-heat-press-2",
+      "info": "Visas som tillval. Lämna tomt för att dölja."
+    },
+    {
+      "type": "text",
+      "id": "template_url",
+      "label": "Excelmall (länk)",
+      "default": "https://cdn.shopify.com/s/files/1/0988/4359/1030/files/namn-och-nummer-mall.xlsx?v=1793179760",
+      "info": "Länk till mallen i Shopify Files (Innehåll > Filer). Lämna tomt för att dölja länken."
     }
   ]
 }

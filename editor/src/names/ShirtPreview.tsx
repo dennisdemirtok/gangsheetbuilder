@@ -196,3 +196,165 @@ function shade(hex: string, amount: number): string {
   const f = (c: number) => Math.max(0, Math.min(255, Math.round(c + 255 * amount)));
   return `rgb(${f((n >> 16) & 255)}, ${f((n >> 8) & 255)}, ${f(n & 255)})`;
 }
+
+/** How wide `text` prints at a figure height, from the font itself. */
+export function textWidthCm(family: string, text: string, heightCm: number, sample = "0123456789"): number {
+  const ctx = document.createElement("canvas").getContext("2d");
+  if (!ctx) return text.length * heightCm * 0.55;
+  ctx.font = `100px "${family}"`;
+  const m = ctx.measureText(text);
+  const w = m.actualBoundingBoxLeft + m.actualBoundingBoxRight || m.width;
+  return (w / (capRatio(family, sample) * 100)) * heightCm;
+}
+
+/**
+ * The packshots are ghost-mannequin shots: the body is round, so its
+ * visible width says little, but collar to hem is the size chart's length
+ * on 98 % of the picture's height. That length sets the scale, as on the
+ * team page, so a 25 cm number on 110/120 takes the room it will.
+ */
+const PACK = {
+  w: 760,
+  h: 1000,
+  collar: 12,
+  length: 0.98,
+  /** Centre of the club logo across the picture (the wearer's left chest). */
+  logoX: 0.645,
+};
+
+export interface PreviewLogo {
+  src: string | null;
+  widthCm: number;
+  place: "back" | "chest" | "sleeve";
+}
+
+/**
+ * Back and front of the shirt with the chosen row on it: the name over
+ * the number on the back, initials under the club logo on the front, and
+ * the sponsors where they go. On the shirt's own packshots when it has
+ * them; a flat shirt is drawn when not.
+ */
+export function PackshotPreview({
+  front,
+  back,
+  shirtColor,
+  chart,
+  ink,
+  name,
+  number,
+  initials,
+  nameFamily,
+  numberFamily,
+  nameCm,
+  numberCm,
+  initialsCm,
+  sponsors,
+}: {
+  front: string | null;
+  back: string | null;
+  shirtColor: string;
+  /** Half chest and body length of the size shown, cm. */
+  chart: { chest: number; length: number };
+  ink: string;
+  name: string | null;
+  number: string | null;
+  initials: string | null;
+  nameFamily: string;
+  numberFamily: string;
+  nameCm: number;
+  numberCm: number;
+  initialsCm: number;
+  sponsors: PreviewLogo[];
+}) {
+  const photos = Boolean(front && back);
+  const W = photos ? PACK.w : 400;
+  const top = photos ? PACK.collar : 34;
+  const u = photos ? (PACK.h * PACK.length) / chart.length : 220 / chart.chest;
+  const L = chart.length * u;
+  const hem = top + L;
+  const viewH = photos ? PACK.h : Math.ceil(hem + 8);
+  const cx = W / 2;
+
+  const stroke = shade(shirtColor, -0.14);
+  const body = `M152,${top} C170,${top + 14} 230,${top + 14} 248,${top} L330,${top + 26} L384,${top + 98} L336,${top + 126} L310,${top + 102} L310,${hem} L90,${hem} L90,${top + 102} L64,${top + 126} L16,${top + 98} L70,${top + 26} Z`;
+  const drawn = (side: "back" | "front") => (
+    <>
+      <path d={body} fill={shirtColor} stroke={stroke} strokeWidth={2} />
+      <path d={`M152,${top} C170,${top + (side === "back" ? 10 : 40)} 230,${top + (side === "back" ? 10 : 40)} 248,${top}`} fill={side === "back" ? "none" : "rgba(0,0,0,0.12)"} stroke={stroke} strokeWidth={side === "back" ? 3 : 2} />
+    </>
+  );
+
+  const line = photos ? 3 : 1;
+  const box = (sp: PreviewLogo, x: number, y: number, transform?: string) => {
+    const w = sp.widthCm * u;
+    const h = w * 0.4;
+    return sp.src ? (
+      <image href={sp.src} x={x - w / 2} y={y} width={w} height={h} preserveAspectRatio="xMidYMid meet" transform={transform} />
+    ) : (
+      <g transform={transform}>
+        <rect x={x - w / 2} y={y} width={w} height={h} rx={3} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={line} opacity={0.8} />
+        <text x={x} y={y + h / 2 + h * 0.15} textAnchor="middle" fontSize={Math.min(photos ? 30 : 12, h * 0.45)} fill={ink} opacity={0.85} fontFamily="inherit">
+          SPONSOR
+        </text>
+      </g>
+    );
+  };
+  const backSponsor = sponsors.find((s) => s.place === "back");
+  const chest = sponsors.find((s) => s.place === "chest");
+  const sleeve = sponsors.find((s) => s.place === "sleeve");
+
+  // Back, top down: sponsor, name, a hand's width (~3 cm), number.
+  const sponsorTop = top + 0.08 * L;
+  let y = backSponsor ? sponsorTop + backSponsor.widthCm * u * 0.4 + 2 * u : top + 0.11 * L;
+  const nameBase = y + nameCm * u;
+  if (name) y = nameBase + 3 * u;
+  else y = Math.max(y, top + 0.19 * L);
+  const numberBase = y + numberCm * u;
+
+  // Front: the club logo (a placeholder) on the left chest, initials under it.
+  const logoCm = 7;
+  const logoTop = top + 0.2 * L;
+  const logoX = photos ? W * PACK.logoX : 255;
+  const initialsBase = logoTop + logoCm * u + 1.5 * u + initialsCm * u;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+      <figure style={{ margin: 0, textAlign: "center" }}>
+        <svg viewBox={`0 0 ${W} ${viewH}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Tröjans baksida">
+          {photos ? <image href={back!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("back")}
+          {backSponsor && box(backSponsor, cx, sponsorTop)}
+          {name && (
+            <text x={cx} y={nameBase} textAnchor="middle" fontSize={(nameCm * u) / capRatio(nameFamily, "HANDE")} fill={ink} fontFamily={`"${nameFamily}", sans-serif`} style={{ letterSpacing: "0.02em" }}>
+              {name}
+            </text>
+          )}
+          {number && (
+            <text x={cx} y={numberBase} textAnchor="middle" fontSize={(numberCm * u) / capRatio(numberFamily, "0123456789")} fill={ink} fontFamily={`"${numberFamily}", sans-serif`}>
+              {number}
+            </text>
+          )}
+        </svg>
+        <figcaption style={{ fontSize: 12.5, color: "#6b6b70" }}>Bak</figcaption>
+      </figure>
+      <figure style={{ margin: 0, textAlign: "center" }}>
+        <svg viewBox={`0 0 ${W} ${viewH}`} style={{ width: "100%", height: "auto", display: "block" }} role="img" aria-label="Tröjans framsida">
+          {photos ? <image href={front!} x={0} y={0} width={W} height={PACK.h} preserveAspectRatio="xMidYMin meet" /> : drawn("front")}
+          {initials && (
+            <>
+              <circle cx={logoX} cy={logoTop + (logoCm * u) / 2} r={(logoCm * u) / 2} fill="none" stroke={ink} strokeDasharray="6 4" strokeWidth={line} opacity={0.6} />
+              <text x={logoX} y={logoTop + (logoCm * u) / 2 + 2.2 * u * 0.35} textAnchor="middle" fontSize={2.2 * u} fill={ink} opacity={0.6} fontFamily="inherit">
+                LOGGA
+              </text>
+              <text x={logoX} y={initialsBase} textAnchor="middle" fontSize={(initialsCm * u) / capRatio(nameFamily, "HANDE")} fill={ink} fontFamily={`"${nameFamily}", sans-serif`}>
+                {initials}
+              </text>
+            </>
+          )}
+          {chest && box(chest, cx, top + 0.36 * L)}
+          {sleeve && (photos ? box(sleeve, W * 0.1, PACK.h * 0.2, `rotate(-62 ${W * 0.1} ${PACK.h * 0.22})`) : box(sleeve, 52, top + 64, `rotate(-52 52 ${top + 70})`))}
+        </svg>
+        <figcaption style={{ fontSize: 12.5, color: "#6b6b70" }}>Fram</figcaption>
+      </figure>
+    </div>
+  );
+}

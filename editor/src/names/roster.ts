@@ -1,6 +1,6 @@
 /**
  * The team list: one row per player, typed in a table, pasted from a
- * spreadsheet or read from a CSV file.
+ * spreadsheet or read from a CSV or Excel file.
  */
 
 export interface Row {
@@ -8,14 +8,55 @@ export interface Row {
   name: string;
   number: string;
   qty: number;
+  /** Printed under the club logo; empty takes them from a full name. */
+  initials?: string;
 }
 
 export function newRow(p: Partial<Row> = {}): Row {
-  return { id: "r" + Math.random().toString(36).slice(2, 9), name: "", number: "", qty: 1, ...p };
+  return { id: "r" + Math.random().toString(36).slice(2, 9), name: "", number: "", qty: 1, initials: "", ...p };
+}
+
+/** "Anna Andersson" → "AA". A single name gives none: "Andersson" is not enough. */
+export function initialsOf(name: string): string {
+  const words = name.trim().split(/[\s-]+/).filter(Boolean);
+  if (words.length < 2) return "";
+  return words.map((w) => w[0]!).join("").toLocaleUpperCase("sv-SE").slice(0, 3);
+}
+
+/** What a row prints as initials: typed, or taken from the name. */
+export function rowInitials(row: Row): string {
+  return (row.initials ?? "").trim().toLocaleUpperCase("sv-SE") || initialsOf(row.name);
+}
+
+export function cleanInitials(v: string): string {
+  return v.replace(/[^\p{L}.\s]/gu, "").toLocaleUpperCase("sv-SE").slice(0, 6);
 }
 
 const NUMBER = /^#?\d{1,3}$/;
-const HEADER = /^(namn|name|spelare|player|nummer|number|nr|no|antal|qty|quantity|st)$/i;
+const HEADER = /^(namn|name|spelare|player|nummer|number|nr|no|antal|qty|quantity|st|initialer|initials)$/i;
+
+/** Column headings, as in the Excel template: Namn, Nummer, Initialer, Antal. */
+const COLUMNS: { field: "name" | "number" | "initials" | "qty"; re: RegExp }[] = [
+  { field: "name", re: /^(namn|name|spelare|player|efternamn|tryck)$/i },
+  { field: "number", re: /^(nummer|number|nr|no|#|tröjnummer)$/i },
+  { field: "initials", re: /^(initialer|initials|init)$/i },
+  { field: "qty", re: /^(antal|qty|quantity|st)$/i },
+];
+
+/** Fields of a line. Not trimmed first: an empty first column keeps its place. */
+function splitFields(line: string): string[] {
+  const raw = line.replace(/^\uFEFF/, "");
+  const delimiter = raw.includes("\t") ? "\t" : raw.includes(";") ? ";" : raw.includes(",") ? "," : null;
+  return (delimiter ? raw.split(delimiter) : [raw]).map((f) => f.trim().replace(/^"(.*)"$/, "$1").trim());
+}
+
+/** A heading row's fields to columns, or null when the line is not one. */
+function headerMap(line: string): ((typeof COLUMNS)[number]["field"] | null)[] | null {
+  const fields = splitFields(line);
+  if (fields.filter(Boolean).length < 2) return null;
+  const map = fields.map((f) => COLUMNS.find((c) => c.re.test(f))?.field ?? null);
+  return fields.some((f, i) => f && !map[i]) ? null : map;
+}
 
 function cleanNumber(v: string): string {
   return v.replace(/^#/, "").trim();
@@ -68,12 +109,30 @@ function parseLine(line: string): Row | null {
   return newRow({ name: cleanName(a), number: NUMBER.test(b) ? cleanNumber(b) : "", qty: cleanQty(c) });
 }
 
-/** A pasted list or a CSV file. Header rows and blank lines are skipped. */
+/**
+ * A pasted list, a CSV file or an Excel sheet as tab-separated lines.
+ * A heading row (Namn, Nummer, Initialer, Antal) says which column is
+ * which; without one the fields are guessed line by line. Blank lines
+ * are skipped.
+ */
 export function parseRoster(text: string): Row[] {
-  return text
-    .split(/\r?\n/)
-    .map(parseLine)
-    .filter((r): r is Row => r !== null && (r.name !== "" || r.number !== ""));
+  const lines = text.split(/\r?\n/);
+  const first = lines.findIndex((l) => l.trim() !== "");
+  const map = first >= 0 ? headerMap(lines[first]!) : null;
+  const rows = map
+    ? lines.slice(first + 1).map((line) => {
+        const fields = splitFields(line);
+        const get = (field: (typeof COLUMNS)[number]["field"]) => fields[map.indexOf(field)] ?? "";
+        const number = cleanNumber(get("number"));
+        return newRow({
+          name: cleanName(get("name")),
+          number: NUMBER.test(number) ? number : "",
+          initials: map.includes("initials") ? cleanInitials(get("initials")) : "",
+          qty: cleanQty(get("qty")),
+        });
+      })
+    : lines.map(parseLine);
+  return rows.filter((r): r is Row => r !== null && (r.name !== "" || r.number !== "" || (r.initials ?? "") !== ""));
 }
 
 /** CSV files from Excel in Sweden are often Latin-1; try UTF-8 first. */

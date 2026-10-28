@@ -99,6 +99,8 @@ export const DOUBLE_OUTLINE = { outer: 0.012, gap: 0.016, inner: 0.02 };
 
 export const NAME_SIZES_CM = [5, 7];
 export const NUMBER_SIZES_CM = [5, 7, 10, 20, 25];
+/** Initials under the club logo on the chest. */
+export const INITIALS_CM = 3;
 
 export function colorLabel(value: string): string {
   return COLORS.find((c) => c.value === value)?.label ?? value;
@@ -113,6 +115,8 @@ export interface Look {
   nameCm: number;
   numberCm: number;
   uppercase: boolean;
+  /** Initials too, one per row, in the name style. */
+  initials?: boolean;
 }
 
 export const DEFAULT_LOOK: Look = {

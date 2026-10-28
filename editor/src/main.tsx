@@ -2,7 +2,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { App } from "./App";
 import { ReadySheetModal } from "./components/ReadySheet/ReadySheetModal";
 import { setAppProxyUrl } from "./services/api";
-import { NamesNumbers } from "./names/NamesNumbers";
+import { NamesPage } from "./names/NamesPage";
 import { readPrices } from "./names/pricing";
 import { TeamBuilder } from "./team/TeamBuilder";
 import { readTeamData } from "./team/data";
@@ -209,13 +209,20 @@ function openUpload(): void {
     style.textContent = "@keyframes gs-nn-spin { to { transform: rotate(360deg); } }";
     document.head.appendChild(style);
   }
-  let variants: unknown = [];
-  try {
-    variants = JSON.parse(el.querySelector("script[data-nn-variants]")?.textContent || "[]");
-  } catch {
-    variants = [];
-  }
-  createRoot(el).render(<NamesNumbers prices={readPrices(variants)} />);
+  const read = (selector: string, fallback: unknown) => {
+    try {
+      return JSON.parse(el.querySelector(selector)?.textContent || "null") ?? fallback;
+    } catch {
+      return fallback;
+    }
+  };
+  // The shirt, stock digits, logo prices and press come as on the team page.
+  const data = {
+    prices: readPrices(read("script[data-nn-variants]", [])),
+    team: readTeamData(read("script[data-team]", {})),
+    templateUrl: el.dataset.templateUrl || null,
+  };
+  createRoot(el).render(<NamesPage data={data} />);
 };
 
 /** The team page: shirts, club, digits and sponsors (blocks/team-builder.liquid). */

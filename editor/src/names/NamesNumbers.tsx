@@ -385,7 +385,7 @@ function Step({ n, title, aside, children }: { n: number; title: string; aside?:
   );
 }
 
-function StylePicker({
+export function StylePicker({
   label,
   styles,
   value,
