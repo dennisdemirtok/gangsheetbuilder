@@ -5,7 +5,8 @@
  * - the shirt product's variants (colour × size),
  * - the price product's variants, "Siffra 20 cm", "Logga 8 cm" …, one price
  *   per piece,
- * - the partner clubs, metaobjects of type "forening" with a saved logo.
+ * - the partner clubs, metaobjects of type "forening" with a saved logo,
+ * - the heat press recommended alongside, if one is chosen.
  */
 
 export interface ShirtVariant {
@@ -26,6 +27,16 @@ export interface Shirt {
   vendor: string;
   url: string | null;
   variants: ShirtVariant[];
+}
+
+/** The press the page recommends to a club that presses its own shirts. */
+export interface Press {
+  variantId: string;
+  title: string;
+  vendor: string;
+  price: number;
+  image: string | null;
+  url: string | null;
 }
 
 export interface Club {
@@ -49,6 +60,7 @@ export interface TeamData {
   shirt: Shirt | null;
   prices: PriceList;
   clubs: Club[];
+  press: Press | null;
 }
 
 export const DIGIT_HEIGHTS_CM = [20, 25];
@@ -113,7 +125,20 @@ export function readTeamData(json: unknown): TeamData {
     }))
     .sort((a: Club, b: Club) => a.name.localeCompare(b.name, "sv"));
 
-  return { shirt, prices, clubs };
+  const p = raw.press;
+  const press: Press | null =
+    p && p.variantId
+      ? {
+          variantId: String(p.variantId),
+          title: String(p.title ?? ""),
+          vendor: String(p.vendor ?? ""),
+          price: num(p.price_cents) / 100,
+          image: p.image ? String(p.image) : null,
+          url: p.url ? String(p.url) : null,
+        }
+      : null;
+
+  return { shirt, prices, clubs, press };
 }
 
 /** Garment measurements (cm) for the preview: half chest and body length. */

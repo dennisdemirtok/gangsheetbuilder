@@ -24,6 +24,7 @@ import { fileFromUrl, orderTeam, type OrderProgress, type Piece } from "./order"
  * 3. The digits 0-9: filled in from the number of players (1-15 needs
  *    eight ones) or the team's own numbers, then adjustable one by one.
  * 4. Sponsor logos, as many as the team has.
+ * 5. A heat press, recommended to clubs that press for every team.
  *
  * The shirt beside it shows the back and front to scale, for the smallest
  * size ordered unless another is picked under it, so a 25 cm number on a
@@ -137,6 +138,9 @@ export function TeamBuilder({ data }: { data: TeamData }) {
   const [previewSize, setPreviewSize] = useState<string | null>(null);
 
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
+  // One spare of every figure, for players who join during the season.
+  const [spare, setSpare] = useState(false);
+  const [withPress, setWithPress] = useState(false);
   const [progress, setProgress] = useState<OrderProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [added, setAdded] = useState(false);
@@ -205,7 +209,8 @@ export function TeamBuilder({ data }: { data: TeamData }) {
   const logoPrice = (widthCm: number) => data.prices.get(logoKey(widthCm)) ?? null;
   const variantFor = (size: string) => shirt?.variants.find((v) => v.color === color && v.size === size) ?? null;
 
-  const digitCount = digits.reduce((a, b) => a + b, 0);
+  const orderDigits = digits.map((n) => n + (spare ? 1 : 0));
+  const digitCount = orderDigits.reduce((a, b) => a + b, 0);
   const lines: { label: string; detail: string; qty: number; unit: number }[] = [];
   for (const s of sizes) {
     const v = variantFor(s);
@@ -220,6 +225,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
     const p = logoPrice(sp.widthCm);
     if (p && sp.qty && sp.upload) lines.push({ label: `Sponsorlogga ${i + 1}`, detail: `${sp.widthCm} cm, ${PLACES.find((x) => x.id === sp.place)!.label.toLowerCase()}`, qty: sp.qty, unit: p.price });
   });
+  if (withPress && data.press) lines.push({ label: `${data.press.vendor} ${data.press.title}`.trim(), detail: "Värmepress", qty: 1, unit: data.press.price });
   const subtotal = lines.reduce((s, l) => s + l.qty * l.unit, 0);
   const missingPrices = (digitCount > 0 && !digitPrice) || (hasLogo && logoQty > 0 && !logoPrice(logoWidthCm));
   const sponsorsWithoutFile = sponsors.some((s) => s.qty > 0 && !s.upload);
@@ -240,7 +246,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
     try {
       const pieces: Piece[] = [];
       const common = { Lag: club?.name || ownName.trim() || "" };
-      digits.forEach((count, d) => {
+      orderDigits.forEach((count, d) => {
         if (!count || !digitPrice) return;
         pieces.push({
           key: `digit|${style.fontId}|${heightCm}|${ink}|${d}`,
@@ -254,7 +260,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
             ...(common.Lag ? common : {}),
             Stil: `${style.label}, ${heightCm} cm`,
             Färg: COLORS.find((c) => c.value === ink)?.label ?? ink,
-            Siffror: digits.map((n, i) => (n ? `${n} st ${i}` : "")).filter(Boolean).join(", "),
+            Siffror: orderDigits.map((n, i) => (n ? `${n} st ${i}` : "")).filter(Boolean).join(", ") + (spare ? " (en reserv av varje)" : ""),
           },
         });
       });
@@ -295,6 +301,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
       const shirtsInCart = sizes
         .map((s) => ({ variantId: variantFor(s)?.id ?? "", quantity: qty[s] || 0 }))
         .filter((s) => s.variantId && s.quantity > 0);
+      if (withPress && data.press) shirtsInCart.push({ variantId: data.press.variantId, quantity: 1 });
       await orderTeam(pieces, shirtsInCart, setProgress);
       setAdded(true);
       const root = (window as any).Shopify?.routes?.root || "/";
@@ -580,6 +587,15 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                 </div>
               ))}
             </div>
+            <label style={S.option}>
+              <input type="checkbox" checked={spare} onChange={(e) => setSpare(e.target.checked)} style={{ accentColor: ACCENT, width: 18, height: 18, flexShrink: 0 }} />
+              <span>
+                <strong>Reservsiffror, en av varje 0-9</strong>
+                <span style={{ ...S.small, display: "block" }}>
+                  10 extra siffror{digitPrice ? ` för ${kr(10 * digitPrice.price)}` : ""}, för spelare som kommer till under säsongen eller en siffra som går sönder.
+                </span>
+              </span>
+            </label>
           </Step>
 
           <Step n={4} title="Sponsorloggor" aside="Tillval">
@@ -645,6 +661,33 @@ export function TeamBuilder({ data }: { data: TeamData }) {
               + Lägg till sponsorlogga
             </button>
           </Step>
+
+          {data.press && (
+            <Step n={5} title="Press" aside="Tillval">
+              <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
+                {data.press.image && <img src={data.press.image} alt="" style={{ width: 96, height: 96, objectFit: "cover", borderRadius: 12, background: SOFT, flexShrink: 0 }} />}
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 700 }}>Pressar ni åt hela föreningen?</div>
+                  <div style={{ ...S.small, marginTop: 2 }}>
+                    Då rekommenderar vi {data.press.vendor} {data.press.title}. Den sänker och lyfter plattan själv, så varje tröja får samma tryck och tid. Plattan på 38 × 38 cm rymmer en 25 cm-siffra, och teflonduk ingår.
+                  </div>
+                  {data.press.url && (
+                    <a href={data.press.url} target="_blank" rel="noopener" style={{ ...S.link, fontSize: 12.5 }}>
+                      Läs mer om pressen
+                    </a>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-pressed={withPress}
+                onClick={() => setWithPress((v) => !v)}
+                style={{ ...S.secondaryBtn, marginTop: 12, width: "100%", ...(withPress ? { background: INK, color: "#fff", borderColor: INK } : null) }}
+              >
+                {withPress ? `Tillagd · ${kr(data.press.price)} (ta bort)` : `Lägg till pressen · ${kr(data.press.price)}`}
+              </button>
+            </Step>
+          )}
           {!wide && summary}
           {error && <div style={S.error}>{error}</div>}
         </div>
@@ -920,6 +963,7 @@ const S: Record<string, React.CSSProperties> = {
     minWidth: 0,
   },
   // Longhands: sizeChipOn changes only the colour.
+  option: { display: "flex", alignItems: "flex-start", gap: 10, marginTop: 12, padding: "10px 12px", border: `1px solid ${LINE}`, borderRadius: 12, cursor: "pointer", fontSize: 14 },
   sizeChip: { borderWidth: 1, borderStyle: "solid", borderColor: LINE, background: "#fff", color: INK, borderRadius: 999, padding: "4px 9px", fontSize: 12, cursor: "pointer", fontFamily: "inherit" },
   sizeChipOn: { background: INK, borderColor: INK, color: "#fff", fontWeight: 600 },
   qtyBox: { display: "flex", flexDirection: "column", gap: 6, border: `1px solid ${LINE}`, borderRadius: 12, padding: 10 },
@@ -934,7 +978,7 @@ const S: Record<string, React.CSSProperties> = {
   digitTile: { display: "block", borderRadius: 8, fontSize: 52, lineHeight: "76px", height: 76, textAlign: "center" },
   sponsorRow: { display: "grid", gap: 8, alignItems: "center", border: `1px solid ${LINE}`, borderRadius: 12, padding: 8 },
   remove: { width: 28, height: 32, border: "none", background: "transparent", color: "#a1a1a6", fontSize: 20, cursor: "pointer", padding: 0 },
-  secondaryBtn: { border: "1px solid rgba(0,0,0,0.16)", background: "#fff", borderRadius: 10, padding: "10px 14px", cursor: "pointer", font: "inherit", fontSize: 13.5, fontWeight: 600, color: INK, height: 44 },
+  secondaryBtn: { borderWidth: 1, borderStyle: "solid", borderColor: "rgba(0,0,0,0.16)", background: "#fff", borderRadius: 10, padding: "10px 14px", cursor: "pointer", font: "inherit", fontSize: 13.5, fontWeight: 600, color: INK, height: 44 },
   note: { padding: "10px 12px", borderRadius: 10, background: "#fff8e6", border: "1px solid #f5d48a", color: "#7a4b00", fontSize: 13 },
   summary: { border: `1px solid ${LINE}`, borderRadius: 16, padding: 16, background: "#fff", boxShadow: "0 8px 30px rgba(0,0,0,0.06)" },
   sumRow: { display: "flex", justifyContent: "space-between", gap: 10 },

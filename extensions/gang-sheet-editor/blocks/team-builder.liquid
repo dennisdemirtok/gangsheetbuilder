@@ -1,12 +1,14 @@
 {%- comment -%}
   Lagpaket: shirts, club logo, digits 0-9 and sponsor logos in one order.
-  The shirt and the prices are products chosen in the block's settings
-  ("Siffra 20 cm", "Logga 8 cm" … on the price product), rendered here so
-  Shopify prices them for whoever is looking. Partner clubs are
+  The shirt, the prices ("Siffra 20 cm", "Logga 8 cm" … on the price
+  product) and the recommended press are products chosen in the block's
+  settings, rendered here so Shopify prices them for whoever is looking.
+  Partner clubs are
   metaobjects of type "forening" (namn, ort, idrott, logga, logga_bredd_cm).
 {%- endcomment -%}
 {%- assign team_shirt = block.settings.shirt_product -%}
 {%- assign team_prices = block.settings.price_product -%}
+{%- assign team_press = block.settings.press_product -%}
 {%- comment -%} Anchor for the page's "Bygg ert lagpaket" button, clear of the sticky header. {%- endcomment -%}
 <span id="lagpaket" style="display: block; position: relative; top: -96px; visibility: hidden;"></span>
 <div
@@ -45,6 +47,14 @@
           {%- endfor -%}
         {%- endif -%}
       ],
+      "press": {%- if team_press -%}{
+        "variantId": {{ team_press.selected_or_first_available_variant.id }},
+        "title": {{ team_press.title | json }},
+        "vendor": {{ team_press.vendor | json }},
+        "price_cents": {{ team_press.selected_or_first_available_variant.price }},
+        "image": {% if team_press.featured_image %}{{ team_press.featured_image | image_url: width: 300 | json }}{% else %}null{% endif %},
+        "url": {{ team_press.url | json }}
+      }{%- else -%}null{%- endif -%},
       "clubs": [
         {%- for club in shop.metaobjects.forening.values -%}
           {"id": {{ club.system.handle | json }}, "name": {{ club.namn.value | json }}, "city": {{ club.ort.value | json }}, "sport": {{ club.idrott.value | json }}, "logo": {% if club.logga.value %}{{ club.logga.value | image_url: width: 2400 | json }}{% else %}null{% endif %}, "widthCm": {{ club.logga_bredd_cm.value | default: 6 | json }}}{% unless forloop.last %},{% endunless %}
@@ -101,6 +111,12 @@
       "id": "price_product",
       "label": "Produkt med priserna",
       "info": "Varianterna ska heta \"Siffra 20 cm\", \"Siffra 25 cm\", \"Logga 8 cm\", \"Logga 15 cm\" och \"Logga 25 cm\"."
+    },
+    {
+      "type": "product",
+      "id": "press_product",
+      "label": "Rekommenderad press",
+      "info": "Visas som tillval för föreningar som pressar själva. Lämna tomt för att dölja."
     }
   ]
 }
