@@ -193,6 +193,9 @@ model AppConfig {
   autoDeleteDays   Int      @default(90) @map("auto_delete_days")
   exportDeleteDays Int      @default(30) @map("export_delete_days")
   variantMapping   Json?    @map("variant_mapping")
+  /// Where the print shop sends a team order's logos: the shop itself, which
+  /// packs them with the stock digits. Null until set on the Team orders page.
+  teamShipTo       Json?    @map("team_ship_to")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
@@ -252,6 +255,40 @@ model GarmentOrder {
   @@unique([shopDomain, shopifyOrderId])
   @@index([shopDomain, status])
   @@map("gangsheet_garment_order")
+}
+
+/// A team order (lagpaket): shirts bought from New Wave and delivered straight
+/// to the customer, digits picked from the shop's own stock, logos printed in
+/// Poland and sent to the shop, which ships digits and logos to the customer.
+model TeamOrder {
+  id               String    @id @default(cuid())
+  shopDomain       String    @map("shop_domain")
+  shopifyOrderId   String    @map("shopify_order_id")
+  orderName        String?   @map("order_name")
+  customerName     String?   @map("customer_name")
+  /// The club or team the customer named, if any.
+  team             String?
+  shippingAddress  Json?     @map("shipping_address")
+  /// [{ lineItemId, title, variantTitle, sku, quantity, color, size }]
+  shirts           Json
+  /// [{ style, heightCm, color, digit, quantity, sku }]
+  digits           Json
+  /// [{ label, quantity, width, placement }] logos on the order's print sheet
+  logos            Json
+  /// new → ordered (shirts ordered at New Wave) → shipped (the shop's parcel
+  /// has left, or there is none); or cancelled.
+  status           String    @default("new")
+  newWaveOrderedAt DateTime? @map("new_wave_ordered_at")
+  newWaveReference String?   @map("new_wave_reference")
+  digitsPackedAt   DateTime? @map("digits_packed_at")
+  shippedAt        DateTime? @map("shipped_at")
+  trackingNumber   String?   @map("tracking_number")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  @@unique([shopDomain, shopifyOrderId])
+  @@index([shopDomain, status])
+  @@map("gangsheet_team_order")
 }
 
 /// One more BWS pickup for an order that already has its own, e.g. a reprint

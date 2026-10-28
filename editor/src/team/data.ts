@@ -3,8 +3,11 @@
  * Shopify prices it for whoever is looking (B2B catalogues included):
  *
  * - the shirt product's variants (colour × size),
- * - the price product's variants, "Siffra 20 cm", "Logga 8 cm" …, one price
- *   per piece,
+ * - the stock digits, product "Lagsiffror": style and height, colour and
+ *   figure as its three options ("Arena 20 cm" / "Vit" / "7"), one price
+ *   per figure; they ship from the shop's own stock, not the print shop,
+ * - the price product's variants for logos, "Logga 8 cm" …, one price per
+ *   piece,
  * - the partner clubs, metaobjects of type "forening" with a saved logo,
  * - the heat press recommended alongside, if one is chosen.
  */
@@ -53,12 +56,26 @@ export interface Price {
   price: number;
 }
 
-/** "digit:20", "logo:8" … */
+/** "logo:8" … */
 export type PriceList = Map<string, Price>;
+
+/** A stock figure: digitStockKey(style, height, colour, figure) → variant. */
+export type DigitStock = Map<string, Price>;
+
+/** Figures are stocked in white and black only. */
+export const DIGIT_INKS = [
+  { value: "#ffffff", label: "Vit" },
+  { value: "#111111", label: "Svart" },
+];
+
+export function digitStockKey(style: string, heightCm: number, color: string, digit: number): string {
+  return `${style.toLowerCase()}|${heightCm}|${color.toLowerCase()}|${digit}`;
+}
 
 export interface TeamData {
   shirt: Shirt | null;
   prices: PriceList;
+  digits: DigitStock;
   clubs: Club[];
   press: Press | null;
 }
@@ -66,10 +83,6 @@ export interface TeamData {
 export const DIGIT_HEIGHTS_CM = [20, 25];
 /** Logo widths sold, each the most a logo at that price may measure. */
 export const LOGO_WIDTHS_CM = [8, 15, 25];
-
-export function digitKey(cm: number): string {
-  return `digit:${cm}`;
-}
 
 /** The price step a logo of this width falls in. */
 export function logoKey(widthCm: number): string {
@@ -87,10 +100,17 @@ export function readTeamData(json: unknown): TeamData {
 
   const prices: PriceList = new Map();
   for (const v of Array.isArray(raw.prices) ? raw.prices : []) {
-    const m = /^(siffra|logga)\s+(\d+)\s*cm/i.exec(String(v?.title ?? "").trim());
+    const m = /^logga\s+(\d+)\s*cm/i.exec(String(v?.title ?? "").trim());
     if (!m) continue;
-    const kind = m[1]!.toLowerCase() === "siffra" ? "digit" : "logo";
-    prices.set(`${kind}:${parseInt(m[2]!, 10)}`, { variantId: String(v.id), price: num(v.price_cents) / 100 });
+    prices.set(`logo:${parseInt(m[1]!, 10)}`, { variantId: String(v.id), price: num(v.price_cents) / 100 });
+  }
+
+  const digits: DigitStock = new Map();
+  for (const v of Array.isArray(raw.digits) ? raw.digits : []) {
+    const m = /^(.+?)\s+(\d+)\s*cm$/i.exec(String(v?.style ?? "").trim());
+    const figure = parseInt(String(v?.digit ?? ""), 10);
+    if (!m || !(figure >= 0 && figure <= 9) || !v?.color) continue;
+    digits.set(digitStockKey(m[1]!, parseInt(m[2]!, 10), String(v.color), figure), { variantId: String(v.id), price: num(v.price_cents) / 100 });
   }
 
   const s = raw.shirt;
@@ -138,7 +158,7 @@ export function readTeamData(json: unknown): TeamData {
         }
       : null;
 
-  return { shirt, prices, clubs, press };
+  return { shirt, prices, digits, clubs, press };
 }
 
 /** Garment measurements (cm) for the preview: half chest and body length. */

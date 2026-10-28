@@ -1,4 +1,3 @@
-import { renderTextAtHeight, type TextSpec } from "../utils/textRender";
 import { buildPlacementsPayload, ensureGangSheet, prepareForCart, saveGangSheet, uploadImage } from "../services/api";
 import { packSheet } from "../utils/packing";
 import { EDGE_MARGIN_MM } from "../utils/layout";
@@ -7,36 +6,34 @@ import type { Price } from "./data";
 /**
  * From a team package to a cart.
  *
- * The shirts are ordinary cart lines. Everything printed, the digits, the
- * club logo and the sponsors, goes on one gang sheet the print shop prints
- * once and cuts up, the way Namn och Siffror does it (`_nn`): one cart line
- * per kind of piece, all pointing at that sheet, quantity = pieces.
+ * The shirts, the stock digits and the press are ordinary cart lines. The
+ * logos, club and sponsors, go on one gang sheet the print shop prints once
+ * and cuts up, the way Namn och Siffror does it (`_nn`): one cart line per
+ * logo, all pointing at that sheet, quantity = pieces.
  */
 
 const SHEET_WIDTH_MM = 580;
 const SHEET_MAX_MM = 10000;
 const GAP_MM = 4;
 
+/** A logo for the sheet: the club's or the customer's file, printed this wide. */
 export interface Piece {
   key: string;
-  kind: "digit" | "logo";
-  /** For the cart line: "7", "Sundsvalls HK", "Sponsor 1". */
+  /** For the cart line: "Sundsvalls HK", "Sponsor 1". */
   label: string;
   count: number;
   price: Price;
   /** Cart line properties shown to the customer and the print shop. */
   properties: Record<string, string>;
-  /** Digits are drawn from the font… */
-  spec?: TextSpec;
-  heightCm?: number;
-  /** …logos are the customer's or the club's file, printed this wide. */
-  file?: () => Promise<File>;
-  widthCm?: number;
+  file: () => Promise<File>;
+  widthCm: number;
 }
 
-export interface CartShirt {
+/** A line that is not printed: a shirt, a stock digit, the press. */
+export interface CartLine {
   variantId: string;
   quantity: number;
+  properties?: Record<string, string>;
 }
 
 export interface OrderProgress {
@@ -74,27 +71,19 @@ interface Uploaded {
   heightMm: number;
 }
 
-async function drawDigit(piece: Piece): Promise<{ file: File; mmPerPx: number }> {
-  const drawn = await renderTextAtHeight(piece.spec!, piece.heightCm! * 10);
-  if (!drawn) throw new Error(`Kunde inte rita siffran ${piece.label}`);
-  const blob: Blob | null = await new Promise((r) => drawn.canvas.toBlob(r, "image/png"));
-  if (!blob) throw new Error(`Kunde inte spara siffran ${piece.label}`);
-  return { file: new File([blob], `siffra-${piece.label}.png`, { type: "image/png" }), mmPerPx: drawn.mmPerPx };
-}
-
 /**
- * Draw or fetch each piece once, upload it, lay every copy out on one
- * sheet and put the shirts and the print lines in the cart.
+ * Fetch each logo once, upload it, lay every copy out on one sheet and put
+ * the plain lines and the logo lines in the cart.
  */
 export async function orderTeam(
   pieces: Piece[],
-  shirts: CartShirt[],
+  plain: CartLine[],
   onProgress: (p: OrderProgress) => void,
 ): Promise<void> {
   const printed = pieces.filter((p) => p.count > 0);
-  const items: Array<{ id: string; quantity: number; properties?: Record<string, string> }> = shirts
-    .filter((s) => s.quantity > 0)
-    .map((s) => ({ id: s.variantId, quantity: s.quantity }));
+  const items: Array<{ id: string; quantity: number; properties?: Record<string, string> }> = plain
+    .filter((l) => l.quantity > 0)
+    .map((l) => ({ id: l.variantId, quantity: l.quantity, ...(l.properties ? { properties: l.properties } : {}) }));
 
   if (printed.length > 0) {
     const session = sessionId();
@@ -107,17 +96,14 @@ export async function orderTeam(
     const worker = async () => {
       while (queue.length > 0) {
         const piece = queue.shift()!;
-        let file: File;
-        let mmPerPx: number | null = null;
-        if (piece.kind === "digit") ({ file, mmPerPx } = await drawDigit(piece));
-        else file = await piece.file!();
+        const file = await piece.file();
         onProgress({ step: "upload", done, total: printed.length });
         const result = await uploadImage(file, session, gsId);
         const w = Number(result.width) || 1;
         const h = Number(result.height) || 1;
         // A logo is ordered by width; the server trims empty edges, so the
         // width is applied to what it kept.
-        const perPx = mmPerPx ?? (piece.widthCm! * 10) / w;
+        const perPx = (piece.widthCm * 10) / w;
         uploaded.set(piece.key, { dbId: String(result.id), widthMm: w * perPx, heightMm: h * perPx });
         done++;
         onProgress({ step: "upload", done, total: printed.length });
@@ -160,20 +146,12 @@ export async function orderTeam(
     const cartData = await prepareForCart(gsId, null);
 
     onProgress({ step: "cart", done, total: printed.length });
-    // One line per price and description: all digits on one line, each
-    // logo on its own so the cart says which is which.
-    const lines = new Map<string, { price: Price; count: number; properties: Record<string, string> }>();
+    // Each logo on a line of its own, so the cart says which is which.
     for (const p of printed) {
-      const key = p.kind === "digit" ? `digit|${p.price.variantId}` : `logo|${p.key}`;
-      const found = lines.get(key);
-      if (found) found.count += p.count;
-      else lines.set(key, { price: p.price, count: p.count, properties: p.properties });
-    }
-    for (const line of lines.values()) {
       items.push({
-        id: line.price.variantId,
-        quantity: line.count,
-        properties: { ...line.properties, ...cartData.properties, _gang_sheet_id: gsId, _nn: "1" },
+        id: p.price.variantId,
+        quantity: p.count,
+        properties: { ...p.properties, ...cartData.properties, _gang_sheet_id: gsId, _nn: "1" },
       });
     }
   }

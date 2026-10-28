@@ -14,6 +14,8 @@ import prisma from "../db.server";
 import { SHEET_WIDTH_MM } from "./constants";
 import { bookOrderShipment } from "./order-shipment.server";
 import { intakeGarments } from "./garment-intake.server";
+import { intakeTeamOrder, teamShipTo } from "./team-intake.server";
+import { isTeamOrder, splitTeamOrder } from "./team-orders";
 import {
   DEFAULT_PRINT_TYPE,
   detectPrintType,
@@ -131,6 +133,19 @@ export async function intakeOrder(
     }));
 
   const ship = order.shipping_address || order.billing_address || null;
+
+  /*
+   * A team order's logos are printed here but go to the shop, which packs
+   * them with the stock digits; New Wave sends the shirts to the customer.
+   * teamOrder: true also keeps the customer from a tracking email for a
+   * parcel addressed to the shop (sendTrackingToCustomer).
+   */
+  let teamAddress: Record<string, unknown> | null = null;
+  if (isTeamOrder(splitTeamOrder(lineItems, productTypes))) {
+    const to = await teamShipTo(shop).catch(() => null);
+    if (to) teamAddress = { ...to, email: to.email ?? null, teamOrder: true };
+  }
+
   const orderDetails = {
     shopifyOrderId: String(order.id),
     orderName: order.name ? String(order.name) : null,
@@ -139,20 +154,22 @@ export async function intakeOrder(
       ship?.name ||
       [order.customer?.first_name, order.customer?.last_name].filter(Boolean).join(" ") ||
       null,
-    shippingAddress: ship
-      ? {
-          name: ship.name ?? null,
-          company: ship.company ?? null,
-          address1: ship.address1 ?? null,
-          address2: ship.address2 ?? null,
-          zip: ship.zip ?? null,
-          city: ship.city ?? null,
-          country: ship.country ?? null,
-          countryCode: ship.country_code ?? null,
-          phone: ship.phone ?? order.phone ?? null,
-          email: order.email ?? null,
-        }
-      : Prisma.DbNull,
+    shippingAddress: teamAddress
+      ? (teamAddress as Prisma.InputJsonObject)
+      : ship
+        ? {
+            name: ship.name ?? null,
+            company: ship.company ?? null,
+            address1: ship.address1 ?? null,
+            address2: ship.address2 ?? null,
+            zip: ship.zip ?? null,
+            city: ship.city ?? null,
+            country: ship.country ?? null,
+            countryCode: ship.country_code ?? null,
+            phone: ship.phone ?? order.phone ?? null,
+            email: order.email ?? null,
+          }
+        : Prisma.DbNull,
   };
 
   /*
@@ -248,6 +265,13 @@ export async function intakeOrder(
     await intakeGarments(shop, order, productTypes);
   } catch (error) {
     console.error(`[order-intake] Could not record the clothes of order ${order.id}:`, error);
+  }
+
+  // Team orders: New Wave shirts and stock digits, their own list.
+  try {
+    await intakeTeamOrder(shop, order, productTypes);
+  } catch (error) {
+    console.error(`[order-intake] Could not record the team order ${order.id}:`, error);
   }
 
   /*

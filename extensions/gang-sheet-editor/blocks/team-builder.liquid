@@ -1,8 +1,9 @@
 {%- comment -%}
   Lagpaket: shirts, club logo, digits 0-9 and sponsor logos in one order.
-  The shirt is the block's product setting; the price product ("Siffra
-  20 cm", "Logga 8 cm" …) and the recommended press are given by handle,
-  since an app block may have only one product setting. All are rendered
+  The shirt is the block's product setting; the stock digits ("Arena
+  20 cm" / "Vit" / "7"), the logo prices ("Logga 8 cm" …) and the
+  recommended press are given by handle, since an app block may have only
+  one product setting. All are rendered
   here so Shopify prices them for whoever is looking.
   Partner clubs are
   metaobjects of type "forening" (namn, ort, idrott, logga, logga_bredd_cm).
@@ -11,6 +12,10 @@
 {%- assign team_prices = nil -%}
 {%- if block.settings.price_handle != blank -%}
   {%- assign team_prices = all_products[block.settings.price_handle] -%}
+{%- endif -%}
+{%- assign team_digits = nil -%}
+{%- if block.settings.digits_handle != blank -%}
+  {%- assign team_digits = all_products[block.settings.digits_handle] -%}
 {%- endif -%}
 {%- assign team_press = nil -%}
 {%- if block.settings.press_handle != blank -%}
@@ -51,6 +56,13 @@
         {%- if team_prices and team_prices.id -%}
           {%- for variant in team_prices.variants -%}
             {"id": {{ variant.id }}, "title": {{ variant.title | json }}, "price_cents": {{ variant.price }}}{% unless forloop.last %},{% endunless %}
+          {%- endfor -%}
+        {%- endif -%}
+      ],
+      "digits": [
+        {%- if team_digits and team_digits.id -%}
+          {%- for variant in team_digits.variants -%}
+            {"id": {{ variant.id }}, "style": {{ variant.option1 | json }}, "color": {{ variant.option2 | json }}, "digit": {{ variant.option3 | json }}, "price_cents": {{ variant.price }}}{% unless forloop.last %},{% endunless %}
           {%- endfor -%}
         {%- endif -%}
       ],
@@ -115,10 +127,17 @@
     },
     {
       "type": "text",
+      "id": "digits_handle",
+      "label": "Siffror i lager (handtag)",
+      "default": "lagsiffror",
+      "info": "Tre alternativ: stil och höjd (\"Arena 20 cm\"), färg (\"Vit\", \"Svart\") och siffra (0-9)."
+    },
+    {
+      "type": "text",
       "id": "price_handle",
-      "label": "Produkt med priserna (handtag)",
+      "label": "Priser för loggor (handtag)",
       "default": "lagpaket-tryck",
-      "info": "Varianterna ska heta \"Siffra 20 cm\", \"Siffra 25 cm\", \"Logga 8 cm\", \"Logga 15 cm\" och \"Logga 25 cm\"."
+      "info": "Varianterna ska heta \"Logga 8 cm\", \"Logga 15 cm\" och \"Logga 25 cm\"."
     },
     {
       "type": "text",

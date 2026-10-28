@@ -227,6 +227,13 @@ export async function sendTrackingToCustomer(
   if (!first || first.shippingStatus !== "booked") {
     return { ok: false, error: "Book the shipment first." };
   }
+  // A team order's logos go to the shop, not the customer: no tracking email.
+  // The note stops the pickup sweep from trying again.
+  if ((first.shippingAddress as { teamOrder?: boolean } | null)?.teamOrder) {
+    const note = "Team order: these logos go to TransferCraft. Tell the customer when the team parcel leaves.";
+    await prisma.gangSheet.updateMany({ where: { shopDomain, shopifyOrderId }, data: { fulfillmentError: note } });
+    return { ok: false, error: note };
+  }
   const fulfillment = await fulfillLineItemsWithTracking({
     shopDomain,
     shopifyOrderId,

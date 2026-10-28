@@ -1,19 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fontById, fontFamily, loadFont } from "../config/fonts";
-import { COLORS, contrastOf } from "../names/catalog";
+import { contrastOf } from "../names/catalog";
 import {
   DIGIT_HEIGHTS_CM,
+  DIGIT_INKS,
   LOGO_WIDTHS_CM,
   SIZE_CHART,
   countDigits,
-  digitKey,
+  digitStockKey,
   kr,
   logoKey,
   parseNumbers,
   type Club,
   type TeamData,
 } from "./data";
-import { fileFromUrl, orderTeam, type OrderProgress, type Piece } from "./order";
+import { fileFromUrl, orderTeam, type CartLine, type OrderProgress, type Piece } from "./order";
 
 /**
  * The team page: shirts, a club, digits and sponsors in one order.
@@ -21,8 +22,9 @@ import { fileFromUrl, orderTeam, type OrderProgress, type Piece } from "./order"
  * 1. The shirt: one colour, a quantity per size.
  * 2. The club, if any: partner clubs have their logo saved; any other club
  *    uploads its own.
- * 3. The digits 0-9: filled in from the number of players (1-15 needs
- *    eight ones) or the team's own numbers, then adjustable one by one.
+ * 3. The digits 0-9, white or black from the shop's own stock: filled in
+ *    from the number of players (1-15 needs eight ones) or the team's own
+ *    numbers, then adjustable one by one.
  * 4. Sponsor logos, as many as the team has.
  * 5. A heat press, recommended to clubs that press for every team.
  *
@@ -205,7 +207,9 @@ export function TeamBuilder({ data }: { data: TeamData }) {
   };
 
   // Prices
-  const digitPrice = data.prices.get(digitKey(heightCm)) ?? null;
+  const inkLabel = DIGIT_INKS.find((c) => c.value === ink)?.label ?? "Vit";
+  const stockDigit = (d: number, h = heightCm) => data.digits.get(digitStockKey(style.label, h, inkLabel, d)) ?? null;
+  const digitPrice = stockDigit(0);
   const logoPrice = (widthCm: number) => data.prices.get(logoKey(widthCm)) ?? null;
   const variantFor = (size: string) => shirt?.variants.find((v) => v.color === color && v.size === size) ?? null;
 
@@ -216,7 +220,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
     const v = variantFor(s);
     if (v && qty[s]) lines.push({ label: `${shirt!.title}, ${color}`, detail: s, qty: qty[s]!, unit: v.price });
   }
-  if (digitCount && digitPrice) lines.push({ label: `Siffror ${heightCm} cm, ${style.label.toLowerCase()}`, detail: COLORS.find((c) => c.value === ink)?.label ?? "", qty: digitCount, unit: digitPrice.price });
+  if (digitCount && digitPrice) lines.push({ label: `Siffror ${heightCm} cm, ${style.label.toLowerCase()}`, detail: inkLabel, qty: digitCount, unit: digitPrice.price });
   if (hasLogo && logoQty) {
     const p = logoPrice(logoWidthCm);
     if (p) lines.push({ label: `Klubbmärke ${logoName}`, detail: `${String(logoWidthCm).replace(".", ",")} cm bred`, qty: logoQty, unit: p.price });
@@ -227,7 +231,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
   });
   if (withPress && data.press) lines.push({ label: `${data.press.vendor} ${data.press.title}`.trim(), detail: "Värmepress", qty: 1, unit: data.press.price });
   const subtotal = lines.reduce((s, l) => s + l.qty * l.unit, 0);
-  const missingPrices = (digitCount > 0 && !digitPrice) || (hasLogo && logoQty > 0 && !logoPrice(logoWidthCm));
+  const missingPrices = orderDigits.some((n, d) => n > 0 && !stockDigit(d)) || (hasLogo && logoQty > 0 && !logoPrice(logoWidthCm));
   const sponsorsWithoutFile = sponsors.some((s) => s.qty > 0 && !s.upload);
   const canOrder = subtotal > 0 && !missingPrices && !sponsorsWithoutFile && !progress;
 
@@ -246,36 +250,25 @@ export function TeamBuilder({ data }: { data: TeamData }) {
     try {
       const pieces: Piece[] = [];
       const common = { Lag: club?.name || ownName.trim() || "" };
+      const team = common.Lag ? common : {};
+      // The digits come from stock: a cart line per figure, so Shopify
+      // counts the stock down.
+      const digitLines: CartLine[] = [];
       orderDigits.forEach((count, d) => {
-        if (!count || !digitPrice) return;
-        pieces.push({
-          key: `digit|${style.fontId}|${heightCm}|${ink}|${d}`,
-          kind: "digit",
-          label: String(d),
-          count,
-          price: digitPrice,
-          spec: { text: String(d), fontId: style.fontId, color: ink, outline: 0, outlineColor: "#111111", align: "center" },
-          heightCm,
-          properties: {
-            ...(common.Lag ? common : {}),
-            Stil: `${style.label}, ${heightCm} cm`,
-            Färg: COLORS.find((c) => c.value === ink)?.label ?? ink,
-            Siffror: orderDigits.map((n, i) => (n ? `${n} st ${i}` : "")).filter(Boolean).join(", ") + (spare ? " (en reserv av varje)" : ""),
-          },
-        });
+        const v = stockDigit(d);
+        if (count && v) digitLines.push({ variantId: v.variantId, quantity: count, properties: { ...team } });
       });
       if (hasLogo && logoQty) {
         const p = logoPrice(logoWidthCm)!;
         const src = club?.logo;
         pieces.push({
           key: `logo|club|${club?.id ?? "own"}`,
-          kind: "logo",
           label: logoName,
           count: logoQty,
           price: p,
           widthCm: logoWidthCm,
           file: src ? () => fileFromUrl(src, logoName) : async () => ownLogo!.file,
-          properties: { Logga: `Klubbmärke ${logoName}`, Bredd: `${String(logoWidthCm).replace(".", ",")} cm`, Placering: "Bröst" },
+          properties: { ...team, Logga: `Klubbmärke ${logoName}`, Bredd: `${String(logoWidthCm).replace(".", ",")} cm`, Placering: "Bröst" },
         });
       }
       sponsors.forEach((sp, i) => {
@@ -284,25 +277,25 @@ export function TeamBuilder({ data }: { data: TeamData }) {
         const file = sp.upload.file;
         pieces.push({
           key: `logo|sponsor|${sp.id}`,
-          kind: "logo",
           label: `Sponsor ${i + 1}`,
           count: sp.qty,
           price: p,
           widthCm: sp.widthCm,
           file: async () => file,
           properties: {
-            ...(common.Lag ? common : {}),
+            ...team,
             Logga: `Sponsor ${i + 1} (${file.name})`,
             Bredd: `${sp.widthCm} cm`,
             Placering: PLACES.find((x) => x.id === sp.place)!.label,
           },
         });
       });
-      const shirtsInCart = sizes
-        .map((s) => ({ variantId: variantFor(s)?.id ?? "", quantity: qty[s] || 0 }))
+      const plain: CartLine[] = sizes
+        .map((s) => ({ variantId: variantFor(s)?.id ?? "", quantity: qty[s] || 0, properties: { ...team } }))
         .filter((s) => s.variantId && s.quantity > 0);
-      if (withPress && data.press) shirtsInCart.push({ variantId: data.press.variantId, quantity: 1 });
-      await orderTeam(pieces, shirtsInCart, setProgress);
+      plain.push(...digitLines);
+      if (withPress && data.press) plain.push({ variantId: data.press.variantId, quantity: 1 });
+      await orderTeam(pieces, plain, setProgress);
       setAdded(true);
       const root = (window as any).Shopify?.routes?.root || "/";
       window.setTimeout(() => (window.location.href = `${root}cart`), 1200);
@@ -526,7 +519,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
               <span style={S.fieldLabel}>Höjd</span>
               <div style={{ display: "flex", gap: 6 }}>
                 {DIGIT_HEIGHTS_CM.map((h) => {
-                  const p = data.prices.get(digitKey(h));
+                  const p = stockDigit(0, h);
                   return (
                     <button key={h} type="button" aria-pressed={h === heightCm} onClick={() => setHeightCm(h)} style={{ ...S.chip, ...(h === heightCm ? S.chipOn : null) }}>
                       <span style={{ fontWeight: 600 }}>{h} cm</span>
@@ -539,7 +532,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
             <div style={{ ...S.row, marginTop: 12 }}>
               <span style={S.fieldLabel}>Färg</span>
               <div style={S.swatches}>
-                {COLORS.map((c) => (
+                {DIGIT_INKS.map((c) => (
                   <button
                     key={c.value}
                     type="button"
@@ -551,6 +544,7 @@ export function TeamBuilder({ data }: { data: TeamData }) {
                   />
                 ))}
               </div>
+              <span style={S.small}>{inkLabel}, från vårt lager i Sverige</span>
             </div>
             {tooWide && (
               <div style={{ ...S.note, marginTop: 12 }}>
@@ -721,9 +715,9 @@ export function TeamBuilder({ data }: { data: TeamData }) {
           <div style={S.modal}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 700 }}>
               {!added && <span style={S.spinner} />}
-              {added ? "Klart! Tar dig till varukorgen…" : progress.step === "upload" ? `Förbereder tryck ${progress.done} av ${progress.total}` : progress.step === "sheet" ? "Lägger allt på ett ark…" : progress.step === "cart" ? "Lägger i varukorgen…" : "Ritar siffrorna…"}
+              {added ? "Klart! Tar dig till varukorgen…" : progress.step === "upload" ? `Förbereder loggor ${progress.done} av ${progress.total}` : progress.step === "sheet" ? "Lägger loggorna på ett ark…" : "Lägger i varukorgen…"}
             </div>
-            <div style={{ ...S.small, marginTop: 8 }}>Siffrorna och loggorna läggs på ett gemensamt ark som trycks och klipps ut åt er.</div>
+            <div style={{ ...S.small, marginTop: 8 }}>Siffrorna tas från vårt lager. Loggorna läggs på ett gemensamt ark som trycks och klipps ut åt er.</div>
           </div>
         </div>
       )}
