@@ -142,6 +142,8 @@ export function NamesPage({ data }: { data: NamesPageData }) {
 
   const [sponsors, setSponsors] = useState<Sponsor[]>([]);
   const [withPress, setWithPress] = useState(false);
+  // The customer vouches for the right to print the logos they upload, as on the team page.
+  const [rightsOk, setRightsOk] = useState(false);
   const [graphics, setGraphics] = useState<Graphic[]>([]);
   const [progress, setProgress] = useState<OrderProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -234,7 +236,9 @@ export function NamesPage({ data }: { data: NamesPageData }) {
     g.tooWide ? `"${g.text}" blir bredare än filmen i ${g.heightCm} cm` : `${LABEL[g.kind]} saknar pris`,
   );
   const sponsorsWithoutFile = sponsors.some((s) => s.qty > 0 && !s.upload);
-  const canOrder = subtotal > 0 && !missingDigits && blocked.length === 0 && !sponsorsWithoutFile && !progress;
+  const uploadsLogos = sponsors.some((s) => s.qty > 0 && s.upload);
+  const needsRights = uploadsLogos && !rightsOk;
+  const canOrder = subtotal > 0 && !missingDigits && blocked.length === 0 && !sponsorsWithoutFile && !needsRights && !progress;
 
   // Preview
   const selected = showTable ? (filled.find((r) => r.id === selectedId) ?? filled[0] ?? null) : null;
@@ -390,7 +394,12 @@ export function NamesPage({ data }: { data: NamesPageData }) {
           price: p,
           widthCm: sp.widthCm,
           file: async () => file,
-          properties: { Logga: `Sponsor ${i + 1} (${file.name})`, Bredd: `${sp.widthCm} cm`, Placering: PLACES.find((x) => x.id === sp.place)!.label },
+          properties: {
+            Logga: `Sponsor ${i + 1} (${file.name})`,
+            Bredd: `${sp.widthCm} cm`,
+            Placering: PLACES.find((x) => x.id === sp.place)!.label,
+            Loggrätt: "Intygad av kunden",
+          },
         });
       });
       await orderGraphics(graphics, look, printRows, setProgress, { logos, lines: plain });
@@ -546,6 +555,12 @@ export function NamesPage({ data }: { data: NamesPageData }) {
       {missingDigits && <div style={S.error}>Siffrorna saknar pris i den här storleken. Välj en annan.</div>}
       {blocked.length > 0 && <div style={S.error}>{blocked.slice(0, 3).join(". ")}. Välj en mindre storlek eller korta namnet.</div>}
       {sponsorsWithoutFile && <div style={S.error}>Ladda upp sponsorloggan, eller ta bort raden.</div>}
+      {uploadsLogos && (
+        <label style={{ ...S.option, marginTop: 12 }}>
+          <input type="checkbox" checked={rightsOk} onChange={(e) => setRightsOk(e.target.checked)} style={{ accentColor: ACCENT, width: 18, height: 18, flexShrink: 0 }} />
+          <span style={{ fontSize: 13 }}>Vi har rätt att trycka loggorna vi laddat upp. Föreningen och sponsorerna har godkänt det.</span>
+        </label>
+      )}
       <button type="button" onClick={() => void order()} disabled={!canOrder} style={{ ...S.primary, marginTop: 14, ...(canOrder ? null : S.primaryOff) }}>
         {progress ? "Förbereder…" : "Lägg i varukorgen"}
       </button>
