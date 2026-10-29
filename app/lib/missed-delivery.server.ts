@@ -216,7 +216,11 @@ export async function sweepMissedDeliveries(
     try {
       results.push(await checkOrder(sheet, now, Boolean(options.dryRun)));
     } catch (error) {
-      results.push({ order, action: "error", detail: (error as Error).message.slice(0, 300) });
+      // Not always an Error: the Shopify client can throw a bare Response.
+      // Reading `.message` off one stopped the sweep for every order.
+      const detail =
+        error instanceof Error ? error.message : error instanceof Response ? `HTTP ${error.status}` : String(error);
+      results.push({ order, action: "error", detail: detail.slice(0, 300) });
     }
   }
   return results;
