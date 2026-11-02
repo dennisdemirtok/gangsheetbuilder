@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useEditorStore } from "../../store/editorStore";
-import { uploadImage, getAppProxyUrl, ensureGangSheet } from "../../services/api";
+import { uploadImage, getAppProxyUrl, ensureGangSheet, UPLOAD_ACCEPT } from "../../services/api";
 import { startSizeMm } from "../../utils/startSize";
 import { theme } from "../../styles/theme";
 import { showToast } from "../../utils/toast";
@@ -162,7 +162,7 @@ export function ImageUploader({ compact = false }: { compact?: boolean } = {}) {
           ref={fileInputRef}
           type="file"
           multiple
-          accept="image/png,image/jpeg,image/svg+xml,image/tiff,image/webp,application/pdf,.eps,.ai"
+          accept={UPLOAD_ACCEPT}
           style={{ display: "none" }}
           onChange={(e) => e.target.files && handleFiles(e.target.files)}
         />
@@ -192,7 +192,7 @@ export function ImageUploader({ compact = false }: { compact?: boolean } = {}) {
               Dra bilder hit eller klicka
             </p>
             <p style={{ margin: "4px 0 0", fontSize: 11, color: theme.textDim }}>
-              PNG, JPG, SVG, TIFF, PDF, EPS, WebP. Max 500 MB
+              PNG, JPG, SVG, PDF, AI, EPS, TIFF, WebP, GIF, AVIF, BMP. Max 500 MB
             </p>
           </>
         )}

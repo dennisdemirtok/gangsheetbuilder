@@ -9,14 +9,16 @@ export interface ValidationResult {
   needsConversion?: boolean;
 }
 
-// All MIME types we accept
+// All MIME types we accept. Not BMP: sharp cannot read it, and one became
+// a grey 1000 × 1000 placeholder; the builder draws BMP into a PNG before
+// it uploads. GIF prints its first frame.
 const ALLOWED_MIME_TYPES = new Set([
   "image/png",
   "image/jpeg",
   "image/svg+xml",
   "image/tiff",
   "image/webp",
-  "image/bmp",
+  "image/gif",
   "image/avif",
   "application/pdf",
   "application/postscript", // EPS, AI
@@ -28,13 +30,13 @@ const ALLOWED_MIME_TYPES = new Set([
 // Extensions we support (case insensitive)
 const ALLOWED_EXTENSIONS = new Set([
   "png", "jpg", "jpeg", "svg", "svgz",
-  "tiff", "tif", "webp", "bmp", "avif",
+  "tiff", "tif", "webp", "gif", "avif",
   "pdf", "eps", "ai",
 ]);
 
 // Formats that need conversion to PNG before processing
 const CONVERSION_FORMATS = new Set([
-  "image/tiff", "image/webp", "image/bmp", "image/avif",
+  "image/tiff", "image/webp", "image/avif",
   "application/postscript", "application/eps",
   "application/x-eps", "image/x-eps",
 ]);
@@ -113,7 +115,7 @@ export async function validateFile(
   if (!ALLOWED_MIME_TYPES.has(fileType.mime) && !ALLOWED_EXTENSIONS.has(ext)) {
     return {
       valid: false,
-      error: `Filtypen ${fileType.mime} stöds inte. Tillåtna: PNG, JPG, SVG, TIFF, PDF, EPS, WebP.`,
+      error: `Filtypen ${fileType.mime} stöds inte. Tillåtna: PNG, JPG, SVG, PDF, AI, EPS, TIFF, WebP, GIF, AVIF.`,
     };
   }
 

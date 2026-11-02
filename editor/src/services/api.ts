@@ -90,20 +90,40 @@ export interface UploadProgress {
   sent: number;
 }
 
+/** What the design uploaders' file pickers offer. BMP is drawn into a PNG on the way up. */
+export const UPLOAD_ACCEPT =
+  "image/png,image/jpeg,image/svg+xml,image/tiff,image/webp,image/gif,image/avif,image/bmp,application/pdf,.eps,.ai,.avif,.bmp";
+
+/**
+ * A BMP as a PNG, under its own name: the server cannot read BMP (it
+ * became a grey placeholder), every browser can.
+ */
+async function readableFile(file: File): Promise<File> {
+  if (file.type !== "image/bmp" && !/\.bmp$/i.test(file.name)) return file;
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  const png = await new Promise<Blob | null>((done) => canvas.toBlob(done, "image/png"));
+  return png ? new File([png], file.name, { type: "image/png" }) : file;
+}
+
 /**
  * Upload one design. XMLHttpRequest rather than fetch, because only XHR
  * reports bytes sent: a 40 MB EPS used to sit on "Laddar upp…" with no
  * sign of life. After the last byte the server converts and trims the
  * file, which `phase: "processing"` reports.
  */
-export function uploadImage(
+export async function uploadImage(
   file: File,
   sessionId: string,
   gangSheetId: string,
   onProgress?: (p: UploadProgress) => void,
 ): Promise<any> {
   const formData = new FormData();
-  formData.append("file", file);
+  formData.append("file", await readableFile(file));
   formData.append("sessionId", sessionId);
   formData.append("gangSheetId", gangSheetId);
 

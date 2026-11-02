@@ -5,7 +5,7 @@ import {
   groupKey,
   type EditorImage,
 } from "../../store/editorStore";
-import { uploadImage, getAppProxyUrl, ensureGangSheet, removeBg } from "../../services/api";
+import { uploadImage, getAppProxyUrl, ensureGangSheet, removeBg, UPLOAD_ACCEPT } from "../../services/api";
 import { getSheetPrice } from "../../services/storefrontPrices";
 import { calculateDisplayDpi, cmText, getDpiColor, dpiWarning, DPI_THRESHOLDS } from "../../utils/units";
 import { DEFAULT_BOX_MM, startSizeMm } from "../../utils/startSize";
@@ -521,7 +521,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
               ref={fileInputRef}
               type="file"
               multiple
-              accept="image/png,image/jpeg,image/svg+xml,image/tiff,image/webp,application/pdf,.eps,.ai"
+              accept={UPLOAD_ACCEPT}
               style={{ display: "none" }}
               onChange={(e) => {
                 if (e.target.files?.length) void readFiles(e.target.files);
@@ -534,7 +534,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
               <>
                 <div style={S.dropPlus}>+</div>
                 <p style={S.dropTitle}>Dra filer hit eller klicka</p>
-                <p style={S.dropHint}>PNG, JPG, SVG, PDF, AI, EPS eller TIFF. Markera gärna flera filer samtidigt.</p>
+                <p style={S.dropHint}>PNG, JPG, SVG, PDF, AI, EPS, TIFF, WebP, GIF, AVIF eller BMP. Markera gärna flera filer samtidigt.</p>
               </>
             )}
           </div>
