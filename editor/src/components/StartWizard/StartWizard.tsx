@@ -8,6 +8,7 @@ import {
 import { uploadImage, getAppProxyUrl, ensureGangSheet, removeBg } from "../../services/api";
 import { getSheetPrice } from "../../services/storefrontPrices";
 import { calculateDisplayDpi, cmText, getDpiColor, dpiWarning, DPI_THRESHOLDS } from "../../utils/units";
+import { DEFAULT_BOX_MM, startSizeMm } from "../../utils/startSize";
 import { capacity, imageBbox, EDGE_MARGIN_MM } from "../../utils/layout";
 import { packSheet } from "../../utils/packing";
 import { SheetPreview, type PreviewPiece } from "./SheetPreview";
@@ -47,13 +48,21 @@ const SIZE_PRESETS = [
 ];
 type SizePreset = (typeof SIZE_PRESETS)[number];
 
-/** The size a fresh design gets: fits in 10 × 10 cm. */
-const DEFAULT_BOX = { w: 10, h: 10 };
-
 /** Width (cm, to a millimetre) that fits a w×h px design inside the box. */
 function fitWidthCm(box: { w: number; h: number }, widthPx: number, heightPx: number): number {
   const ratio = widthPx / Math.max(1, heightPx);
   return Math.round(Math.min(box.w, box.h * ratio, 58) * 10) / 10;
+}
+
+/**
+ * Width (cm) a design starts at: the size made in the file, else inside
+ * 10 × 10 cm. Down to the millimetre, so a 300 DPI file stays 300 DPI.
+ */
+function startWidthCm(fileSizeMm: Uploaded["fileSizeMm"], widthPx: number, heightPx: number) {
+  const start = startSizeMm(fileSizeMm, widthPx, heightPx);
+  return start.fromFile
+    ? { widthCm: Math.floor(start.width) / 10, fromFile: true }
+    : { widthCm: fitWidthCm({ w: DEFAULT_BOX_MM.w / 10, h: DEFAULT_BOX_MM.h / 10 }, widthPx, heightPx), fromFile: false };
 }
 
 /** Uploads at a time: fast, without starving a slow connection. */
@@ -75,6 +84,10 @@ interface Uploaded {
   /** A solid background around the design (#rrggbb): white, black or a colour. */
   backgroundColor?: string | null;
   filename: string;
+  /** The size the file was made at (mm), when it gives one. */
+  fileSizeMm?: { width: number; height: number } | null;
+  /** Shapes only, so it prints sharp at any size. */
+  vector?: boolean;
 }
 
 interface Draft {
@@ -88,6 +101,10 @@ interface Draft {
   heightPx: number;
   /** Target printed width in cm. */
   widthCm: number;
+  /** The width is the one made in the file. */
+  fromFile?: boolean;
+  /** The customer typed a width; the upload must not change it. */
+  widthSet?: boolean;
   /** The placement chosen, if any; the width follows it when the shape is known. */
   preset?: string;
   count: number;
@@ -243,29 +260,34 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
           // a transparent margin around its white box.
           const white = Boolean(result.hasWhiteBackground);
           setDrafts((prev) =>
-            prev.map((d) =>
-              d.id === draft.id
-                ? {
-                    ...d,
-                    status: "ready",
-                    uploaded,
-                    // The server's pixels are the truth — EPS and PDF can't
-                    // be measured in the browser, and SVGs come back drawn.
-                    widthPx: result.width || d.widthPx,
-                    heightPx: result.height || d.heightPx,
-                    // The real shape is known now (EPS can't be measured in
-                    // the browser): fit it to the chosen box again.
-                    widthCm: fitWidthCm(
-                      SIZE_PRESETS.find((p) => p.label === d.preset) ?? DEFAULT_BOX,
-                      result.width || d.widthPx,
-                      result.height || d.heightPx,
-                    ),
-                    previewUrl: d.previewUrl || uploaded.thumbnailUrl,
-                    bgColor: result.backgroundColor || undefined,
-                    useBgRemoved: white,
-                  }
-                : d,
-            ),
+            prev.map((d) => {
+              if (d.id !== draft.id) return d;
+              // The server's pixels are the truth — EPS and PDF can't be
+              // measured in the browser, and SVGs come back drawn.
+              const widthPx = result.width || d.widthPx;
+              const heightPx = result.height || d.heightPx;
+              // The real shape and size are known now: fit the chosen
+              // placement again, or start at the size made in the file.
+              // A width the customer typed meanwhile stays.
+              const preset = SIZE_PRESETS.find((p) => p.label === d.preset);
+              const size = preset
+                ? { widthCm: fitWidthCm(preset, widthPx, heightPx), fromFile: false }
+                : d.widthSet
+                  ? { widthCm: d.widthCm, fromFile: false }
+                  : startWidthCm(result.fileSizeMm, widthPx, heightPx);
+              return {
+                ...d,
+                status: "ready",
+                uploaded,
+                widthPx,
+                heightPx,
+                ...size,
+                vector: result.vector ?? d.vector,
+                previewUrl: d.previewUrl || uploaded.thumbnailUrl,
+                bgColor: result.backgroundColor || undefined,
+                useBgRemoved: white,
+              };
+            }),
           );
           for (const w of result.warnings ?? []) showToast(w, "warning");
           if (white) void takeOffBackground(draft.id, result.id);
@@ -293,7 +315,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
           previewUrl: dims.w ? blobUrl : "",
           widthPx: dims.w || 1000,
           heightPx: dims.h || 1000,
-          widthCm: fitWidthCm(DEFAULT_BOX, dims.w || 1000, dims.h || 1000),
+          widthCm: startWidthCm(null, dims.w || 1000, dims.h || 1000).widthCm,
           count: 1,
           vector: VECTOR_EXT.test(file.name),
           status: "uploading",
@@ -398,6 +420,7 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
           bgRemovedUrl: bgOff ? d.bgRemovedUrl : undefined,
           hasWhiteBackground: Boolean(u.hasWhiteBackground) && !bgOff,
           backgroundColor: bgOff ? undefined : d.bgColor,
+          vector: d.vector,
           placed: true,
         };
         return { image, count: d.count };
@@ -443,9 +466,13 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
       prev.map((d) => {
         const { preset, ...rest } = patch;
         if (preset) {
-          return { ...d, ...rest, preset: preset.label, widthCm: fitWidthCm(preset, d.widthPx, d.heightPx) };
+          return { ...d, ...rest, preset: preset.label, widthCm: fitWidthCm(preset, d.widthPx, d.heightPx), fromFile: false };
         }
-        return { ...d, ...rest, ...(rest.widthCm !== undefined ? { preset: undefined } : {}) };
+        return {
+          ...d,
+          ...rest,
+          ...(rest.widthCm !== undefined ? { preset: undefined, widthSet: true, fromFile: false } : {}),
+        };
       }),
     );
 
@@ -755,7 +782,7 @@ function DraftRow({
                     key={p.label}
                     title={`Ryms i ${p.w} × ${p.h} cm`}
                     onClick={() =>
-                      onChange({ preset: p.label, widthCm: fitWidthCm(p, draft.widthPx, draft.heightPx) })
+                      onChange({ preset: p.label, widthCm: fitWidthCm(p, draft.widthPx, draft.heightPx), fromFile: false })
                     }
                     style={{
                       ...S.preset,
@@ -780,7 +807,7 @@ function DraftRow({
                   decimals
                   live
                   ariaLabel="Bredd i centimeter"
-                  onCommit={(widthCm) => onChange({ preset: undefined, widthCm })}
+                  onCommit={(widthCm) => onChange({ preset: undefined, widthCm, widthSet: true, fromFile: false })}
                   style={S.input}
                 />
               </Field>
@@ -815,6 +842,8 @@ function DraftRow({
             </div>
 
             <p style={S.hint}>
+              {/* Why it is not 10 cm: the customer made it this size. */}
+              {draft.fromFile && "Samma storlek som i filen. "}
               {perMetre > 0
                 ? `Ca ${perMetre} st ryms på 1 meter film.`
                 : "Motivet är för stort för arkets bredd."}
@@ -825,7 +854,7 @@ function DraftRow({
                 {sharpCm >= 1 && sharpCm < draft.widthCm && (
                   <>
                     {" "}
-                    <button onClick={() => onChange({ widthCm: sharpCm, preset: undefined })} style={S.inlineLink}>
+                    <button onClick={() => onChange({ widthCm: sharpCm, preset: undefined, widthSet: true, fromFile: false })} style={S.inlineLink}>
                       Använd {String(sharpCm).replace(".", ",")} cm
                     </button>
                   </>

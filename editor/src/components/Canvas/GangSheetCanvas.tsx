@@ -7,6 +7,7 @@ import {
   calculateScaleFactor,
   calculateDisplayDpi,
   getDpiColor,
+  isVectorDesign,
   DPI_LEVEL_COLORS,
   DPI_LEVEL_LABELS,
   DPI_THRESHOLDS,
@@ -646,8 +647,10 @@ export function GangSheetCanvas({ hideControls = false }: { hideControls?: boole
 
             // DPI overlay on first copy only
             if (showDpiOverlay && i === 0) {
+              // A vector is drawn again at its print size, so it is always sharp.
+              const vector = isVectorDesign(img);
               const dpi = calculateDisplayDpi(img.widthPx, img.displayWidth);
-              const color = getDpiColor(dpi);
+              const color = vector ? DPI_LEVEL_COLORS.optimal : getDpiColor(dpi);
               const bboxLeft = mmToCanvasPx(pos.x, scaleFactor);
               const bboxTop = mmToCanvasPx(pos.y, scaleFactor);
               canvas.add(
@@ -661,7 +664,7 @@ export function GangSheetCanvas({ hideControls = false }: { hideControls?: boole
                 } as any),
               );
               canvas.add(
-                new FabricText(`${dpi}`, {
+                new FabricText(vector ? "Vektor" : `${dpi}`, {
                   left: bboxLeft + 4, top: bboxTop + 4,
                   fontSize: 11, fontFamily: "system-ui", fontWeight: "bold",
                   fill: "#fff", backgroundColor: color, padding: 2,

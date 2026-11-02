@@ -52,6 +52,12 @@ export interface EditorImage {
   hasWhiteBackground?: boolean;
   /** A solid background left on (#rrggbb): it prints as a box around the design. */
   backgroundColor?: string;
+  /**
+   * Shapes only (an SVG, PDF, EPS or AI without pictures in it): the print
+   * file draws it again at the size it prints, so it has no DPI to warn
+   * about. Unset on designs from before the upload said; see isVectorDesign.
+   */
+  vector?: boolean;
   placed: boolean;
   locked?: boolean; // aspect ratio lock
   /** Made with the text tool: what it says and how, so it can be edited. */

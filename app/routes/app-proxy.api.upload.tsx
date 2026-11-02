@@ -9,7 +9,13 @@ import {
   convertToRaster,
   needsGhostscript,
   trimTransparentEdges,
+  renderSvg,
+  svgSizePt,
+  svgHasPrintSize,
+  embedsPictures,
+  isBlank,
 } from "../lib/image-processing.server";
+import { pxToMm } from "../lib/constants";
 import prisma from "../db.server";
 import { v4 as uuidv4 } from "uuid";
 
@@ -47,12 +53,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({ error: validation.error }, { status: 400 });
     }
 
-    // Convert EPS/AI to PNG via Ghostscript if needed
+    // Convert EPS/AI/PDF to PNG via Ghostscript if needed
     let processBuffer: Buffer = buffer;
     let convertedFromVector = false;
     if (needsGhostscript(filename)) {
       try {
-        console.log("Converting EPS/AI to PNG via Ghostscript:", filename);
+        console.log("Converting EPS/AI/PDF to PNG via Ghostscript:", filename);
         processBuffer = await convertToRaster(buffer, filename, 300);
         convertedFromVector = true;
         console.log("Conversion successful:", processBuffer.length, "bytes");
@@ -63,14 +69,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     } else if (/\.svg$/i.test(filename)) {
       // An SVG has no pixel size of its own; drawn at sharp's default it
       // was a few hundred pixels and printed soft. Render it like an EPS:
-      // 300 DPI, at most 8000 px on the long side. The export draws it
-      // again from the SVG at the size it is printed.
+      // 300 DPI of its own size, at most 8000 px on the long side. The
+      // export draws it again from the SVG at the size it is printed.
       try {
-        const sharpMod = (await import("sharp")).default;
-        const base = await sharpMod(buffer).metadata();
-        const longSide = Math.max(base.width || 0, base.height || 0) || 1000;
-        const density = Math.max(72, Math.min(300, (72 * 8000) / longSide));
-        processBuffer = await sharpMod(buffer, { density }).png().toBuffer();
+        const size = await svgSizePt(buffer);
+        const longSideIn = (Math.max(size.width, size.height) || 1000) / 72;
+        processBuffer = await renderSvg(buffer, Math.max(72, Math.min(300, 8000 / longSideIn)));
         convertedFromVector = true;
       } catch (svgErr) {
         console.error("SVG rasterization failed:", svgErr);
@@ -92,9 +96,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     // Extract metadata from the (possibly converted) buffer
     let metadata;
+    let measured = true;
     try {
       metadata = await extractMetadata(processBuffer);
     } catch {
+      measured = false;
       metadata = {
         width: 1000, height: 1000, dpiX: 300, dpiY: 300,
         format: validation.extension || "unknown",
@@ -133,7 +139,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     await Promise.all(uploads);
 
-    // For vector files (EPS/AI/PS), point originalUrl at the rasterized PNG —
+    // For vector files (EPS/AI/PS/PDF/SVG), point originalUrl at the rasterized PNG —
     // sharp cannot read the raw vector, and exports/proxy must serve a raster.
     // The raw vector is still stored under originalKey for archival.
     const renderableKey = convertedKey ?? originalKey;
@@ -159,7 +165,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       },
     });
 
-    // Build warnings array
+    // The size the file was made at, when it says so: the page of a PDF
+    // (an AI saved as PDF too), an SVG with a print size, a picture saved
+    // at print resolution. The builder starts the design there instead of
+    // inside 10 × 10 cm, where a logo drawn 40 cm wide started and then
+    // warned of low DPI when made 40 cm again. Against the sizes customers
+    // chose from July to November 2026 these were right more often than
+    // 10 cm; an EPS's own size, mostly from brand kits, was not. 72, 96 or
+    // 144 DPI is a screen's.
+    const nameExt = (filename.split(".").pop() || "").toLowerCase();
+    const sizeMm = { width: pxToMm(metadata.width, metadata.dpiX), height: pxToMm(metadata.height, metadata.dpiX) };
+    const madeAtSize =
+      measured &&
+      (!convertedFromVector
+        ? metadata.dpiX >= 200
+        : nameExt === "svg"
+          ? svgHasPrintSize(buffer, sizeMm.width)
+          : validation.mimeType === "application/pdf");
+
+    // Build warnings array. The DPI a picture carries is not a warning of
+    // its own: "Låg upplösning (72 DPI)" came up for nearly every upload,
+    // also 4000 px ones. The builder shows the DPI at the size chosen.
     const warnings: string[] = [];
 
     if (metadata.hasWhiteBackground) {
@@ -168,10 +194,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       );
     }
 
-    if (metadata.dpiX < 150) {
-      warnings.push(
-        `Låg upplösning (${metadata.dpiX} DPI). Bilden kan bli pixlig vid utskrift. Rekommenderat: minst 200 DPI.`,
-      );
+    // Looked for in the thumbnail: the same picture, small.
+    if (await isBlank(thumbnail).catch(() => false)) {
+      warnings.push(`${filename} ser tom ut: det finns inget att trycka i filen. Spara om den och ladda upp den igen.`);
     }
 
     return json({
@@ -189,6 +214,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Any solid background (white, black, a colour): the guide offers to take it off.
       backgroundColor: metadata.backgroundColor ?? null,
       format: metadata.format,
+      // Printed size in mm as the file gives it, or null; see madeAtSize.
+      fileSizeMm: madeAtSize ? sizeMm : null,
+      // Shapes only: drawn again at the size it prints, so never soft.
+      vector: convertedFromVector && !embedsPictures(buffer, nameExt),
       warnings,
     });
   } catch (error) {

@@ -10,7 +10,7 @@ import {
   printableArea,
   utilization,
 } from "./layout";
-import { calculateDisplayDpi, getDpiLevel } from "./units";
+import { calculateDisplayDpi, getDpiLevel, isVectorDesign } from "./units";
 
 export interface SheetIssue {
   kind: "overlap" | "touching" | "outside" | "lowDpi";
@@ -50,7 +50,7 @@ export function computeSheetStats(
   const lowDpiGroups = new Map<string, { dpi: number; name: string; ids: string[] }>();
   for (const img of placed) {
     const dpi = calculateDisplayDpi(img.widthPx, img.displayWidth);
-    if (getDpiLevel(dpi) !== "bad") continue;
+    if (isVectorDesign(img) || getDpiLevel(dpi) !== "bad") continue;
     const key = groupKey(img);
     const entry = lowDpiGroups.get(key);
     if (entry) entry.ids.push(img.id);

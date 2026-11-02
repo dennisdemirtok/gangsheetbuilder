@@ -82,6 +82,14 @@ export const DPI_LEVEL_LABELS: Record<DpiLevel, string> = {
   bad: "För låg",
 };
 
+/**
+ * Prints sharp at any size: the print file draws it again from the vector.
+ * Designs from before the upload said so go by the file name.
+ */
+export function isVectorDesign(img: { vector?: boolean; filename: string }): boolean {
+  return img.vector ?? /\.(svg|pdf|eps|ai|ps)$/i.test(img.filename);
+}
+
 /** Warning text for a design that is below the comfortable band, else null. */
 export function dpiWarning(dpi: number): string | null {
   const level = getDpiLevel(dpi);

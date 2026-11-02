@@ -3,6 +3,7 @@ import { execFile } from "child_process";
 import { writeFile, readFile, unlink, mkdtemp } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { SHEET_WIDTH_MM } from "./constants";
 
 export interface ImageMetadata {
   width: number;
@@ -72,7 +73,7 @@ async function detectBackground(buffer: Buffer): Promise<Rgb | null> {
 }
 
 /**
- * Convert EPS/AI/PDF to PNG using Ghostscript.
+ * Convert EPS/AI/PDF to PNG using Ghostscript, the first page only.
  * Returns a PNG buffer that Sharp can process.
  */
 export async function convertToRaster(
@@ -95,6 +96,8 @@ export async function convertToRaster(
         "-dBATCH",
         "-dNOPAUSE",
         "-dEPSCrop",
+        "-dFirstPage=1",
+        "-dLastPage=1",
         "-sDEVICE=pngalpha",
         `-r${dpi}`,
         `-sOutputFile=${outputPath}`,
@@ -122,11 +125,72 @@ export async function convertToRaster(
 }
 
 /**
- * Check if a file needs Ghostscript conversion.
+ * Check if a file needs Ghostscript conversion. PDF too: sharp cannot read
+ * PDF, so one came through as a grey 1000 × 1000 px placeholder at 300 DPI.
  */
 export function needsGhostscript(filename: string): boolean {
   const ext = filename.split(".").pop()?.toLowerCase() || "";
-  return ["eps", "ai", "ps"].includes(ext);
+  return ["eps", "ai", "ps", "pdf"].includes(ext);
+}
+
+/** An SVG's own size in points: what librsvg makes of it at 72 DPI. */
+export async function svgSizePt(buffer: Buffer): Promise<{ width: number; height: number }> {
+  const meta = await sharp(buffer, { limitInputPixels: false }).metadata();
+  return { width: meta.width || 0, height: meta.height || 0 };
+}
+
+/**
+ * An SVG drawn at `dpi` of its own size, as a PNG that says so.
+ *
+ * libvips applies the density twice to an SVG sized in real units: 210 mm
+ * at density 300 came out 10 335 px wide instead of 2 480, and a 400 mm
+ * one hit the pixel limit, so the upload fell back to 72 DPI. An SVG sized
+ * in px gets it once. A look at density 144 tells which.
+ */
+export async function renderSvg(buffer: Buffer, dpi: number): Promise<Buffer> {
+  const widthAt = async (density: number) =>
+    (await sharp(buffer, { density, limitInputPixels: false }).metadata()).width || 0;
+  const at72 = await widthAt(72);
+  const at144 = await widthAt(144);
+  const power = at72 > 0 && at144 > 0 ? Math.max(1, Math.round(Math.log2(at144 / at72))) : 1;
+  return sharp(buffer, { density: 72 * Math.pow(dpi / 72, 1 / power), limitInputPixels: false })
+    .withMetadata({ density: dpi })
+    .png()
+    .toBuffer();
+}
+
+/**
+ * Whether an SVG says how big it is meant to print: width and height in
+ * real units (mm, cm, in, pt, pc), or only a viewBox, which Illustrator
+ * writes in points, as long as the design fits the film. Width and height
+ * in px are a screen size: logo sites hand out 1892 px for a 9 cm logo.
+ */
+export function svgHasPrintSize(buffer: Buffer, designWidthMm: number): boolean {
+  const root = /<(?:svg:)?svg\b[^>]*>/i.exec(buffer.toString("utf8", 0, 20000))?.[0] ?? "";
+  const sizes = ["width", "height"]
+    .map((name) => new RegExp(`\\s${name}\\s*=\\s*["']([^"']*)["']`, "i").exec(root)?.[1]?.trim())
+    .filter((v): v is string => Boolean(v));
+  if (sizes.length === 0) return designWidthMm <= SHEET_WIDTH_MM;
+  return sizes.every((v) => /^[\d.]+\s*(mm|cm|in|pt|pc)$/i.test(v));
+}
+
+/**
+ * A vector file that carries pictures (a photo, a rasterised effect) gets
+ * no sharper when drawn larger, so it is not shown as "Vektor": an SVG's
+ * <image>, a PDF's or AI's image objects. EPS cannot be told cheaply.
+ */
+export function embedsPictures(buffer: Buffer, ext: string): boolean {
+  if (ext === "svg") return /<(?:svg:)?image[\s>]/i.test(buffer.toString("utf8"));
+  if (ext === "pdf" || ext === "ai") return /\/Subtype\s*\/Image\b/.test(buffer.toString("latin1"));
+  return false;
+}
+
+/** Nothing visible to print: every pixel transparent, like an empty PDF page. */
+export async function isBlank(buffer: Buffer): Promise<boolean> {
+  const img = sharp(buffer, { limitInputPixels: false });
+  if (!(await img.metadata()).hasAlpha) return false;
+  const stats = await img.stats();
+  return stats.channels[3]?.max === 0;
 }
 
 /**

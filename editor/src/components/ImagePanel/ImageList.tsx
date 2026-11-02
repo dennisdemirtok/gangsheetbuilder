@@ -7,8 +7,9 @@ import {
 } from "../../store/editorStore";
 import {
   calculateDisplayDpi,
-  getDpiColor,
   getDpiLevel,
+  isVectorDesign,
+  DPI_LEVEL_COLORS,
   DPI_LEVEL_LABELS,
   cmText,
 } from "../../utils/units";
@@ -197,9 +198,11 @@ function GroupItem({
   const [isRemovingBg, setIsRemovingBg] = useState(false);
   const [aspectLocked, setAspectLocked] = useState(true);
 
+  // A vector is drawn again at its print size: no DPI to show or warn about.
+  const vector = isVectorDesign(image);
   const dpi = calculateDisplayDpi(image.widthPx, image.displayWidth);
-  const dpiColor = getDpiColor(dpi);
-  const dpiLevel = getDpiLevel(dpi);
+  const dpiLevel = vector ? "optimal" : getDpiLevel(dpi);
+  const dpiColor = DPI_LEVEL_COLORS[dpiLevel];
   const ratio = image.widthPx / image.heightPx;
 
   // How many more copies would fit in the space left over.
@@ -318,9 +321,9 @@ function GroupItem({
                 color: dpiColor,
                 fontWeight: 600,
               }}
-              title={`${DPI_LEVEL_LABELS[dpiLevel]} upplösning för DTF-tryck`}
+              title={vector ? "Vektor: trycks skarpt i alla storlekar" : `${DPI_LEVEL_LABELS[dpiLevel]} upplösning för DTF-tryck`}
             >
-              {dpi} DPI
+              {vector ? "Vektor" : `${dpi} DPI`}
             </span>
             <span style={{ fontSize: 11, color: theme.textDim }}>
               {cmText(image.displayWidth)} × {cmText(image.displayHeight)} cm

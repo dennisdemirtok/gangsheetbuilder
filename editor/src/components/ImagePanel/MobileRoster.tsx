@@ -7,8 +7,9 @@ import {
 } from "../../store/editorStore";
 import {
   calculateDisplayDpi,
-  getDpiColor,
   getDpiLevel,
+  isVectorDesign,
+  DPI_LEVEL_COLORS,
   DPI_LEVEL_LABELS,
   cmText,
 } from "../../utils/units";
@@ -81,8 +82,10 @@ function RosterCard({
   const removeGroup = useEditorStore((s) => s.removeGroup);
 
   const image = group.master;
+  // A vector is drawn again at its print size: no DPI to show or warn about.
+  const vector = isVectorDesign(image);
   const dpi = calculateDisplayDpi(image.widthPx, image.displayWidth);
-  const level = getDpiLevel(dpi);
+  const level = vector ? "optimal" : getDpiLevel(dpi);
   const weak = level === "bad" || level === "low";
 
   return (
@@ -115,10 +118,10 @@ function RosterCard({
               <span style={{ color: theme.textDim, display: "flex" }}>{ICON.pencil}</span>
             </button>
             <span
-              style={{ ...R.dpi, color: getDpiColor(dpi) }}
-              title={`${DPI_LEVEL_LABELS[level]} upplösning för DTF-tryck`}
+              style={{ ...R.dpi, color: DPI_LEVEL_COLORS[level] }}
+              title={vector ? "Vektor: trycks skarpt i alla storlekar" : `${DPI_LEVEL_LABELS[level]} upplösning för DTF-tryck`}
             >
-              {dpi} DPI{weak ? ` · ${DPI_LEVEL_LABELS[level]}` : ""}
+              {vector ? "Vektor" : `${dpi} DPI${weak ? ` · ${DPI_LEVEL_LABELS[level]}` : ""}`}
             </span>
           </div>
         </div>

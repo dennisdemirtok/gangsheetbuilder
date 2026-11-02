@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useEditorStore } from "../../store/editorStore";
 import { uploadImage, getAppProxyUrl, ensureGangSheet } from "../../services/api";
-import { pxToMm } from "../../utils/units";
+import { startSizeMm } from "../../utils/startSize";
 import { theme } from "../../styles/theme";
 import { showToast } from "../../utils/toast";
 
@@ -55,18 +55,11 @@ export function ImageUploader({ compact = false }: { compact?: boolean } = {}) {
           );
           console.log("[GS] Upload result:", result);
 
-          const dpi = result.dpiX || 72;
-          const naturalWidthMm = pxToMm(result.width, dpi);
-          const naturalHeightMm = pxToMm(result.height, dpi);
-          const maxDisplayMm = 100;
-          // Cap both width and height (keep aspect ratio) so an image
-          // can never be created taller than the sheet
+          // The size made in the file, else inside 10 × 10 cm — and never
+          // taller than the sheet.
+          const start = startSizeMm(result.fileSizeMm, result.width, result.height);
           const maxHeightMm = Math.max(1, sheetSize.heightMm - 20);
-          const scale = Math.min(
-            1,
-            maxDisplayMm / naturalWidthMm,
-            maxHeightMm / naturalHeightMm,
-          );
+          const scale = Math.min(1, maxHeightMm / start.height);
 
           // Prepend appProxyUrl to relative image paths
           const base = getAppProxyUrl();
@@ -92,8 +85,8 @@ export function ImageUploader({ compact = false }: { compact?: boolean } = {}) {
             dpiY: result.dpiY || 72,
             positionX: 0,
             positionY: 0,
-            displayWidth: naturalWidthMm * scale,
-            displayHeight: naturalHeightMm * scale,
+            displayWidth: start.width * scale,
+            displayHeight: start.height * scale,
             rotation: 0,
             flipX: false,
             flipY: false,
@@ -101,6 +94,7 @@ export function ImageUploader({ compact = false }: { compact?: boolean } = {}) {
             marginMm: gapMm,
             bgRemoved: result.hasAlpha || false,
             hasWhiteBackground: result.hasWhiteBackground || false,
+            vector: result.vector,
             placed: true,
           });
 
