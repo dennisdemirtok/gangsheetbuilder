@@ -185,6 +185,42 @@ export function embedsPictures(buffer: Buffer, ext: string): boolean {
   return false;
 }
 
+const GENERIC_FONTS = new Set(["serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "inherit", "initial"]);
+
+/**
+ * The fonts an SVG writes live text in (<text>, not outlines), or null
+ * when it has none. The server has none of the customer's fonts, so
+ * librsvg draws such text in a stand-in, or as symbols: #1154's Impact
+ * and Luminari printed as a plain sans and dingbats, and the preview the
+ * customer saw was the same wrong picture. The list may be empty: text
+ * without a font named.
+ */
+export function svgTextFonts(buffer: Buffer): string[] | null {
+  const svg = buffer.toString("utf8").replace(/&(apos|#39);/g, "'").replace(/&(quot|#34);/g, '"');
+  const texts = svg.matchAll(/<(?:svg:)?text\b[^>]*>([\s\S]*?)<\/(?:svg:)?text>/gi);
+  if (![...texts].some((m) => m[1].replace(/<[^>]*>/g, "").trim())) return null;
+
+  // Illustrator writes them as attributes, in a style="" or in a <style>
+  // class: font-family="'Impact'", font-family:Luminari-Regular, Luminari.
+  const name = `(?:'[^']*'|"[^"]*"|[^,;'"{}<>!]+)`;
+  const lists = [
+    ...[...svg.matchAll(/\bfont-family\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)].map((m) => m[1] ?? m[2]),
+    ...[...svg.matchAll(new RegExp(`\\bfont-family\\s*:\\s*(${name}(?:\\s*,\\s*${name})*)`, "gi"))].map((m) => m[1]),
+  ];
+  const fonts = new Map<string, string>();
+  for (const list of lists) {
+    for (const raw of list.split(",")) {
+      const font = raw.trim().replace(/^['"]|['"]$/g, "").trim();
+      if (font && !GENERIC_FONTS.has(font.toLowerCase())) fonts.set(font.toLowerCase(), font);
+    }
+  }
+  // "Luminari-Regular, Luminari" is one font: keep the family name.
+  return [...fonts.values()].filter((font) => {
+    const dash = font.lastIndexOf("-");
+    return dash <= 0 || !fonts.has(font.slice(0, dash).toLowerCase());
+  });
+}
+
 /** Nothing visible to print: every pixel transparent, like an empty PDF page. */
 export async function isBlank(buffer: Buffer): Promise<boolean> {
   const img = sharp(buffer, { limitInputPixels: false });

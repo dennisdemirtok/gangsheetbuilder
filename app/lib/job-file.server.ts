@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import prisma from "../db.server";
-import { uploadFile } from "./r2.server";
-import { convertToRaster } from "./image-processing.server";
+import { downloadFile, uploadFile } from "./r2.server";
+import { convertToRaster, svgTextFonts } from "./image-processing.server";
 
 /**
  * Store the file the print shop prints for a job, with a preview.
@@ -143,4 +143,26 @@ export async function storeJobFile(options: {
   ]);
 
   return { format: ext, vector, dpi, hasPreview: Boolean(previewKey) };
+}
+
+/**
+ * The fonts of live <text> in a job's SVG designs, or null when none has
+ * any (see svgTextFonts). The upload keeps the SVG as original.svg beside
+ * the PNG it prints from; a file stored here is the SVG itself.
+ */
+export async function liveTextFonts(
+  designs: { originalUrl: string; originalFilename: string }[],
+): Promise<string[] | null> {
+  const keys = designs
+    .filter((d) => /\.svg$/i.test(d.originalFilename))
+    .map((d) =>
+      /\.svg$/i.test(d.originalUrl)
+        ? d.originalUrl
+        : `${d.originalUrl.slice(0, d.originalUrl.lastIndexOf("/") + 1)}original.svg`,
+    );
+  const found = await Promise.all(
+    [...new Set(keys)].map((key) => downloadFile(key).then(svgTextFonts, () => null)),
+  );
+  const texts = found.filter((fonts): fonts is string[] => fonts !== null);
+  return texts.length > 0 ? [...new Set(texts.flat())] : null;
 }

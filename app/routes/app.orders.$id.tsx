@@ -38,7 +38,7 @@ import { orderPayment, syncOrderAddress, withOrderDetails } from "../lib/order-d
 import { jobSize, noteProperties, printLabel, type LineProperty } from "../lib/print-jobs";
 import { orderStatusOf } from "../lib/order-list.server";
 import { normalizePhone } from "../lib/phone";
-import { isVectorFormat, storeJobFile } from "../lib/job-file.server";
+import { isVectorFormat, liveTextFonts, storeJobFile } from "../lib/job-file.server";
 import { saveBlob } from "../lib/save-file";
 import { saveUrl } from "../lib/save-file";
 import {
@@ -90,7 +90,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     orderBy: { createdAt: "asc" },
     include: {
       exports: { orderBy: { createdAt: "desc" }, take: 1 },
-      images: { select: { dpiX: true, originalFilename: true, widthPx: true, displayWidth: true } },
+      images: { select: { dpiX: true, originalFilename: true, originalUrl: true, widthPx: true, displayWidth: true } },
       _count: { select: { images: true } },
     },
   });
@@ -105,7 +105,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
   const combinable = jobs.filter((j) => j.kind === "cut" && j.status !== "shipped" && j.status !== "draft");
 
-  const [[gangSheet], notes, previews, summary, extraShipments, payment] = await Promise.all([
+  const [[gangSheet], notes, previews, summary, extraShipments, payment, liveText] = await Promise.all([
     withOrderDetails(admin, session.shop, [found]),
     prisma.gangSheetNote.findMany({
       where: { gangSheetId: { in: allJobs.map((j) => j.id) } },
@@ -115,6 +115,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     found.shopifyOrderId ? summarizeOrderShipment(session.shop, found.shopifyOrderId) : null,
     found.shopifyOrderId ? listExtraShipments(session.shop, found.shopifyOrderId) : [],
     found.shopifyOrderId ? orderPayment(admin, found.shopifyOrderId) : null,
+    // SVG text that is not outlines prints in a stand-in font (#1154).
+    Promise.all(jobs.map((j) => liveTextFonts(j.images))),
   ]);
   const money = (amount: number, currency: string) =>
     currency === "SEK"
@@ -219,6 +221,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         minDesignDpi,
         props: noteProperties((job.lineProperties as LineProperty[] | null) || []),
         previewUrl: previews[i],
+        liveTextFonts: liveText[i],
         hasFile: Boolean(file),
         vector,
         cutJob: job.kind === "cut",
@@ -999,6 +1002,7 @@ export default function OrderDetailPage() {
                         <InlineStack gap="200" blockAlign="center">
                           <Badge tone={job.cut ? "info" : undefined}>{job.label}</Badge>
                           {job.filmType !== "standard" && <Badge>{job.filmType}</Badge>}
+                          {job.liveTextFonts && <Badge tone="warning">SVG text not outlined</Badge>}
                         </InlineStack>
                         <Text as="p" variant="bodyMd" fontWeight="semibold">
                           {job.size}
@@ -1034,6 +1038,14 @@ export default function OrderDetailPage() {
                         {job.dpi != null && job.dpi < 200 && (
                           <Text as="p" variant="bodySm" tone="caution">
                             Low resolution for this size.
+                          </Text>
+                        )}
+                        {job.liveTextFonts && (
+                          <Text as="p" variant="bodySm" tone="caution">
+                            An SVG has live text
+                            {job.liveTextFonts.length > 0 ? ` in ${job.liveTextFonts.join(", ")}` : ""}: it prints in a
+                            stand-in font, sometimes as symbols. Check the preview, or ask the customer for the text as
+                            outlines.
                           </Text>
                         )}
                         {job.missingFile && (

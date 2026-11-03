@@ -88,6 +88,9 @@ interface Uploaded {
   fileSizeMm?: { width: number; height: number } | null;
   /** Shapes only, so it prints sharp at any size. */
   vector?: boolean;
+  /** An SVG with text not made into outlines, and the fonts it names. */
+  liveText?: boolean;
+  liveTextFonts?: string[];
 }
 
 interface Draft {
@@ -716,6 +719,10 @@ function DraftRow({
   const heightMm = (draft.heightPx / draft.widthPx) * widthMm;
   const dpi = calculateDisplayDpi(draft.widthPx, widthMm);
   const warning = draft.vector || draft.status !== "ready" ? null : dpiWarning(dpi);
+  // Sharp at any size, but printed in a stand-in font: said here, beside
+  // the file, as well as in the toast.
+  const liveText = draft.status === "ready" && draft.uploaded?.liveText;
+  const fonts = draft.uploaded?.liveTextFonts?.join(", ");
   // Largest width that still prints sharp, for a one-click fix.
   const sharpCm = Math.floor((draft.widthPx / DPI_THRESHOLDS.good) * 2.54 * 2) / 2;
 
@@ -859,6 +866,12 @@ function DraftRow({
                     </button>
                   </>
                 )}
+              </p>
+            )}
+            {liveText && (
+              <p style={S.warn}>
+                ⚠ Texten i din SVG är inte konverterad till konturer — typsnittet{fonts ? ` (${fonts})` : ""} kan bli fel.
+                Konvertera texten till konturer (Create outlines) och ladda upp igen.
               </p>
             )}
             {offerBg && (

@@ -13,6 +13,7 @@ import {
   svgSizePt,
   svgHasPrintSize,
   embedsPictures,
+  svgTextFonts,
   isBlank,
 } from "../lib/image-processing.server";
 import { pxToMm } from "../lib/constants";
@@ -199,6 +200,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       warnings.push(`${filename} ser tom ut: det finns inget att trycka i filen. Spara om den och ladda upp den igen.`);
     }
 
+    // Text the SVG keeps as text, not outlines, is drawn in a stand-in font
+    // here and in the print file, sometimes as symbols (#1154).
+    const textFonts = nameExt === "svg" ? svgTextFonts(buffer) : null;
+    if (textFonts) {
+      warnings.push(
+        `${filename}: Texten i din SVG är inte konverterad till konturer — typsnittet kan bli fel. Konvertera texten till konturer (Create outlines) och ladda upp igen.`,
+      );
+    }
+
     return json({
       id: image.id,
       imageId,
@@ -218,6 +228,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       fileSizeMm: madeAtSize ? sizeMm : null,
       // Shapes only: drawn again at the size it prints, so never soft.
       vector: convertedFromVector && !embedsPictures(buffer, nameExt),
+      // Live <text> in an SVG, and the fonts it names; see svgTextFonts.
+      liveText: Boolean(textFonts),
+      liveTextFonts: textFonts ?? [],
       warnings,
     });
   } catch (error) {

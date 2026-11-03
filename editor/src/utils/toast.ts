@@ -23,10 +23,13 @@ export function showToast(message: string, type: "warning" | "error" | "info" | 
     animation: gs-toast-in 0.3s ease-out;
   `;
 
-  document.body.appendChild(toast);
+  // Inside the editor's portal: while the editor is open everything else
+  // on the page is hidden, a toast on <body> too, so none was ever seen.
+  (document.getElementById("gangsheet-portal") ?? document.body).appendChild(toast);
+  // Long enough to read: a two-sentence warning went in five seconds.
   setTimeout(() => {
     toast.style.opacity = "0";
     toast.style.transition = "opacity 0.3s";
     setTimeout(() => toast.remove(), 300);
-  }, 5000);
+  }, Math.max(5000, message.length * 60));
 }
