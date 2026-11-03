@@ -27,6 +27,8 @@ const run = promisify(execFile);
 const SOLID = 128;
 /** Longest side the colours are worked out and traced at. */
 const MAX_TRACE = 2500;
+/** A smaller file is drawn up to this (at most 4×) before tracing. */
+const MIN_TRACE = 1500;
 /** At most this many colours; a logo with more is not flat. */
 const MAX_COLORS = 8;
 
@@ -115,11 +117,17 @@ export type SharpenResult =
  * layer covering itself and every colour above it, so the layers meet
  * without gaps however potrace rounds them.
  */
-export async function sharpenLogo(png: Buffer, longSidePx: number, judgeAtPx = MAX_TRACE): Promise<SharpenResult> {
+export async function sharpenLogo(
+  png: Buffer,
+  longSidePx: number,
+  judgeAtPx = MAX_TRACE,
+): Promise<SharpenResult> {
   const verdict = await judge(png, judgeAtPx);
   if (!verdict.ok) return verdict;
   const { centres, stats } = verdict;
-  const { data, W, H } = await rgba(png, MAX_TRACE);
+  // A small file (the ones that need this most) is drawn up smoothly first,
+  // so its edges fall between its pixels instead of on their steps.
+  const { data, W, H } = await rgba(png, MAX_TRACE, MIN_TRACE);
   const N = W * H;
   const K = centres.length;
   const alpha = (p: number) => data[p * 4 + 3]!;
@@ -150,6 +158,8 @@ export async function sharpenLogo(png: Buffer, longSidePx: number, judgeAtPx = M
     }
   }
   for (let p = 0; p < N; p++) if (label[p] === -1 && alpha(p) >= SOLID) label[p] = nearest(p)[0];
+  majority(label, W, H, K);
+  majority(label, W, H, K);
 
   // Largest colour at the bottom.
   const area = new Array(K).fill(0);
@@ -210,13 +220,44 @@ type Rgb = number[];
  */
 export const JUDGE_EMBEDDED_PX = 800;
 
-async function rgba(png: Buffer, longSide: number) {
+/** RGBA pixels at most `longSide` px on the long side, and at least `minLong` (drawn up smoothly). */
+async function rgba(png: Buffer, longSide: number, minLong = 0) {
+  const meta = await sharp(png, { limitInputPixels: false }).metadata();
+  const long = Math.max(meta.width || 1, meta.height || 1);
+  const target = long < minLong ? Math.min(minLong, long * 4) : Math.min(long, longSide);
   const { data, info } = await sharp(png, { limitInputPixels: false })
     .ensureAlpha()
-    .resize({ width: longSide, height: longSide, fit: "inside", withoutEnlargement: true })
+    .resize({ width: target, height: target, fit: "inside", kernel: "cubic" })
     .raw()
     .toBuffer({ resolveWithObject: true });
   return { data, W: info.width, H: info.height };
+}
+
+/**
+ * Each solid pixel takes the colour most of its 3 × 3 neighbourhood has,
+ * in place: JPEG specks and stray rim pixels along an edge go, lines two
+ * pixels wide or more stay.
+ */
+function majority(label: Int8Array, W: number, H: number, K: number) {
+  const src = label.slice();
+  const counts = new Int32Array(K);
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
+      const p = y * W + x;
+      const own = src[p]!;
+      if (own < 0) continue;
+      counts.fill(0);
+      for (let dy = -W; dy <= W; dy += W) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const c = src[p + dy + dx]!;
+          if (c >= 0) counts[c]!++;
+        }
+      }
+      let best = own;
+      for (let c = 0; c < K; c++) if (counts[c]! > counts[best]!) best = c;
+      label[p] = best;
+    }
+  }
 }
 
 /** The nearest of `centres` to pixel p, and its squared distance. */
@@ -328,7 +369,12 @@ async function judge(png: Buffer, longSide: number): Promise<Judgement> {
       sum[2]! += data[p * 4 + 2]!;
       n++;
     }
-    if (n > 0) centres.push([sum[0]! / n, sum[1]! / n, sum[2]! / n]);
+    const color = [sum[0]! / n, sum[1]! / n, sum[2]! / n];
+    // White around a logo with white in it is one colour, not two whites
+    // whose JPEG noise traces as faint lines.
+    if (n > 0 && !centres.some((c) => Math.hypot(c[0]! - color[0]!, c[1]! - color[1]!, c[2]! - color[2]!) < 25)) {
+      centres.push(color);
+    }
   }
   return { ok: true, centres, stats };
 }
