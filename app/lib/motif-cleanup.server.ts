@@ -31,6 +31,12 @@ const MAX_TRACE = 2500;
 const MIN_TRACE = 1500;
 /** The widest blend between motif and background that cleanRim looks for, in pixels. */
 const MAX_RIM = 32;
+/**
+ * A blend wider than this is no edge but the picture itself: a painting on
+ * a dark ground or a photo rises slowly from the background for 20–30 px,
+ * an edge (#1153's 374 px picture drawn 4.4× larger: 9 px) levels off.
+ */
+const MAX_BAND = 16;
 /** At most this many colours; a logo with more is not flat. */
 const MAX_COLORS = 8;
 
@@ -127,9 +133,10 @@ export async function removeMotifBackground(png: Buffer, keepCanvas = false): Pr
  * cleared, a pixel on the way from the motif's colour (the nearest pixel
  * inside the band) to the background is split into that colour and how
  * much of it there is. Pixels of another colour (a thin outline) stay as
- * they were. Light specks left in the cleared area go too.
+ * they were. Light specks left in the cleared area go too. The canvas stays
+ * as it is, so the builder's "Ta bort BG" uses it as well.
  */
-async function cleanRim(original: Buffer, cleared: Buffer): Promise<Buffer> {
+export async function cleanRim(original: Buffer, cleared: Buffer): Promise<Buffer> {
   const src = await sharp(original, { limitInputPixels: false }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const { data: out, info } = await sharp(cleared, { limitInputPixels: false }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const W = info.width;
@@ -180,13 +187,14 @@ async function cleanRim(original: Buffer, cleared: Buffer): Promise<Buffer> {
   }
   let peak = 0;
   for (let d = 1; d <= MAX_RIM; d++) if (count[d]! > 0) peak = Math.max(peak, away[d]! / count[d]!);
-  let band = 2;
+  let band = MAX_RIM;
   for (let d = 1; d < MAX_RIM; d++) {
     if (count[d]! > 0 && away[d]! / count[d]! >= 0.95 * peak) {
       band = Math.max(2, d);
       break;
     }
   }
+  if (band > MAX_BAND) return cleared;
 
   // The motif's colour for each band pixel: the nearest solid pixel just inside.
   const seed = new Int32Array(N).fill(-1);
@@ -216,7 +224,8 @@ async function cleanRim(original: Buffer, cleared: Buffer): Promise<Buffer> {
     const a = Math.max(0, Math.min(1, (v[0]! * f[0]! + v[1]! * f[1]! + v[2]! * f[2]!) / ff));
     const off = Math.hypot(v[0]! - a * f[0]!, v[1]! - a * f[1]!, v[2]! - a * f[2]!);
     if (off > 24) continue; // another colour, not a blend of these two
-    out[i + 3] = Math.round(a * o[i + 3]!);
+    // Never more than the fill left: what it faded out stays faded.
+    out[i + 3] = Math.min(out[i + 3]!, Math.round(a * o[i + 3]!));
     if (a < 0.97) {
       out[i] = o[s * 4]!;
       out[i + 1] = o[s * 4 + 1]!;

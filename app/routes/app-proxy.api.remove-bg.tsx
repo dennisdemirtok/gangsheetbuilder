@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { downloadFile, uploadFile, storageKey } from "../lib/r2.server";
 import { removeAllOfColor, removeBackground } from "../lib/image-processing.server";
+import { cleanRim } from "../lib/motif-cleanup.server";
 import { resolveRasterKey } from "../lib/placement";
 import prisma from "../db.server";
 
@@ -36,11 +37,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // Where this mode's result lives, so switching modes never serves the
-    // other one from a cache.
+    // other one from a cache. "-v2" since the rim is cleaned: an older
+    // result is made again, and the file a placed sheet may print from is
+    // never overwritten.
     const parts = image.originalUrl.split("/");
     const sessionPart = parts[1] || "unknown";
     const imagePart = parts[2] || imageId;
-    const bgRemovedKey = `uploads/${sessionPart}/${imagePart}/${mode === "all" ? "bg-removed-all" : "bg-removed"}.png`;
+    const bgRemovedKey = `uploads/${sessionPart}/${imagePart}/${mode === "all" ? "bg-removed-all" : "bg-removed"}-v2.png`;
 
     if (image.bgRemovedUrl === bgRemovedKey) {
       if (!image.bgRemoved) {
@@ -63,15 +66,18 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         resultBuffer = await removeWithApi(originalBuffer, removeBgApiKey);
       } catch (apiError) {
         console.warn("remove.bg API failed, falling back to local:", apiError);
-        resultBuffer = await removeBackground(originalBuffer);
+        resultBuffer = await cleanRim(originalBuffer, await removeBackground(originalBuffer));
       }
     } else {
       // Local: the background around the design (white, black or any one
-      // colour), or on request every pixel of that colour.
+      // colour), its rim cleaned so the blend into the old background fades
+      // out in the design's own colour instead of printing as a light line.
+      // On request every pixel of that colour; then what borders it inside
+      // is the design's own shading, left as it is.
       resultBuffer =
         mode === "all"
           ? await removeAllOfColor(originalBuffer)
-          : await removeBackground(originalBuffer);
+          : await cleanRim(originalBuffer, await removeBackground(originalBuffer));
     }
 
     await uploadFile(bgRemovedKey, resultBuffer, "image/png");
