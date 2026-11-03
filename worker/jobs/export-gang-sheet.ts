@@ -348,9 +348,11 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
   const pngKey = `exports/${data.gangSheetId}/gangsheet.png`;
   await uploadToR2(pngKey, pngBuffer, "image/png");
 
-  // Generate and upload preview
+  // Generate and upload preview. WebP stops at 16 383 px a side: at 1200
+  // px wide, a sheet longer than ~7.9 m threw here after the print file
+  // was already uploaded, and #1154's 10 m sheet sat on "Preparing file".
   const previewBuffer = await sharp(pngBuffer, { limitInputPixels: false })
-    .resize({ width: 1200, withoutEnlargement: true })
+    .resize({ width: 1200, height: 16383, fit: "inside", withoutEnlargement: true })
     .webp({ quality: 85 })
     .toBuffer();
   const previewKey = `exports/${data.gangSheetId}/preview.webp`;

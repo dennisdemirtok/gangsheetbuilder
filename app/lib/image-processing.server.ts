@@ -615,13 +615,14 @@ export async function compositeGangSheet(
 
 /**
  * Generate a low-resolution preview image from the composite.
+ * WebP stops at 16 383 px a side, so a long sheet is narrowed to fit.
  */
 export async function generatePreview(
   compositeBuffer: Buffer,
   maxWidth: number = 1200,
 ): Promise<Buffer> {
   return sharp(compositeBuffer, { limitInputPixels: false })
-    .resize({ width: maxWidth, withoutEnlargement: true })
+    .resize({ width: maxWidth, height: 16383, fit: "inside", withoutEnlargement: true })
     .webp({ quality: 85 })
     .toBuffer();
 }
