@@ -14,7 +14,7 @@ import {
   cmText,
 } from "../../utils/units";
 import { freeCapacityFor, imageBbox } from "../../utils/layout";
-import { removeBg, getAppProxyUrl } from "../../services/api";
+import { removeBg, getAppProxyUrl, sharpenDesign, type SharpenedDesign } from "../../services/api";
 import { theme } from "../../styles/theme";
 import { useSheetStats } from "../../utils/sheetStats";
 import { showToast } from "../../utils/toast";
@@ -146,6 +146,43 @@ export async function removeGroupBackground(
   updateGroup(group.groupId, { bgRemoved: true, bgRemovedUrl: bgUrl, hasWhiteBackground: false, backgroundColor: undefined });
 }
 
+/**
+ * A pixelated or stair-stepped logo traced into clean shapes on the
+ * server, for the largest size it is placed at. Nothing changes yet: the
+ * customer compares first. Throws with a message to show (a photo is refused).
+ */
+export async function sharpenGroup(group: ImageGroup): Promise<SharpenedDesign> {
+  const image = group.master;
+  const longSideMm = Math.max(...group.members.map((m) => Math.max(m.displayWidth, m.displayHeight)));
+  return sharpenDesign(image.dbId || image.id, Boolean(image.bgRemovedUrl), longSideMm);
+}
+
+/** Put the sharp logo in place of the design, on every copy, at the same size. */
+export function placeSharpened(
+  group: ImageGroup,
+  result: SharpenedDesign,
+  updateGroup: (groupId: string, updates: Partial<EditorImage>) => void,
+) {
+  const base = getAppProxyUrl();
+  updateGroup(group.groupId, {
+    dbId: result.id,
+    filename: result.filename,
+    originalUrl: result.originalUrl.startsWith("/") ? base + result.originalUrl : result.originalUrl,
+    thumbnailUrl: result.thumbnailUrl,
+    widthPx: result.width,
+    heightPx: result.height,
+    dpiX: 300,
+    dpiY: 300,
+    // The traced logo is already on transparency; nothing else to print.
+    bgRemoved: true,
+    bgRemovedUrl: undefined,
+    hasWhiteBackground: false,
+    backgroundColor: undefined,
+    vector: false,
+  });
+  showToast("Loggan är skarp nu, på alla kopior.", "success");
+}
+
 /** Trim the empty margin around a design, on every copy. Throws when it fails. */
 export async function cropGroup(
   group: ImageGroup,
@@ -196,6 +233,8 @@ function GroupItem({
 
   const image = group.master;
   const [isRemovingBg, setIsRemovingBg] = useState(false);
+  const [sharpening, setSharpening] = useState(false);
+  const [sharpened, setSharpened] = useState<SharpenedDesign | null>(null);
   const [aspectLocked, setAspectLocked] = useState(true);
 
   // A vector is drawn again at its print size: no DPI to show or warn about.
@@ -227,6 +266,22 @@ function GroupItem({
     } finally {
       setIsRemovingBg(false);
     }
+  };
+
+  const handleSharpen = async () => {
+    setSharpening(true);
+    try {
+      setSharpened(await sharpenGroup(group));
+    } catch (error) {
+      showToast((error as Error).message, "error");
+    } finally {
+      setSharpening(false);
+    }
+  };
+
+  const applySharpened = (result: SharpenedDesign) => {
+    placeSharpened(group, result, updateGroup);
+    setSharpened(null);
   };
 
   const handleWidthChange = (val: string) => {
@@ -332,6 +387,29 @@ function GroupItem({
               <span style={{ fontSize: 11, color: dpiColor, fontWeight: 600 }}>
                 {DPI_LEVEL_LABELS[dpiLevel]}
               </span>
+            )}
+            {(dpiLevel === "bad" || dpiLevel === "low") && !image.text && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void handleSharpen();
+                }}
+                disabled={sharpening}
+                title="Vi ritar om loggan med rena kanter, så den blir skarp i alla storlekar"
+                style={{
+                  padding: "2px 7px",
+                  border: "none",
+                  borderRadius: 4,
+                  background: theme.accent,
+                  color: "#fff",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  fontFamily: theme.fontFamily,
+                  cursor: sharpening ? "wait" : "pointer",
+                }}
+              >
+                {sharpening ? "Gör skarp…" : "Gör skarp"}
+              </button>
             )}
             {group.count > 1 && (
               <span style={{ fontSize: 11, fontWeight: 700, color: theme.accent }}>
@@ -472,6 +550,13 @@ function GroupItem({
               onClick={handleRemoveBg}
               disabled={isRemovingBg || Boolean(image.bgRemovedUrl)}
             />
+            {!vector && !image.text && (
+              <ActionButton
+                label={sharpening ? "Gör skarp…" : "Gör loggan skarp"}
+                onClick={() => void handleSharpen()}
+                disabled={sharpening}
+              />
+            )}
             <ActionButton
               label="Beskär"
               onClick={async () => {
@@ -484,7 +569,7 @@ function GroupItem({
             />
           </div>
 
-          {image.hasWhiteBackground && !image.bgRemovedUrl && (
+          {image.hasWhiteBackground && !image.bgRemovedUrl && !sharpened && (
             <div
               style={{
                 padding: "5px 8px",
@@ -500,6 +585,114 @@ function GroupItem({
           )}
         </div>
       )}
+      {sharpened && (
+        <SharpenCompare
+          before={image.bgRemovedUrl || image.thumbnailUrl}
+          after={sharpened}
+          onUse={() => applySharpened(sharpened)}
+          onKeep={() => setSharpened(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * The traced logo next to the one the customer uploaded, before anything
+ * changes. Tracing redraws the shapes, so the customer chooses.
+ */
+export function SharpenCompare({
+  before,
+  after,
+  onUse,
+  onKeep,
+}: {
+  before: string;
+  after: SharpenedDesign;
+  onUse: () => void;
+  onKeep: () => void;
+}) {
+  const checks = "repeating-conic-gradient(#d5d9de 0% 25%, #eef0f2 0% 50%) 50% / 14px 14px";
+  const picture = (url: string, label: string) => (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <p style={{ margin: "0 0 6px", fontSize: 12, fontWeight: 600, color: theme.textDim }}>{label}</p>
+      <div style={{ background: checks, borderRadius: 8, height: 220, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+        <img src={url} alt="" style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }} />
+      </div>
+    </div>
+  );
+  return (
+    <div
+      onClick={(e) => {
+        e.stopPropagation();
+        if (e.target === e.currentTarget) onKeep();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 60,
+        background: "rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 16,
+        cursor: "default",
+      }}
+    >
+      <div
+        style={{
+          width: "min(640px, 100%)",
+          background: theme.bgCard,
+          borderRadius: theme.radius,
+          padding: 20,
+          fontFamily: theme.fontFamily,
+          boxShadow: "0 12px 40px rgba(0,0,0,0.25)",
+        }}
+      >
+        <h3 style={{ margin: "0 0 4px", fontSize: 16, color: theme.text }}>Vill du använda den skarpa loggan?</h3>
+        <p style={{ margin: "0 0 14px", fontSize: 12.5, color: theme.textDim, lineHeight: 1.45 }}>
+          Vi har ritat om loggan med rena kanter
+          {after.colors.length > 0 ? ` i ${after.colors.length} ${after.colors.length === 1 ? "färg" : "färger"}` : ""}, så
+          den blir skarp i alla storlekar. Jämför och kontrollera att allt är med.
+        </p>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {picture(before, "Din fil")}
+          {picture(after.thumbnailUrl, "Skarp")}
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16, flexWrap: "wrap" }}>
+          <button
+            onClick={onKeep}
+            style={{
+              padding: "9px 14px",
+              border: `1px solid ${theme.border}`,
+              borderRadius: 8,
+              background: "transparent",
+              color: theme.text,
+              fontSize: 13,
+              fontFamily: theme.fontFamily,
+              cursor: "pointer",
+            }}
+          >
+            Behåll min fil
+          </button>
+          <button
+            onClick={onUse}
+            style={{
+              padding: "9px 14px",
+              border: "none",
+              borderRadius: 8,
+              background: theme.accent,
+              color: "#fff",
+              fontSize: 13,
+              fontWeight: 600,
+              fontFamily: theme.fontFamily,
+              cursor: "pointer",
+            }}
+          >
+            Använd den skarpa
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

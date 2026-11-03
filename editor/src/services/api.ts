@@ -277,6 +277,33 @@ export async function removeBg(imageId: string, mode: "background" | "all" = "ba
   });
 }
 
+export interface SharpenedDesign {
+  id: string;
+  originalUrl: string;
+  thumbnailUrl: string;
+  width: number;
+  height: number;
+  filename: string;
+  colors: string[];
+}
+
+/**
+ * A pixelated flat logo traced into clean shapes and drawn again large. It
+ * comes back as a new upload; nothing changes until the editor puts it in
+ * place. Throws with a message to show when it cannot be done (a photo, a
+ * painting).
+ */
+export async function sharpenDesign(imageId: string, useBgRemoved: boolean, longSideMm: number): Promise<SharpenedDesign> {
+  const response = await fetch(`${getBaseUrl()}/api/fix-motif`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageId, useBgRemoved, longSideMm }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || "Det gick inte att göra loggan skarp just nu.");
+  return data;
+}
+
 // Prepare for cart
 export async function prepareForCart(
   gangSheetId: string,

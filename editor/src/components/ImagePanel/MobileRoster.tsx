@@ -17,7 +17,8 @@ import { freeCapacityFor, imageBbox } from "../../utils/layout";
 import { useSheetStats } from "../../utils/sheetStats";
 import { showToast } from "../../utils/toast";
 import { theme } from "../../styles/theme";
-import { WhiteBackgroundBar, cropGroup, removeGroupBackground } from "./ImageList";
+import { WhiteBackgroundBar, cropGroup, removeGroupBackground, sharpenGroup, placeSharpened, SharpenCompare } from "./ImageList";
+import type { SharpenedDesign } from "../../services/api";
 
 /**
  * The phone's list of designs: one card per design with how many, how big
@@ -159,7 +160,8 @@ function MoreActions({ group }: { group: ImageGroup }) {
   const gapMm = useEditorStore((s) => s.gapMm);
   const updateGroup = useEditorStore((s) => s.updateGroup);
   const autoFillGroup = useEditorStore((s) => s.autoFillGroup);
-  const [busy, setBusy] = useState<"bg" | "crop" | null>(null);
+  const [busy, setBusy] = useState<"bg" | "crop" | "sharpen" | null>(null);
+  const [sharpened, setSharpened] = useState<SharpenedDesign | null>(null);
   const image = group.master;
 
   // How many more copies fit in the space left on the sheet.
@@ -177,6 +179,17 @@ function MoreActions({ group }: { group: ImageGroup }) {
       await (kind === "bg" ? removeGroupBackground(group, updateGroup) : cropGroup(group, updateGroup));
     } catch {
       showToast(kind === "bg" ? "Bakgrunden kunde inte tas bort." : "Motivet kunde inte beskäras.", "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const sharpen = async () => {
+    setBusy("sharpen");
+    try {
+      setSharpened(await sharpenGroup(group));
+    } catch (error) {
+      showToast((error as Error).message, "error");
     } finally {
       setBusy(null);
     }
@@ -205,6 +218,22 @@ function MoreActions({ group }: { group: ImageGroup }) {
         <button type="button" onClick={() => void run("crop")} disabled={busy !== null} style={R.chipButton}>
           {busy === "crop" ? "Beskär…" : "Beskär"}
         </button>
+      )}
+      {!image.text && !isVectorDesign(image) && (
+        <button type="button" onClick={() => void sharpen()} disabled={busy !== null} style={R.chipButton}>
+          {busy === "sharpen" ? "Gör skarp…" : "Gör loggan skarp"}
+        </button>
+      )}
+      {sharpened && (
+        <SharpenCompare
+          before={image.bgRemovedUrl || image.thumbnailUrl}
+          after={sharpened}
+          onUse={() => {
+            placeSharpened(group, sharpened, updateGroup);
+            setSharpened(null);
+          }}
+          onKeep={() => setSharpened(null)}
+        />
       )}
     </>
   );

@@ -63,6 +63,7 @@ import { bookExtraShipment, listExtraShipments } from "../lib/extra-shipment.ser
 import { missingMailConfig } from "../lib/mailer.server";
 import { sendOrderToPrintShop } from "../lib/print-shop-email.server";
 import { mergeCutJobs, splitSheet } from "../lib/merge-sheet.server";
+import { applyFix, listSheetDesigns, previewFix, type FixTool } from "../lib/motif-fix.server";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -503,6 +504,45 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       replaced: true,
       notice: `${name} uploaded${result.vector ? " · vector" : result.dpi ? ` · ${result.dpi} DPI at print size` : ""}${result.hasPreview ? "" : " · no preview for this format"}`,
     });
+  }
+
+  if (action === "fix_preview" || action === "fix_apply" || action === "fix_designs") {
+    /*
+     * Remove a background or sharpen a logo for the customer instead of
+     * mailing them about it: shown before and after, then used. A job on
+     * this order only, as with replace_file.
+     */
+    const jobId = String(formData.get("jobId") || "");
+    const job = await prisma.gangSheet.findFirst({
+      where: {
+        id: jobId,
+        shopDomain: session.shop,
+        ...(gangSheet.shopifyOrderId ? { shopifyOrderId: gangSheet.shopifyOrderId } : { id: gangSheet.id }),
+      },
+      select: { id: true },
+    });
+    if (!job) return json({ errors: ["Print job not found."] }, { status: 404 });
+    if (action === "fix_designs") return json({ designs: await listSheetDesigns(session.shop, job.id) });
+    const tool: FixTool = formData.get("tool") === "sharpen" ? "sharpen" : "background";
+    const designId = (formData.get("designId") as string) || null;
+    try {
+      if (action === "fix_preview") {
+        const result = await previewFix({ shop: session.shop, jobId: job.id, designId, tool });
+        return json(result.ok ? { preview: { ...result, tool, designId } } : { errors: [result.error] });
+      }
+      const result = await applyFix({
+        shop: session.shop,
+        jobId: job.id,
+        designId,
+        tool,
+        key: String(formData.get("key") || ""),
+        author: session.shop,
+      });
+      return json(result.ok ? { applied: true, notice: result.notice } : { errors: [result.error] });
+    } catch (error) {
+      console.error(`[motif-fix] ${action} ${job.id}:`, error);
+      return json({ errors: [`Could not fix the file: ${(error as Error).message}`] });
+    }
   }
 
   // Status buttons act on the whole order: every job is printed together.
@@ -1020,6 +1060,7 @@ export default function OrderDetailPage() {
                         </Button>
                       )}
                       <ReplaceFileButton jobId={job.id} label={job.hasFile ? "Replace file" : "Upload file"} />
+                      {job.hasFile && <FixFileButton jobId={job.id} cut={job.cut} title={`${job.label} · ${job.size}`} />}
                       <EditSizeButton job={job} />
                       {job.combinedFrom && orderStatus !== "shipped" && <SplitSheetButton sheetId={job.id} />}
                     </BlockStack>
@@ -1192,6 +1233,175 @@ function ReplaceFileButton({ jobId, label }: { jobId: string; label: string }) {
       >
         {label}
       </Button>
+    </>
+  );
+}
+
+/**
+ * Remove a background or sharpen a logo. A cut job's file is fixed as a
+ * whole; on a gang sheet the shop picks the design first. The fix is made
+ * and shown next to the file as it is, and "Use" puts it in its place.
+ */
+function FixFileButton({ jobId, cut, title }: { jobId: string; cut: boolean; title: string }) {
+  type Design = {
+    id: string;
+    filename: string;
+    copies: number;
+    widthMm: number;
+    dpi: number | null;
+    vector: boolean;
+    bgRemoved: boolean;
+    thumbnail: string | null;
+  };
+  type Preview = { key: string; before: string; after: string; summary: string; warning: string | null; tool: string; designId: string | null };
+  const fetcher = useFetcher<{ preview?: Preview; applied?: boolean; notice?: string; designs?: Design[]; errors?: string[] }>();
+  const shopify = useAppBridge();
+  const [open, setOpen] = useState(false);
+  const [designs, setDesigns] = useState<Design[] | null>(null);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const busy = fetcher.state !== "idle";
+  const pending = busy ? String(fetcher.formData?.get("action") ?? "") : "";
+
+  useEffect(() => {
+    if (fetcher.state !== "idle" || !fetcher.data) return;
+    const data = fetcher.data;
+    if (data.designs) setDesigns(data.designs);
+    if (data.preview) {
+      setPreview(data.preview);
+      setError(null);
+    }
+    if (data.errors) setError(data.errors.join(" "));
+    if (data.applied) {
+      setOpen(false);
+      setPreview(null);
+      shopify.toast.show(data.notice || "File fixed");
+    }
+  }, [fetcher.state, fetcher.data, shopify]);
+
+  const submit = (fields: Record<string, string>) => {
+    setError(null);
+    fetcher.submit({ jobId, ...fields }, { method: "post" });
+  };
+  const run = (tool: "background" | "sharpen", designId?: string) =>
+    submit({ action: "fix_preview", tool, ...(designId ? { designId } : {}) });
+  const show = () => {
+    setOpen(true);
+    setPreview(null);
+    setError(null);
+    if (!cut) submit({ action: "fix_designs" });
+  };
+  const checks = "repeating-conic-gradient(#9e9e9e 0% 25%, #bdbdbd 0% 50%) 50%/14px 14px";
+  const picture = (url: string, label: string) => (
+    <BlockStack gap="100">
+      <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
+      <div style={{ background: checks, borderRadius: 8, height: 300, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+        <img src={url} alt="" style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }} />
+      </div>
+    </BlockStack>
+  );
+
+  return (
+    <>
+      <Button variant="plain" onClick={show}>
+        {cut ? "Remove background / sharpen" : "Fix designs"}
+      </Button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={`Fix the file · ${title}`}
+        size="large"
+        primaryAction={
+          preview
+            ? {
+                content: preview.tool === "sharpen" ? "Use the sharpened logo" : "Use without background",
+                loading: pending === "fix_apply",
+                disabled: busy && pending !== "fix_apply",
+                onAction: () =>
+                  submit({
+                    action: "fix_apply",
+                    tool: preview.tool,
+                    key: preview.key,
+                    ...(preview.designId ? { designId: preview.designId } : {}),
+                  }),
+              }
+            : undefined
+        }
+        secondaryActions={[
+          ...(preview && !cut ? [{ content: "Back to the designs", onAction: () => setPreview(null) }] : []),
+          { content: "Close", onAction: () => setOpen(false) },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="400">
+            {error && <Banner tone="warning">{error}</Banner>}
+            {cut && !preview && (
+              <BlockStack gap="300">
+                <Text as="p">
+                  Remove background makes a one-colour box around the motif transparent (also for PDF, EPS
+                  and AI) and fits what is left to the size ordered. Sharpen logo traces a flat logo into
+                  clean shapes and draws it again at 600 DPI; photos and paintings are left alone.
+                </Text>
+                <InlineStack gap="200">
+                  <Button onClick={() => run("background")} loading={pending === "fix_preview" && fetcher.formData?.get("tool") === "background"} disabled={busy}>
+                    Remove background
+                  </Button>
+                  <Button onClick={() => run("sharpen")} loading={pending === "fix_preview" && fetcher.formData?.get("tool") === "sharpen"} disabled={busy}>
+                    Sharpen logo
+                  </Button>
+                </InlineStack>
+              </BlockStack>
+            )}
+            {!cut && !preview && (
+              <BlockStack gap="300">
+                {!designs && <Text as="p" tone="subdued">Loading the designs…</Text>}
+                {designs?.length === 0 && <Text as="p" tone="subdued">No placed designs on this sheet.</Text>}
+                {designs?.map((d) => (
+                  <InlineStack key={d.id} gap="300" blockAlign="center" wrap={false}>
+                    <div style={{ width: 64, height: 64, flexShrink: 0, background: checks, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+                      {d.thumbnail && <img src={d.thumbnail} alt="" style={{ maxWidth: "100%", maxHeight: "100%" }} />}
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <Text as="p" variant="bodyMd" truncate>{d.filename}</Text>
+                      <Text as="p" variant="bodySm" tone={d.dpi != null && d.dpi < 200 && !d.vector ? "caution" : "subdued"}>
+                        {[`${d.copies} ×`, `up to ${d.widthMm / 10} cm`, d.vector ? "vector" : d.dpi != null ? `${d.dpi} DPI` : null, d.bgRemoved ? "background removed" : null]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </Text>
+                    </div>
+                    {!d.vector && (
+                      <InlineStack gap="200" wrap={false}>
+                        <Button size="slim" onClick={() => run("background", d.id)} disabled={busy || d.bgRemoved}
+                          loading={pending === "fix_preview" && fetcher.formData?.get("designId") === d.id && fetcher.formData?.get("tool") === "background"}>
+                          Remove background
+                        </Button>
+                        <Button size="slim" onClick={() => run("sharpen", d.id)} disabled={busy}
+                          loading={pending === "fix_preview" && fetcher.formData?.get("designId") === d.id && fetcher.formData?.get("tool") === "sharpen"}>
+                          Sharpen
+                        </Button>
+                      </InlineStack>
+                    )}
+                  </InlineStack>
+                ))}
+              </BlockStack>
+            )}
+            {preview && (
+              <BlockStack gap="300">
+                {preview.warning && <Banner tone="warning">{preview.warning}</Banner>}
+                <InlineStack gap="400" wrap={false}>
+                  <div style={{ flex: 1 }}>{picture(preview.before, "Now")}</div>
+                  <div style={{ flex: 1 }}>{picture(preview.after, preview.summary)}</div>
+                </InlineStack>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  {cut
+                    ? "Using it replaces the print file; the old one stays in storage and a note records the swap."
+                    : "Using it changes every copy of this design on the sheet and makes the print file again."}
+                </Text>
+              </BlockStack>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </>
   );
 }

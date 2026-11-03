@@ -1,10 +1,11 @@
 FROM node:22-slim
 
-# Sharp + Prisma deps for Debian
+# Sharp + Prisma deps for Debian; potrace traces logos for "Sharpen logo"
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
     libvips-dev \
     ghostscript \
+    potrace \
     && rm -rf /var/lib/apt/lists/*
 
 EXPOSE 3000
