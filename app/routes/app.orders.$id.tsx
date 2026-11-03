@@ -19,6 +19,7 @@ import {
   Popover,
   FormLayout,
   Modal,
+  ButtonGroup,
 } from "@shopify/polaris";
 import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
@@ -1260,6 +1261,8 @@ function FixFileButton({ jobId, cut, title }: { jobId: string; cut: boolean; tit
   const [designs, setDesigns] = useState<Design[] | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A grey logo (#1151) all but vanishes on grey checks: look at it on white or black too.
+  const [backdrop, setBackdrop] = useState<"checks" | "white" | "black">("checks");
   const busy = fetcher.state !== "idle";
   const pending = busy ? String(fetcher.formData?.get("action") ?? "") : "";
 
@@ -1291,11 +1294,27 @@ function FixFileButton({ jobId, cut, title }: { jobId: string; cut: boolean; tit
     setError(null);
     if (!cut) submit({ action: "fix_designs" });
   };
-  const checks = "repeating-conic-gradient(#9e9e9e 0% 25%, #bdbdbd 0% 50%) 50%/14px 14px";
+  const checks = {
+    checks: "repeating-conic-gradient(#9e9e9e 0% 25%, #bdbdbd 0% 50%) 50%/14px 14px",
+    white: "#ffffff",
+    black: "#111111",
+  }[backdrop];
+  const backdrops = (
+    <InlineStack gap="200" blockAlign="center">
+      <Text as="span" variant="bodySm" tone="subdued">Background</Text>
+      <ButtonGroup variant="segmented">
+        {(["checks", "white", "black"] as const).map((b) => (
+          <Button key={b} size="slim" pressed={backdrop === b} onClick={() => setBackdrop(b)}>
+            {b === "checks" ? "Checks" : b === "white" ? "White" : "Black"}
+          </Button>
+        ))}
+      </ButtonGroup>
+    </InlineStack>
+  );
   const picture = (url: string, label: string) => (
     <BlockStack gap="100">
       <Text as="p" variant="bodySm" tone="subdued">{label}</Text>
-      <div style={{ background: checks, borderRadius: 8, height: 300, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+      <div style={{ background: checks, border: "1px solid #e1e3e5", borderRadius: 8, height: 300, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
         <img src={url} alt="" style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }} />
       </div>
     </BlockStack>
@@ -1354,6 +1373,7 @@ function FixFileButton({ jobId, cut, title }: { jobId: string; cut: boolean; tit
             )}
             {!cut && !preview && (
               <BlockStack gap="300">
+                {designs && designs.length > 0 && backdrops}
                 {!designs && <Text as="p" tone="subdued">Loading the designs…</Text>}
                 {designs?.length === 0 && <Text as="p" tone="subdued">No placed designs on this sheet.</Text>}
                 {designs?.map((d) => (
@@ -1388,6 +1408,7 @@ function FixFileButton({ jobId, cut, title }: { jobId: string; cut: boolean; tit
             {preview && (
               <BlockStack gap="300">
                 {preview.warning && <Banner tone="warning">{preview.warning}</Banner>}
+                {backdrops}
                 <InlineStack gap="400" wrap={false}>
                   <div style={{ flex: 1 }}>{picture(preview.before, "Now")}</div>
                   <div style={{ flex: 1 }}>{picture(preview.after, preview.summary)}</div>
