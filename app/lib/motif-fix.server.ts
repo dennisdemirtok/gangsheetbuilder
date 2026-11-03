@@ -3,7 +3,7 @@ import prisma from "../db.server";
 import { downloadFile, uploadFile, getPresignedDownloadUrl } from "./r2.server";
 import { storeJobFile, isVectorFormat } from "./job-file.server";
 import { resolveRasterKey } from "./placement";
-import { generateThumbnail, removeBackground } from "./image-processing.server";
+import { generateThumbnail } from "./image-processing.server";
 import { getExportQueue, type ExportJobData } from "./queue.server";
 import {
   motifRaster,
@@ -129,10 +129,10 @@ export async function previewFix(options: {
   let png: Buffer;
   let summary: string;
   if (options.tool === "background") {
-    const result = await removeMotifBackground(raster);
-    if (!result.ok) return { ok: false, error: refusal(result) };
     // A design on a sheet keeps its canvas (no trim), so it stays where it was placed.
-    png = job.kind === "cut" ? result.png : await removeBackground(raster);
+    const result = await removeMotifBackground(raster, job.kind !== "cut");
+    if (!result.ok) return { ok: false, error: refusal(result) };
+    png = result.png;
     summary = "Background removed";
   } else {
     const result = await sharpenLogo(raster, longSide, judgeAt ?? undefined);

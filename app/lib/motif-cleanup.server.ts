@@ -4,7 +4,7 @@ import { promisify } from "util";
 import { mkdtemp, writeFile, readFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { convertToRaster, embedsPictures, needsGhostscript, removeBackground, trimTransparentEdges } from "./image-processing.server";
+import { embedsPictures, needsGhostscript, removeBackground, trimTransparentEdges } from "./image-processing.server";
 
 /**
  * Two fixes for the files customers send, offered to them in the builder
@@ -29,6 +29,8 @@ const SOLID = 128;
 const MAX_TRACE = 2500;
 /** A smaller file is drawn up to this (at most 4×) before tracing. */
 const MIN_TRACE = 1500;
+/** The widest blend between motif and background that cleanRim looks for, in pixels. */
+const MAX_RIM = 32;
 /** At most this many colours; a logo with more is not flat. */
 const MAX_COLORS = 8;
 
@@ -39,13 +41,37 @@ const MAX_COLORS = 8;
  */
 export async function motifRaster(buffer: Buffer, filename: string, dpi = 300): Promise<Buffer> {
   const ext = (filename.split(".").pop() || "").toLowerCase();
-  if (needsGhostscript(filename)) return convertToRaster(buffer, filename, dpi);
+  if (needsGhostscript(filename)) return ghostscript(buffer, ext, dpi);
   if (ext === "svg") {
     const { Resvg } = await import("@resvg/resvg-js");
     const svg = new Resvg(buffer, { dpi, fitTo: { mode: "zoom", value: dpi / 96 }, background: "rgba(0,0,0,0)" });
     return Buffer.from(svg.render().asPng());
   }
   return sharp(buffer, { limitInputPixels: false, animated: false }).rotate().png().toBuffer();
+}
+
+/**
+ * A PDF, EPS or AI page as a PNG, with the pictures in it interpolated.
+ * Ghostscript draws a picture larger by repeating its pixels: #1153's
+ * 374 px JPEG, rendered for 7 cm, had a 4-pixel staircase along the circle
+ * once its background was gone.
+ */
+async function ghostscript(buffer: Buffer, ext: string, dpi: number): Promise<Buffer> {
+  const dir = await mkdtemp(join(tmpdir(), "motif-gs-"));
+  const input = join(dir, `input.${ext || "pdf"}`);
+  const output = join(dir, "output.png");
+  try {
+    await writeFile(input, buffer);
+    await run(
+      "gs",
+      ["-dSAFER", "-dBATCH", "-dNOPAUSE", "-dEPSCrop", "-dFirstPage=1", "-dLastPage=1", "-sDEVICE=pngalpha",
+        "-dInterpolateControl=-1", `-r${dpi}`, `-sOutputFile=${output}`, input],
+      { timeout: 60_000 },
+    );
+    return await readFile(output);
+  } finally {
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /**
@@ -79,16 +105,155 @@ export type BackgroundResult =
   | { ok: false; reason: "transparent" | "no_background" };
 
 /**
- * The background around the motif made transparent and the empty margin
- * cut away. Refused when the file is already transparent, or when no one
- * colour frames it (a photo to its edges), since nothing would change.
+ * The background around the motif made transparent, its rim cleaned (see
+ * cleanRim) and, unless `keepCanvas`, the empty margin cut away. Refused
+ * when the file is already transparent, or when no one colour frames it
+ * (a photo to its edges), since nothing would change.
  */
-export async function removeMotifBackground(png: Buffer): Promise<BackgroundResult> {
+export async function removeMotifBackground(png: Buffer, keepCanvas = false): Promise<BackgroundResult> {
   if (await isTransparent(png)) return { ok: false, reason: "transparent" };
   const cleared = await removeBackground(png);
   if (!(await isTransparent(cleared))) return { ok: false, reason: "no_background" };
-  const trimmed = await trimTransparentEdges(cleared);
+  const clean = await cleanRim(png, cleared);
+  if (keepCanvas) return { ok: true, png: clean };
+  const trimmed = await trimTransparentEdges(clean);
   return { ok: true, png: trimmed.buffer };
+}
+
+/**
+ * The edge left where a background was taken off: the motif blended into
+ * the background it was drawn on, a grey between #1153's black ring and
+ * white, printed as a light line round it. In a band along what was
+ * cleared, a pixel on the way from the motif's colour (the nearest pixel
+ * inside the band) to the background is split into that colour and how
+ * much of it there is. Pixels of another colour (a thin outline) stay as
+ * they were. Light specks left in the cleared area go too.
+ */
+async function cleanRim(original: Buffer, cleared: Buffer): Promise<Buffer> {
+  const src = await sharp(original, { limitInputPixels: false }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { data: out, info } = await sharp(cleared, { limitInputPixels: false }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const W = info.width;
+  const H = info.height;
+  const N = W * H;
+  const o = src.data;
+  if (src.info.width !== W || src.info.height !== H || N > 30_000_000) return cleared;
+
+  // The background's colour: what the fill cleared.
+  const sum = [0, 0, 0];
+  let n = 0;
+  for (let p = 0; p < N; p += 3) {
+    if (out[p * 4 + 3]! >= 8 || o[p * 4 + 3]! < 250) continue;
+    sum[0]! += o[p * 4]!;
+    sum[1]! += o[p * 4 + 1]!;
+    sum[2]! += o[p * 4 + 2]!;
+    n++;
+  }
+  if (n === 0) return cleared;
+  const bg = [sum[0]! / n, sum[1]! / n, sum[2]! / n];
+
+  // Steps from the cleared area, up to MAX_RIM.
+  const dist = new Uint8Array(N).fill(255);
+  let queue = new Int32Array(N);
+  let tail = 0;
+  for (let p = 0; p < N; p++) if (out[p * 4 + 3]! < 8) (dist[p] = 0), (queue[tail++] = p);
+  for (let head = 0; head < tail; head++) {
+    const p = queue[head]!;
+    if (dist[p]! >= MAX_RIM) continue;
+    const x = p % W;
+    for (const q of [x > 0 ? p - 1 : -1, x < W - 1 ? p + 1 : -1, p - W, p + W]) {
+      if (q < 0 || q >= N || dist[q] !== 255) continue;
+      dist[q] = dist[p]! + 1;
+      queue[tail++] = q;
+    }
+  }
+
+  // How wide the blend is: the steps in until the edge stops moving away
+  // from the background. A crisp file blends over a pixel or two; a small
+  // picture drawn large (#1153: 374 px for 7 cm) over ten or more.
+  const away = new Float64Array(MAX_RIM + 1);
+  const count = new Float64Array(MAX_RIM + 1);
+  for (let p = 0; p < N; p++) {
+    const d = dist[p]!;
+    if (d === 0 || d > MAX_RIM) continue;
+    away[d] += Math.hypot(o[p * 4]! - bg[0]!, o[p * 4 + 1]! - bg[1]!, o[p * 4 + 2]! - bg[2]!);
+    count[d]++;
+  }
+  let peak = 0;
+  for (let d = 1; d <= MAX_RIM; d++) if (count[d]! > 0) peak = Math.max(peak, away[d]! / count[d]!);
+  let band = 2;
+  for (let d = 1; d < MAX_RIM; d++) {
+    if (count[d]! > 0 && away[d]! / count[d]! >= 0.95 * peak) {
+      band = Math.max(2, d);
+      break;
+    }
+  }
+
+  // The motif's colour for each band pixel: the nearest solid pixel just inside.
+  const seed = new Int32Array(N).fill(-1);
+  queue = new Int32Array(N);
+  tail = 0;
+  for (let p = 0; p < N; p++) {
+    if (dist[p] === band + 1 && o[p * 4 + 3]! >= 250) (seed[p] = p), (queue[tail++] = p);
+  }
+  for (let head = 0; head < tail; head++) {
+    const p = queue[head]!;
+    const x = p % W;
+    for (const q of [x > 0 ? p - 1 : -1, x < W - 1 ? p + 1 : -1, p - W, p + W]) {
+      if (q < 0 || q >= N || seed[q] !== -1 || dist[q] === 0 || dist[q]! > band) continue;
+      seed[q] = seed[p]!;
+      queue[tail++] = q;
+    }
+  }
+
+  for (let p = 0; p < N; p++) {
+    const s = seed[p]!;
+    if (s < 0 || s === p || dist[p] === 0) continue;
+    const i = p * 4;
+    const f = [o[s * 4]! - bg[0]!, o[s * 4 + 1]! - bg[1]!, o[s * 4 + 2]! - bg[2]!];
+    const v = [o[i]! - bg[0]!, o[i + 1]! - bg[1]!, o[i + 2]! - bg[2]!];
+    const ff = f[0]! * f[0]! + f[1]! * f[1]! + f[2]! * f[2]!;
+    if (ff < 30 * 30) continue; // the motif's colour is the background's: nothing to split
+    const a = Math.max(0, Math.min(1, (v[0]! * f[0]! + v[1]! * f[1]! + v[2]! * f[2]!) / ff));
+    const off = Math.hypot(v[0]! - a * f[0]!, v[1]! - a * f[1]!, v[2]! - a * f[2]!);
+    if (off > 24) continue; // another colour, not a blend of these two
+    out[i + 3] = Math.round(a * o[i + 3]!);
+    if (a < 0.97) {
+      out[i] = o[s * 4]!;
+      out[i + 1] = o[s * 4 + 1]!;
+      out[i + 2] = o[s * 4 + 2]!;
+    }
+  }
+
+  // Specks left in the cleared area: JPEG noise a little too far from the
+  // background's colour to be cleared, printed as light dots round the
+  // motif. A small island close to the background's colour goes; a small
+  // dark dot (part of the design) stays.
+  const speck = Math.max(12, Math.round(N / 150_000));
+  const seen = new Uint8Array(N);
+  const island: number[] = [];
+  for (let start = 0; start < N; start++) {
+    if (seen[start] || out[start * 4 + 3]! < 8) continue;
+    island.length = 0;
+    seen[start] = 1;
+    queue[0] = start;
+    tail = 1;
+    let far = 0;
+    for (let head = 0; head < tail; head++) {
+      const p = queue[head]!;
+      if (island.length <= speck) {
+        island.push(p);
+        far += Math.hypot(o[p * 4]! - bg[0]!, o[p * 4 + 1]! - bg[1]!, o[p * 4 + 2]! - bg[2]!);
+      }
+      const x = p % W;
+      for (const q of [x > 0 ? p - 1 : -1, x < W - 1 ? p + 1 : -1, p - W, p + W]) {
+        if (q < 0 || q >= N || seen[q] || out[q * 4 + 3]! < 8) continue;
+        seen[q] = 1;
+        queue[tail++] = q;
+      }
+    }
+    if (tail <= speck && far / tail < 90) for (const p of island) out[p * 4 + 3] = 0;
+  }
+  return sharp(out, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer();
 }
 
 /** How flat the picture turned out to be; logged, and what the refusal rests on. */
@@ -284,9 +449,50 @@ type Judgement =
   | { ok: true; centres: Rgb[]; stats: SharpenStats }
   | { ok: false; reason: "photo" | "empty"; stats?: SharpenStats };
 
+/**
+ * How many times a picture was drawn larger by repeating its pixels, or 1.
+ * Such a picture has hardly a pixel unlike both neighbours in its row:
+ * every run of one colour is at least as long as the factor. A file drawn
+ * at its own size, even a flat logo, has single pixels along every edge.
+ */
+function blockFactor(data: Buffer, W: number, H: number): number {
+  let runs = 0;
+  let singles = 0;
+  const lengths = new Array(17).fill(0);
+  for (let y = 0; y < H; y += 4) {
+    let run = 1;
+    for (let x = 1; x <= W; x++) {
+      const p = (y * W + x) * 4;
+      const same =
+        x < W &&
+        data[p] === data[p - 4] &&
+        data[p + 1] === data[p - 3] &&
+        data[p + 2] === data[p - 2] &&
+        data[p + 3] === data[p - 1];
+      if (same) {
+        run++;
+        continue;
+      }
+      runs++;
+      if (run === 1) singles++;
+      if (run <= 16) lengths[run]++;
+      run = 1;
+    }
+  }
+  if (runs < 1000 || singles / runs > 0.05) return 1;
+  let factor = 2;
+  for (let k = 3; k <= 16; k++) if (lengths[k] > lengths[factor]) factor = k;
+  return factor;
+}
+
 /** Whether the picture is a flat logo, and its colours; at most `longSide` px. */
 async function judge(png: Buffer, longSide: number): Promise<Judgement> {
-  const { data, W, H } = await rgba(png, longSide);
+  let { data, W, H } = await rgba(png, longSide);
+  // A small picture blown up pixel by pixel (#1153's cat, saved before
+  // pictures in PDFs were drawn smooth) looks flat in blocks: judge it at
+  // the size it really has.
+  const factor = blockFactor(data, W, H);
+  if (factor > 1) ({ data, W, H } = await rgba(png, Math.round(Math.max(W, H) / factor)));
   const N = W * H;
   const alpha = (p: number) => data[p * 4 + 3]!;
   const dist2 = (p: number, q: number) => {
