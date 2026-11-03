@@ -62,6 +62,16 @@ const ORDERS: ((a: PackInput, b: PackInput) => number)[] = [
 const MANY = 600;
 
 /**
+ * How designs may turn in one run. Bottom-left turns a design whenever that
+ * ends it higher up, which for a portrait design is nearly always — even
+ * when two upright fit side by side. #1154's 27 × 33 cm motif went into one
+ * turned column: 36 on 10 m, where 40 upright fit on 6.6 m. So every order
+ * is also tried with all designs as they come and with all turned.
+ */
+type TurnMode = "free" | "asIs" | "turned";
+const TURN_MODES: TurnMode[] = ["free", "asIs", "turned"];
+
+/**
  * Nest `items` in the printable area of `sheet`. Gaps between designs are
  * `gap`; the film edge keeps EDGE_MARGIN_MM. Obstacles (sheet coordinates,
  * already including nothing extra) are kept clear by `gap`.
@@ -75,13 +85,16 @@ export function packSheet(
   const orders = items.length > MANY ? ORDERS.slice(0, 2) : ORDERS;
   let best: PackOutcome | null = null;
   for (const order of orders) {
-    const result = runOnce([...items].sort(order), sheet, gap, obstacles);
-    if (
-      !best ||
-      result.overflow.length < best.overflow.length ||
-      (result.overflow.length === best.overflow.length && result.bottomMm < best.bottomMm - 0.01)
-    ) {
-      best = result;
+    const sorted = [...items].sort(order);
+    for (const mode of TURN_MODES) {
+      const result = runOnce(sorted, sheet, gap, obstacles, mode);
+      if (
+        !best ||
+        result.overflow.length < best.overflow.length ||
+        (result.overflow.length === best.overflow.length && result.bottomMm < best.bottomMm - 0.01)
+      ) {
+        best = result;
+      }
     }
   }
   return best ?? { placements: new Map(), overflow: [], bottomMm: 0 };
@@ -100,7 +113,13 @@ export function neededHeightMm(items: PackInput[], sheetWidthMm: number, gap: nu
   return bottomMm + EDGE_MARGIN_MM;
 }
 
-function runOnce(items: PackInput[], sheet: SheetDims, gap: number, obstacles: Rect[]): PackOutcome {
+function runOnce(
+  items: PackInput[],
+  sheet: SheetDims,
+  gap: number,
+  obstacles: Rect[],
+  mode: TurnMode,
+): PackOutcome {
   const area = printableArea(sheet);
   // Every design reserves `gap` to its right and below; the bin is that
   // much bigger, so the last column and row need no trailing gap.
@@ -124,9 +143,11 @@ function runOnce(items: PackInput[], sheet: SheetDims, gap: number, obstacles: R
   let bottom = obstacles.reduce((max, o) => Math.max(max, o.y + o.h), 0);
 
   for (const item of items) {
-    const w = item.w + gap;
-    const h = item.h + gap;
-    const spot = bestSpot(free, w, h, item.rotatable !== false && Math.abs(item.w - item.h) > 0.01);
+    const mayTurn = item.rotatable !== false && Math.abs(item.w - item.h) > 0.01;
+    const turnAll = mode === "turned" && mayTurn;
+    const w = (turnAll ? item.h : item.w) + gap;
+    const h = (turnAll ? item.w : item.h) + gap;
+    const spot = bestSpot(free, w, h, mode === "free" && mayTurn);
     if (!spot) {
       overflow.push(item.id);
       continue;
@@ -140,7 +161,7 @@ function runOnce(items: PackInput[], sheet: SheetDims, gap: number, obstacles: R
       y: area.y + spot.y,
       w: pw - gap,
       h: ph - gap,
-      rotated: spot.rotated,
+      rotated: spot.rotated !== turnAll,
     };
     placements.set(item.id, placed);
     bottom = Math.max(bottom, placed.y + placed.h);

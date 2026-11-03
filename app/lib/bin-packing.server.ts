@@ -82,16 +82,20 @@ export function packImages(
   ];
 
   let bestResult: PackingOutput | null = null;
+  const left = (r: PackingOutput) => r.overflow.reduce((sum, o) => sum + o.quantity, 0);
 
+  // Fewest copies left out first, then the densest. Density alone once
+  // preferred a run that placed fewer copies tighter.
   for (const sorted of strategies) {
-    const result = runMaxRects(sorted, innerWidth, innerHeight, gapMm);
-    if (
-      !bestResult ||
-      result.utilization > bestResult.utilization ||
-      (result.utilization === bestResult.utilization &&
-        result.overflow.length < bestResult.overflow.length)
-    ) {
-      bestResult = result;
+    for (const mode of TURN_MODES) {
+      const result = runMaxRects(sorted, innerWidth, innerHeight, gapMm, mode);
+      if (
+        !bestResult ||
+        left(result) < left(bestResult) ||
+        (left(result) === left(bestResult) && result.utilization > bestResult.utilization)
+      ) {
+        bestResult = result;
+      }
     }
   }
 
@@ -107,11 +111,22 @@ export function packImages(
   };
 }
 
+/**
+ * How designs may turn in one run. Best Short Side Fit turns a portrait
+ * design whenever its leftover is smaller, even when two upright fit side
+ * by side: #1154's 27 × 33 cm motif went into one turned column, 37 on
+ * 10 m, where 40 upright fit on 6.6 m. So each order is also tried with
+ * every design as it comes and with every design turned.
+ */
+type TurnMode = "free" | "asIs" | "turned";
+const TURN_MODES: TurnMode[] = ["free", "asIs", "turned"];
+
 function runMaxRects(
   items: { id: string; width: number; height: number }[],
   sheetWidth: number,
   sheetHeight: number,
   gapMm: number,
+  mode: TurnMode,
 ): PackingOutput {
   const freeRects: FreeRect[] = [
     { x: 0, y: 0, width: sheetWidth, height: sheetHeight },
@@ -120,10 +135,12 @@ function runMaxRects(
   const overflow: PackingInput[] = [];
 
   for (const item of items) {
+    const turn = mode === "turned" && Math.abs(item.width - item.height) > 0.01;
     const placement = findBestPosition(
       freeRects,
-      item.width,
-      item.height,
+      turn ? item.height : item.width,
+      turn ? item.width : item.height,
+      mode === "free",
     );
 
     if (!placement) {
@@ -142,7 +159,8 @@ function runMaxRects(
       continue;
     }
 
-    const { x, y, rotated } = placement;
+    const { x, y } = placement;
+    const rotated = placement.rotated !== turn;
     const placedW = rotated ? item.height : item.width;
     const placedH = rotated ? item.width : item.height;
 
@@ -188,6 +206,7 @@ function findBestPosition(
   freeRects: FreeRect[],
   width: number,
   height: number,
+  mayRotate: boolean,
 ): PlacementCandidate | null {
   let bestScore = Infinity;
   let best: PlacementCandidate | null = null;
@@ -205,7 +224,7 @@ function findBestPosition(
     }
 
     // Try rotated orientation
-    if (height <= rect.width && width <= rect.height) {
+    if (mayRotate && height <= rect.width && width <= rect.height) {
       const leftoverX = rect.width - height;
       const leftoverY = rect.height - width;
       const score = Math.min(leftoverX, leftoverY);
