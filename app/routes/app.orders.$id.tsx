@@ -527,7 +527,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     });
     if (!job) return json({ errors: ["Print job not found."] }, { status: 404 });
     if (action === "fix_designs") return json({ designs: await listSheetDesigns(session.shop, job.id) });
-    const tool: FixTool = formData.get("tool") === "sharpen" ? "sharpen" : "background";
+    const asked = formData.get("tool");
+    const tool: FixTool = asked === "sharpen" ? "sharpen" : asked === "background-all" ? "background-all" : "background";
     const designId = (formData.get("designId") as string) || null;
     try {
       if (action === "fix_preview") {
@@ -1266,7 +1267,7 @@ function FixFileButton({ jobId, cut, title }: { jobId: string; cut: boolean; tit
     bgRemoved: boolean;
     thumbnail: string | null;
   };
-  type Preview = { key: string; before: string; after: string; summary: string; warning: string | null; tool: string; designId: string | null };
+  type Preview = { key: string; before: string; after: string; summary: string; warning: string | null; inside: string | null; tool: string; designId: string | null };
   const fetcher = useFetcher<{ preview?: Preview; applied?: boolean; notice?: string; designs?: Design[]; errors?: string[] }>();
   const shopify = useAppBridge();
   const [open, setOpen] = useState(false);
@@ -1298,7 +1299,7 @@ function FixFileButton({ jobId, cut, title }: { jobId: string; cut: boolean; tit
     setError(null);
     fetcher.submit({ jobId, ...fields }, { method: "post" });
   };
-  const run = (tool: "background" | "sharpen", designId?: string) =>
+  const run = (tool: "background" | "background-all" | "sharpen", designId?: string) =>
     submit({ action: "fix_preview", tool, ...(designId ? { designId } : {}) });
   const show = () => {
     setOpen(true);
@@ -1370,12 +1371,17 @@ function FixFileButton({ jobId, cut, title }: { jobId: string; cut: boolean; tit
               <BlockStack gap="300">
                 <Text as="p">
                   Remove background makes a one-colour box around the motif transparent (also for PDF, EPS
-                  and AI) and fits what is left to the size ordered. Sharpen logo traces a flat logo into
-                  clean shapes and draws it again at 600 DPI; photos and paintings are left alone.
+                  and AI) and fits what is left to the size ordered. Everywhere also takes that colour where
+                  the motif shuts it in, inside letters and shapes; on a file that is transparent already, the
+                  white left inside (#1163). Sharpen logo traces a flat logo into clean shapes and draws it
+                  again at 600 DPI; photos and paintings are left alone.
                 </Text>
                 <InlineStack gap="200">
                   <Button onClick={() => run("background")} loading={pending === "fix_preview" && fetcher.formData?.get("tool") === "background"} disabled={busy}>
                     Remove background
+                  </Button>
+                  <Button onClick={() => run("background-all")} loading={pending === "fix_preview" && fetcher.formData?.get("tool") === "background-all"} disabled={busy}>
+                    Remove everywhere (inside letters too)
                   </Button>
                   <Button onClick={() => run("sharpen")} loading={pending === "fix_preview" && fetcher.formData?.get("tool") === "sharpen"} disabled={busy}>
                     Sharpen logo
@@ -1403,10 +1409,17 @@ function FixFileButton({ jobId, cut, title }: { jobId: string; cut: boolean; tit
                     </div>
                     {!d.vector && (
                       <InlineStack gap="200" wrap={false}>
-                        <Button size="slim" onClick={() => run("background", d.id)} disabled={busy || d.bgRemoved}
-                          loading={pending === "fix_preview" && fetcher.formData?.get("designId") === d.id && fetcher.formData?.get("tool") === "background"}>
-                          Remove background
-                        </Button>
+                        {d.bgRemoved ? (
+                          <Button size="slim" onClick={() => run("background-all", d.id)} disabled={busy}
+                            loading={pending === "fix_preview" && fetcher.formData?.get("designId") === d.id && fetcher.formData?.get("tool") === "background-all"}>
+                            Remove white inside
+                          </Button>
+                        ) : (
+                          <Button size="slim" onClick={() => run("background", d.id)} disabled={busy}
+                            loading={pending === "fix_preview" && fetcher.formData?.get("designId") === d.id && fetcher.formData?.get("tool") === "background"}>
+                            Remove background
+                          </Button>
+                        )}
                         <Button size="slim" onClick={() => run("sharpen", d.id)} disabled={busy}
                           loading={pending === "fix_preview" && fetcher.formData?.get("designId") === d.id && fetcher.formData?.get("tool") === "sharpen"}>
                           Sharpen
@@ -1420,6 +1433,18 @@ function FixFileButton({ jobId, cut, title }: { jobId: string; cut: boolean; tit
             {preview && (
               <BlockStack gap="300">
                 {preview.warning && <Banner tone="warning">{preview.warning}</Banner>}
+                {preview.inside && (
+                  <Banner tone="info">
+                    <BlockStack gap="200">
+                      <Text as="p">{preview.inside}</Text>
+                      <InlineStack>
+                        <Button onClick={() => run("background-all", preview.designId ?? undefined)} loading={pending === "fix_preview"} disabled={busy}>
+                          Remove it inside too
+                        </Button>
+                      </InlineStack>
+                    </BlockStack>
+                  </Banner>
+                )}
                 {backdrops}
                 <InlineStack gap="400" wrap={false}>
                   <div style={{ flex: 1 }}>{picture(preview.before, "Now")}</div>

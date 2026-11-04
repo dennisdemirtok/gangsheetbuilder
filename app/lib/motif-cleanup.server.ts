@@ -4,7 +4,15 @@ import { promisify } from "util";
 import { mkdtemp, writeFile, readFile, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { embedsPictures, needsGhostscript, removeBackground, trimTransparentEdges } from "./image-processing.server";
+import {
+  backgroundColorOf,
+  embedsPictures,
+  needsGhostscript,
+  removeAllOfColor,
+  removeBackground,
+  trimTransparentEdges,
+  type Rgb as Rgb3,
+} from "./image-processing.server";
 
 /**
  * Two fixes for the files customers send, offered to them in the builder
@@ -107,8 +115,18 @@ async function isTransparent(png: Buffer): Promise<boolean> {
 }
 
 export type BackgroundResult =
-  | { ok: true; png: Buffer }
-  | { ok: false; reason: "transparent" | "no_background" };
+  /**
+   * `inside`: the share of what is left that still has the background's
+   * colour — background shut in by the motif, which the fill from the edge
+   * cannot reach: the inside of letters, leaves and rings (a white wreath
+   * and text on green, 2026-11-04: green blobs left in "ö", "d" and every
+   * leaf). removeMotifColor takes it too.
+   */
+  | { ok: true; png: Buffer; inside: number; color: Rgb3 | null }
+  | { ok: false; reason: "transparent" | "no_background" | "nothing_inside" };
+
+/** From this share of background colour left inside, the customer is offered removeMotifColor. */
+export const INSIDE_OFFER = 0.01;
 
 /**
  * The background around the motif made transparent, its rim cleaned (see
@@ -121,9 +139,58 @@ export async function removeMotifBackground(png: Buffer, keepCanvas = false): Pr
   const cleared = await removeBackground(png);
   if (!(await isTransparent(cleared))) return { ok: false, reason: "no_background" };
   const clean = await cleanRim(png, cleared);
-  if (keepCanvas) return { ok: true, png: clean };
+  const color = await backgroundColorOf(png);
+  const inside = color ? await shareOfColor(clean, color) : 0;
+  if (keepCanvas) return { ok: true, png: clean, inside, color };
   const trimmed = await trimTransparentEdges(clean);
-  return { ok: true, png: trimmed.buffer };
+  return { ok: true, png: trimmed.buffer, inside, color };
+}
+
+/**
+ * Every pixel of the background's colour made transparent, also where the
+ * motif shuts it in: the inside of letters, leaves and rings. Only on the
+ * customer's or the shop's request, after seeing removeMotifBackground
+ * leave some: it also takes what the motif itself prints in that colour
+ * (white text on a black badge on white paper).
+ *
+ * A file that is transparent already loses its white: #1163 came with the
+ * background taken off around green letters and white left in every a, d,
+ * g and o, which would print as white blobs on the jacket.
+ *
+ * The rim is cleaned as in removeMotifBackground, except on white in an
+ * opaque file: there what borders the cleared areas inside is often the
+ * design's own light shading, which cleanRim would darken (the builder's
+ * "all" leaves it too).
+ */
+export async function removeMotifColor(png: Buffer, keepCanvas = false): Promise<BackgroundResult> {
+  const transparent = await isTransparent(png);
+  const color: Rgb3 | null = transparent ? [255, 255, 255] : await backgroundColorOf(png);
+  if (!color) return { ok: false, reason: "no_background" };
+  if ((await shareOfColor(png, color)) < 0.002) return { ok: false, reason: transparent ? "nothing_inside" : "no_background" };
+  const cleared = await removeAllOfColor(png, color);
+  if (!(await isTransparent(cleared))) return { ok: false, reason: "no_background" };
+  const clean = !transparent && Math.min(...color) >= 235 ? cleared : await cleanRim(png, cleared);
+  if (keepCanvas) return { ok: true, png: clean, inside: 0, color };
+  const trimmed = await trimTransparentEdges(clean);
+  return { ok: true, png: trimmed.buffer, inside: 0, color };
+}
+
+/** Of what is solid in `png`, the share within JPEG noise of `color`. */
+async function shareOfColor(png: Buffer, color: Rgb3): Promise<number> {
+  const { data } = await sharp(png, { limitInputPixels: false })
+    .ensureAlpha()
+    .resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true, kernel: "nearest" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  let solid = 0;
+  let same = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3]! < 250) continue;
+    solid++;
+    const d = Math.max(Math.abs(data[i]! - color[0]), Math.abs(data[i + 1]! - color[1]), Math.abs(data[i + 2]! - color[2]));
+    if (d <= 20) same++;
+  }
+  return solid > 0 ? same / solid : 0;
 }
 
 /**

@@ -313,17 +313,31 @@ export async function trimTransparentEdges(
 }
 
 /**
- * Make every pixel of the background's colour transparent — also inside
- * the design, like the counter of an "O". Only on request: it also clears
- * what the design is meant to print in that colour. The customer sees the
- * result before using it. White when no background colour is found.
+ * The one colour that frames the design, the one removeBackground and
+ * removeAllOfColor take away; null when no colour does (a photo, or a
+ * design on transparency).
  */
-export async function removeAllOfColor(buffer: Buffer): Promise<Buffer> {
+export async function backgroundColorOf(buffer: Buffer): Promise<Rgb | null> {
   const { data, info } = await sharp(buffer, { limitInputPixels: false })
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
-  const color = frameColor(data, info.width, info.height, info.channels)?.color ?? WHITE;
+  return frameColor(data, info.width, info.height, info.channels)?.color ?? null;
+}
+
+/**
+ * Make every pixel of the background's colour transparent — also inside
+ * the design, like the counter of an "O". Only on request: it also clears
+ * what the design is meant to print in that colour. The customer sees the
+ * result before using it. White when no background colour is found, or
+ * `only` when given.
+ */
+export async function removeAllOfColor(buffer: Buffer, only?: Rgb): Promise<Buffer> {
+  const { data, info } = await sharp(buffer, { limitInputPixels: false })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const color = only ?? frameColor(data, info.width, info.height, info.channels)?.color ?? WHITE;
   for (let i = 0; i < data.length; i += info.channels) {
     const d = distanceAt(data, i, color);
     if (d > LOOSE) continue;
@@ -335,7 +349,7 @@ export async function removeAllOfColor(buffer: Buffer): Promise<Buffer> {
     .toBuffer();
 }
 
-type Rgb = [number, number, number];
+export type Rgb = [number, number, number];
 
 const WHITE: Rgb = [255, 255, 255];
 /** Within this of the background colour (per channel): cleared. */

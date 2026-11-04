@@ -11,6 +11,7 @@ import { isVectorFormat } from "../lib/job-file.server";
 import {
   motifRaster,
   removeMotifBackground,
+  removeMotifColor,
   sharpenJudgeSize,
   sharpenLogo,
   type BackgroundResult,
@@ -26,7 +27,10 @@ import {
  *
  * From the By Size page (multipart, `file`): the file is fixed and sent
  * back as a PNG, which the page puts in its file field. PDF, EPS and AI
- * included; the browser can clean only pictures it can read.
+ * included; the browser can clean only pictures it can read. `tool`:
+ * "sharpen", "background" (from the edge; X-Motif-Inside says how much of
+ * the background's colour is still shut in by the motif) or
+ * "background-all" (that colour everywhere).
  */
 
 const MESSAGES: Record<string, string> = {
@@ -35,6 +39,7 @@ const MESSAGES: Record<string, string> = {
   empty: "Filen verkar vara tom.",
   transparent: "Bilden har redan transparent bakgrund.",
   no_background: "Vi hittar ingen enfärgad bakgrund runt motivet att ta bort.",
+  nothing_inside: "Det finns inget vitt kvar inuti motivet att ta bort.",
   vector: "Filen är redan en vektor och trycks skarpt i alla storlekar.",
 };
 
@@ -154,9 +159,15 @@ async function fixFile(form: FormData) {
     png = result.png;
     headers["X-Motif-Colors"] = String(result.colors.length);
   } else {
-    const result = await removeMotifBackground(raster);
+    // "background-all": the background's colour also inside the motif, which
+    // the page offers when the first try leaves some (X-Motif-Inside).
+    const all = form.get("tool") === "background-all";
+    const result = all ? await removeMotifColor(raster) : await removeMotifBackground(raster);
     if (!result.ok) return refused(result);
     png = result.png;
+    headers["X-Motif-Inside"] = result.inside.toFixed(3);
+    if (result.color) headers["X-Motif-Bg"] = "#" + result.color.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+    if (all) console.log(`[fix-motif] ${filename}: background everywhere`);
   }
   return new Response(new Uint8Array(png), { status: 200, headers });
 }

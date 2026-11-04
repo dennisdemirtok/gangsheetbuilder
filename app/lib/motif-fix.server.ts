@@ -8,6 +8,8 @@ import { getExportQueue, type ExportJobData } from "./queue.server";
 import {
   motifRaster,
   removeMotifBackground,
+  removeMotifColor,
+  INSIDE_OFFER,
   sharpenJudgeSize,
   sharpenLogo,
   type BackgroundResult,
@@ -24,9 +26,10 @@ import {
  * the sheet's print file is made again.
  */
 
-export type FixTool = "background" | "sharpen";
+/** "background-all": the background's colour also inside the motif (see removeMotifColor). */
+export type FixTool = "background" | "background-all" | "sharpen";
 
-const SUFFIX: Record<FixTool, string> = { background: "utan-bakgrund", sharpen: "skarp" };
+const SUFFIX: Record<FixTool, string> = { background: "utan-bakgrund", "background-all": "utan-bakgrund", sharpen: "skarp" };
 
 type Found =
   | { ok: false; error: string }
@@ -97,6 +100,8 @@ export function refusal(result: BackgroundResult | SharpenResult): string {
       return "The file already has a transparent background.";
     case "no_background":
       return "There is no one-colour background around the motif to remove.";
+    case "nothing_inside":
+      return "There is no white left inside the motif to remove.";
     case "photo":
       return "This looks like a photo, a painting or a gradient: tracing would flatten it. Only flat logos can be sharpened.";
     case "empty":
@@ -109,7 +114,10 @@ export async function previewFix(options: {
   jobId: string;
   designId: string | null;
   tool: FixTool;
-}): Promise<{ ok: true; key: string; before: string; after: string; summary: string; warning: string | null } | { ok: false; error: string }> {
+}): Promise<
+  | { ok: true; key: string; before: string; after: string; summary: string; warning: string | null; inside: string | null }
+  | { ok: false; error: string }
+> {
   const found = await findTarget(options.shop, options.jobId, options.designId);
   if (!found.ok) return found;
   const { job, rows } = found;
@@ -128,12 +136,19 @@ export async function previewFix(options: {
 
   let png: Buffer;
   let summary: string;
-  if (options.tool === "background") {
+  let inside: string | null = null;
+  if (options.tool === "background" || options.tool === "background-all") {
     // A design on a sheet keeps its canvas (no trim), so it stays where it was placed.
-    const result = await removeMotifBackground(raster, job.kind !== "cut");
+    const all = options.tool === "background-all";
+    const result = all ? await removeMotifColor(raster, job.kind !== "cut") : await removeMotifBackground(raster, job.kind !== "cut");
     if (!result.ok) return { ok: false, error: refusal(result) };
     png = result.png;
-    summary = "Background removed";
+    const hex = result.color ? "#" + result.color.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("") : "";
+    summary = all ? `${hex} removed everywhere` : "Background removed";
+    // The fill from the edge leaves what the motif shuts in (letters, leaves).
+    if (!all && result.inside >= INSIDE_OFFER) {
+      inside = `${Math.round(result.inside * 100)} % of what is left is still the background colour ${hex}, shut in by the motif (inside letters or shapes). It prints. "Remove it inside too" takes it everywhere.`;
+    }
   } else {
     const result = await sharpenLogo(raster, longSide, judgeAt ?? undefined);
     console.log(`[motif-fix] ${found.filename}: sharpen`, result.ok ? result.colors : result.reason, result.stats);
@@ -157,6 +172,7 @@ export async function previewFix(options: {
     after: await previewUrl(png),
     summary: `${summary} · ${meta.width} × ${meta.height} px`,
     warning: job.sentToPrintShopAt ? "This order was already sent to the print shop: send it again after the change." : null,
+    inside,
   };
 }
 
@@ -184,14 +200,24 @@ export async function applyFix(options: {
   const h = meta.height || 1;
   const base = found.filename.replace(/\.[^.]+$/, "").slice(0, 120);
   const filename = `${base}-${SUFFIX[options.tool]}.png`;
-  const what = options.tool === "background" ? "Background removed" : "Logo sharpened";
+  const what =
+    options.tool === "background" ? "Background removed" : options.tool === "background-all" ? "Background colour removed everywhere" : "Logo sharpened";
 
   if (job.kind === "cut") {
     // Without its margin the motif fills the size ordered: the longer side
     // as ordered, the other from the new shape. "The circle should be
     // 70 mm" (#1153) is then 70 mm, not 70 mm with white around it.
     let size = "";
-    if (options.tool === "background") {
+    // "Everywhere" only clears inside the motif: its outline, and so the size
+    // ordered, stays (#1163: 10 × 4 cm would have become 10 × 2.7 cm just
+    // because the customer's file never had that shape).
+    const outlineKept =
+      options.tool === "background-all" &&
+      (await sharp(await downloadFile(found.sourceKey), { limitInputPixels: false })
+        .metadata()
+        .then((m) => Math.abs((m.width || 1) / (m.height || 1) / (w / h) - 1) < 0.02)
+        .catch(() => false));
+    if (options.tool !== "sharpen" && !outlineKept) {
       const ratio = w / h;
       const widthMm = ratio >= job.widthMm / job.heightMm ? job.widthMm : Math.round(job.heightMm * ratio);
       const heightMm = ratio >= job.widthMm / job.heightMm ? Math.round(job.widthMm / ratio) : job.heightMm;
@@ -208,7 +234,7 @@ export async function applyFix(options: {
   }
 
   // A design on a gang sheet: every copy of it, then the sheet again.
-  if (options.tool === "background") {
+  if (options.tool !== "sharpen") {
     await prisma.gangSheetImage.updateMany({
       where: { id: { in: rows.map((r) => r.id) } },
       data: { bgRemoved: true, bgRemovedUrl: options.key },
