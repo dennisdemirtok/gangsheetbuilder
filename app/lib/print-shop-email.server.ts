@@ -2,6 +2,7 @@ import prisma from "../db.server";
 import { downloadFile } from "./r2.server";
 import { fileLink, linkExpiry } from "./file-links.server";
 import { sendMail, mailFrom, type MailAttachment } from "./mailer.server";
+import { isVectorFormat, setPrintSize } from "./job-file.server";
 import { orderLabel, printFileName } from "./order-status";
 import { NAMES_NOTE, noteProperties, type LineProperty } from "./print-jobs";
 import { PACKAGE_CM, PICKUP_TIME, serviceLabel } from "./bws-shipping.server";
@@ -140,6 +141,14 @@ function jobQuantity(sheet: Sheet): { qty: number; pl: string; en: string } {
   };
 }
 
+const AT_SIZE_PL = "Plik w rozmiarze do druku: proszę nie skalować (100 %)";
+const AT_SIZE_EN = "File is at print size: do not scale (100 %)";
+
+/** A cut job's picture was given its printed size by setPrintSize. */
+function atPrintSize(sheet: Sheet): boolean {
+  return sheet.kind === "cut" && Boolean(sheet.exports[0]) && !isVectorFormat(sheet.exports[0].format);
+}
+
 interface PrintShopMailInput {
   sheets: Sheet[];
   files: JobFile[];
@@ -177,6 +186,7 @@ function printShopHtml({ sheets, files, attachFiles, hasLabel, message }: PrintS
       const q = jobQuantity(sheet);
       const dpi = sheet.kind === "cut" ? sheet.images[0]?.dpiX : null;
       const notes = customerNotes(sheet);
+      const atSize = atPrintSize(sheet);
       // More than one is red, so it stands out from the usual single copy.
       const badge = q.qty > 1 ? RED : "#111111";
       return `
@@ -195,7 +205,9 @@ function printShopHtml({ sheets, files, attachFiles, hasLabel, message }: PrintS
           ${notes.map((n) => `<div style="padding-top:8px;"><span style="color:#666;">Uwagi klienta / Customer note (${esc(n.name)}):</span> ${esc(n.value)}</div>`).join("")}
           ${
             link
-              ? `<div style="padding-top:10px;"><a href="${esc(link)}" style="color:${RED};font-weight:700;">Pobierz plik / Download file</a> <span style="color:#8a8a8a;">${esc(filename)}${dpi ? ` · ${dpi} DPI` : ""}${attachFiles ? " · w załączniku / attached" : ""}</span></div>`
+              ? `<div style="padding-top:10px;"><a href="${esc(link)}" style="color:${RED};font-weight:700;">Pobierz plik / Download file</a> <span style="color:#8a8a8a;">${esc(filename)}${dpi ? ` · ${dpi} DPI` : ""}${attachFiles ? " · w załączniku / attached" : ""}</span></div>${
+                  atSize ? `<div style="padding-top:4px;font-weight:700;">${AT_SIZE_PL}</div><div style="color:#666;">${AT_SIZE_EN}</div>` : ""
+                }`
               : `<div style="padding-top:10px;color:${RED};font-weight:700;">Brak pliku, skontaktujemy się. / No file, we will follow up.</div>`
           }
         </div>
@@ -247,6 +259,7 @@ function printShopText({ sheets, files, hasLabel, message }: PrintShopMailInput)
         `   ${q.pl} / ${q.en}`,
         ...customerNotes(sheet).map((n) => `   Uwagi / Note (${n.name}): ${n.value}`),
         link ? `   ${filename}: ${link}` : "   Brak pliku / No file",
+        ...(link && atPrintSize(sheet) ? [`   ${AT_SIZE_PL} / ${AT_SIZE_EN}`] : []),
       ];
     }),
   ];
@@ -267,8 +280,21 @@ export async function sendOrderToPrintShop(options: {
   message?: string;
   notifyCustomer?: boolean;
 }): Promise<SendToPrintShopResult> {
+  const jobs = await loadOrder(options.shopDomain, options.shopifyOrderId);
+  if (jobs.length === 0) return { ok: false, errors: ["No print jobs on this order."] };
+
+  // They print the size the file says, so no file leaves without the right one.
+  for (const job of jobs) {
+    try {
+      await setPrintSize(job.id);
+    } catch (error) {
+      return {
+        ok: false,
+        errors: [`Could not set the print size in the ${cm(job.widthMm)} × ${cm(job.heightMm)} cm file, nothing was sent: ${(error as Error).message}`],
+      };
+    }
+  }
   const sheets = await loadOrder(options.shopDomain, options.shopifyOrderId);
-  if (sheets.length === 0) return { ok: false, errors: ["No print jobs on this order."] };
   const first = sheets[0];
 
   const files = jobFiles(sheets);

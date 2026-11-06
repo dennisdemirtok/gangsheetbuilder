@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import prisma from "../db.server";
 import { downloadFile, uploadFile } from "./r2.server";
-import { convertToRaster, svgTextFonts } from "./image-processing.server";
+import { convertToRaster, fitToPrintSize, svgTextFonts } from "./image-processing.server";
 
 /**
  * Store the file the print shop prints for a job, with a preview.
@@ -18,6 +18,8 @@ const VECTOR = new Set(["eps", "ai", "ps", "pdf", "svg"]);
 export function isVectorFormat(format: string | null | undefined): boolean {
   return VECTOR.has((format || "").toLowerCase());
 }
+
+const RASTER = new Set(["png", "jpg", "jpeg", "jfif", "webp", "tif", "tiff", "gif", "avif"]);
 
 const CONTENT_TYPES: Record<string, string> = {
   png: "image/png",
@@ -143,6 +145,47 @@ export async function storeJobFile(options: {
   ]);
 
   return { format: ext, vector, dpi, hasPreview: Boolean(previewKey) };
+}
+
+/**
+ * Make a cut job's print file measure the size the job says, just before it
+ * leaves for the print shop: by then every replaced file and changed size is
+ * in. The old file stays in storage. A sheet is left alone, its file is
+ * composed at size, and a vector scales freely and keeps its own format.
+ */
+export async function setPrintSize(jobId: string): Promise<void> {
+  const job = await prisma.gangSheet.findUniqueOrThrow({
+    where: { id: jobId },
+    include: {
+      exports: { orderBy: { createdAt: "desc" }, take: 1 },
+      images: { select: { originalFilename: true }, take: 1 },
+    },
+  });
+  const file = job.exports[0];
+  if (job.kind !== "cut" || !job.widthMm || !job.heightMm || !file) return;
+  if (!RASTER.has(file.format.toLowerCase())) return;
+
+  const fitted = await fitToPrintSize(await downloadFile(file.url), job);
+  if (!fitted) return;
+
+  // A motif of another shape than the box: the job says what really prints,
+  // so the email and the file name agree with the file.
+  const reshaped = fitted.widthMm < job.widthMm * 0.98 || fitted.heightMm < job.heightMm * 0.98;
+  const widthMm = reshaped ? Math.round(fitted.widthMm) : job.widthMm;
+  const heightMm = reshaped ? Math.round(fitted.heightMm) : job.heightMm;
+  if (reshaped) await prisma.gangSheet.update({ where: { id: jobId }, data: { widthMm, heightMm } });
+
+  const name = (job.images[0]?.originalFilename || "motif").replace(/\.[^.]+$/, "");
+  await storeJobFile({ jobId, buffer: fitted.png, filename: `${name}.png`, contentType: "image/png" });
+  await prisma.gangSheetNote.create({
+    data: {
+      gangSheetId: jobId,
+      author: job.shopDomain,
+      body: `Print size set in the file: ${widthMm / 10} × ${heightMm / 10} cm at ${Math.round(fitted.dpi)} DPI${
+        reshaped ? ` (box ordered: ${job.widthMm / 10} × ${job.heightMm / 10} cm)` : ""
+      }`,
+    },
+  });
 }
 
 /**

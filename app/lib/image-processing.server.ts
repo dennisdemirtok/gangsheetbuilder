@@ -243,6 +243,52 @@ export async function generateThumbnail(
 }
 
 /**
+ * A cut job's picture as the print file: a PNG that measures what was ordered.
+ *
+ * The print shop's software takes the size from the file. #1156 ordered 27 cm
+ * and got 37 cm: 1041 px at the 72 DPI phones and web tools write is 36.7 cm,
+ * and the 27 in the email never reached the printer. So the file's own DPI
+ * has to say the ordered size. The pixels stay; only the transparent margin
+ * goes, since the ordered size is the motif's and not the margin's.
+ *
+ * The motif fits inside the ordered box, as in applyFix: a wide logo in a
+ * 10 × 10 cm box prints 10 cm wide and only as high as its shape.
+ * Null when the file already says this.
+ */
+export async function fitToPrintSize(
+  buffer: Buffer,
+  box: { widthMm: number; heightMm: number },
+): Promise<{ png: Buffer; dpi: number; widthMm: number; heightMm: number } | null> {
+  const open = (input: Buffer) => sharp(input, { limitInputPixels: false });
+  const original = await open(buffer).metadata();
+  const upright = await open(buffer).rotate().png().toBuffer();
+  const { width, height, hasAlpha } = await open(upright).metadata();
+
+  let art = { left: 0, top: 0, width, height };
+  if (hasAlpha) {
+    // Two steps: in one pipeline sharp trims before it picks the channel, so
+    // a motif on a white, opaque background would lose its white margin.
+    const alpha = await open(upright).extractChannel("alpha").png().toBuffer();
+    const { info } = await open(alpha)
+      .trim({ background: "#000000", threshold: 10 })
+      .toBuffer({ resolveWithObject: true });
+    art = {
+      left: -(info.trimOffsetLeft ?? 0),
+      top: -(info.trimOffsetTop ?? 0),
+      width: info.width,
+      height: info.height,
+    };
+  }
+
+  const dpi = Math.max(art.width / (box.widthMm / 25.4), art.height / (box.heightMm / 25.4));
+  const fitted = { dpi, widthMm: (art.width / dpi) * 25.4, heightMm: (art.height / dpi) * 25.4 };
+  const uncut = art.width === width && art.height === height;
+  if (original.format === "png" && uncut && Math.abs((original.density ?? 0) / dpi - 1) < 0.01) return null;
+
+  return { ...fitted, png: await open(upright).extract(art).withMetadata({ density: dpi }).png().toBuffer() };
+}
+
+/**
  * Convert various image formats to PNG for processing.
  * Handles TIFF, WebP, AVIF, BMP, and other formats Sharp supports.
  */
