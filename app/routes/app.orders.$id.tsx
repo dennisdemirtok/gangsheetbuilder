@@ -35,7 +35,7 @@ import {
   statusInfo,
 } from "../lib/order-status";
 import { orderPayment, syncOrderAddress, withOrderDetails } from "../lib/order-details.server";
-import { jobSize, noteProperties, printLabel, type LineProperty } from "../lib/print-jobs";
+import { cutJobCount, jobSize, noteProperties, printLabel, type LineProperty } from "../lib/print-jobs";
 import { orderStatusOf } from "../lib/order-list.server";
 import { normalizePhone } from "../lib/phone";
 import { isVectorFormat, liveTextFonts, storeJobFile } from "../lib/job-file.server";
@@ -104,6 +104,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     combined.set(j.mergedIntoId, { count: c.count + 1, pieces: c.pieces + (j.lineQuantity ?? 1) });
   }
   const combinable = jobs.filter((j) => j.kind === "cut" && j.status !== "shipped" && j.status !== "draft");
+  const combinablePieces = combinable.reduce((s, j) => s + (j.lineQuantity ?? 1), 0);
 
   const [[gangSheet], notes, previews, summary, extraShipments, payment, liveText] = await Promise.all([
     withOrderDetails(admin, session.shop, [found]),
@@ -189,8 +190,8 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         : null,
     // Many cut motifs are hours of cutting: they can go on one sheet instead.
     combine:
-      combinable.length >= 2 && orderStatus !== "shipped"
-        ? { jobs: combinable.length, pieces: combinable.reduce((s, j) => s + (j.lineQuantity ?? 1), 0) }
+      combinablePieces >= 2 && orderStatus !== "shipped"
+        ? { jobs: combinable.length, pieces: combinablePieces }
         : null,
     jobs: jobs.map((job, i) => {
       const file = job.exports[0];
@@ -566,7 +567,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const lengths = result.sheets.map((x) => `${x.heightMm / 10} cm`).join(" + ");
     return json({
       success: true,
-      notice: `Combined ${jobsCombined} cut jobs (${pieces} motifs) into ${result.sheets.length > 1 ? `${result.sheets.length} sheets` : "one sheet"}, ${lengths}. The print file is being made.`,
+      notice: `Combined ${cutJobCount(jobsCombined)} (${pieces} motifs) into ${result.sheets.length > 1 ? `${result.sheets.length} sheets` : "one sheet"}, ${lengths}. The print file is being made.`,
       errors: result.skipped.length > 0 ? [`Left as cut jobs: ${result.skipped.join(", ")}`] : undefined,
     });
   }
@@ -1062,7 +1063,7 @@ export default function OrderDetailPage() {
                         ))}
                         {job.combinedFrom && (
                           <Text as="p" variant="bodySm" tone="subdued">
-                            Combined from {job.combinedFrom.count} cut jobs ({job.combinedFrom.pieces} motifs). The customer cuts them out.
+                            Combined from {cutJobCount(job.combinedFrom.count)} ({job.combinedFrom.pieces} motifs). The customer cuts them out.
                           </Text>
                         )}
                       </BlockStack>
@@ -1504,13 +1505,13 @@ function CombineButton({ jobs, pieces }: { jobs: number; pieces: number }) {
         <Modal.Section>
           <BlockStack gap="300">
             <Text as="p">
-              The {jobs} cut jobs ({pieces} motifs) are packed onto one 58 cm sheet at
-              the sizes ordered. The print shop prints it as one file instead of
+              {pieces} motifs from {cutJobCount(jobs)} are packed onto one 58 cm sheet
+              at the sizes ordered. The print shop prints it as one file instead of
               cutting every motif; the customer cuts them out.
             </Text>
             <Text as="p" tone="subdued">
-              The cut jobs stay on the order and ship as before. Undo it from the
-              sheet any time before the order ships.
+              The order's lines stay and ship as before. Undo it from the sheet any
+              time before the order ships.
             </Text>
           </BlockStack>
         </Modal.Section>

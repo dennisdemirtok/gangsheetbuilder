@@ -14,6 +14,11 @@
 
 export type PrintKind = "gang_sheet" | "cut";
 
+/** "1 cut job", "3 cut jobs". */
+export function cutJobCount(count: number): string {
+  return `${count} cut job${count === 1 ? "" : "s"}`;
+}
+
 /**
  * Note the order intake puts first on a Namn och Siffror sheet: the print
  * shop prints the sheet once and cuts out every name and number.

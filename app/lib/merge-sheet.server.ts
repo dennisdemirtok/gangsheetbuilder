@@ -6,6 +6,7 @@ import { SHEET_WIDTH_MM } from "./constants";
 import { convertToRaster } from "./image-processing.server";
 import { isVectorFormat } from "./job-file.server";
 import { DEFAULT_PLACEMENT_GAP_MM, EDGE_MARGIN_MM } from "./placement";
+import { cutJobCount } from "./print-jobs";
 import { getExportQueue, type ExportJobData } from "./queue.server";
 import { downloadFile, uploadFile } from "./r2.server";
 
@@ -15,9 +16,10 @@ import { downloadFile, uploadFile } from "./r2.server";
  * DTF Transfers By Size is printed and cut out one motif at a time. An order
  * of dozens of small motifs in different sizes (#1063: 47 jobs, 70 pieces)
  * is hours of cutting; on one sheet it prints as one file and the customer
- * cuts it out. The motifs are packed on a 58 cm sheet at their ordered size,
- * the way the builder packs a sheet, and the export worker draws it like any
- * builder sheet. The cut jobs stay on the order, since Shopify still fulfils
+ * cuts it out. So does one job with many copies (#1180: 12 × 27 cm). The
+ * motifs are packed on a 58 cm sheet at their ordered size, the way the
+ * builder packs a sheet, and the export worker draws it like any builder
+ * sheet. The cut jobs stay on the order, since Shopify still fulfils
  * their lines, but point at the sheet and are no longer printed, sent or
  * counted on their own. splitSheet() undoes it.
  */
@@ -105,8 +107,8 @@ export async function mergeCutJobs(options: {
     if (!ok) skipped.push(`${job.widthMm / 10} × ${job.heightMm / 10} cm (${job.images.length ? "no size" : "no file"})`);
     return ok;
   });
-  if (jobs.length < 2) {
-    return { ok: false, error: "There need to be at least two cut jobs with a file to combine." };
+  if (jobs.reduce((sum, job) => sum + (job.lineQuantity || 1), 0) < 2) {
+    return { ok: false, error: "There need to be at least two motifs with a file to combine." };
   }
 
   // Film and print type are printed separately: one sheet per kind.
@@ -201,7 +203,7 @@ export async function mergeCutJobs(options: {
         data: {
           gangSheetId: created.id,
           author,
-          body: `Combined ${group.length} cut jobs (${pieces} motifs) into one ${heightMm / 10} cm sheet.`,
+          body: `Combined ${cutJobCount(group.length)} (${pieces} motifs) into one ${heightMm / 10} cm sheet.`,
         },
       });
       return created;
@@ -237,7 +239,7 @@ export async function splitSheet(options: {
     // The combined sheet only existed to print them; its images and notes go with it.
     prisma.gangSheet.delete({ where: { id: sheetId } }),
     prisma.gangSheetNote.create({
-      data: { gangSheetId: parts[0].id, author, body: `Combined sheet undone: ${parts.length} cut jobs print one by one again.` },
+      data: { gangSheetId: parts[0].id, author, body: `Combined sheet undone: back to ${cutJobCount(parts.length)}.` },
     }),
   ]);
   return { ok: true, firstJobId: parts[0].id };
