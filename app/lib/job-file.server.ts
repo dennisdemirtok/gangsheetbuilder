@@ -1,7 +1,8 @@
 import sharp from "sharp";
 import prisma from "../db.server";
 import { downloadFile, uploadFile } from "./r2.server";
-import { convertToRaster, fitToPrintSize, svgTextFonts } from "./image-processing.server";
+import { artworkBox, convertToRaster, fitToPrintSize, isBlank, svgTextFonts } from "./image-processing.server";
+import { motifRaster } from "./motif-cleanup.server";
 
 /**
  * Store the file the print shop prints for a job, with a preview.
@@ -147,13 +148,42 @@ export async function storeJobFile(options: {
   return { format: ext, vector, dpi, hasPreview: Boolean(previewKey) };
 }
 
+/** 600 DPI as long as the print file stays this many pixels; never under 300. */
+const MAX_VECTOR_PIXELS = 60_000_000;
+
+/**
+ * A vector cut job drawn for print, with the motif at the ordered size. Its
+ * page says nothing about that: logo sites hand out 2500 px squares with the
+ * logo somewhere inside, so a first look finds the motif and sets the scale.
+ */
+async function drawForPrint(
+  buffer: Buffer,
+  format: string,
+  box: { widthMm: number; heightMm: number },
+): Promise<Buffer> {
+  const name = `motif.${format}`;
+  const first = await sharp(await motifRaster(buffer, name, 96), { limitInputPixels: false }).metadata();
+  const lookDpi = (96 * 1500) / Math.max(first.width, first.height);
+
+  const art = await artworkBox(await motifRaster(buffer, name, lookDpi));
+  const mmPerPx = Math.min(box.widthMm / art.width, box.heightMm / art.height);
+  const squareInches = ((art.width * mmPerPx) / 25.4) * ((art.height * mmPerPx) / 25.4);
+  const dpi = Math.max(300, Math.min(600, Math.sqrt(MAX_VECTOR_PIXELS / squareInches)));
+  return motifRaster(buffer, name, (lookDpi * dpi * mmPerPx) / 25.4);
+}
+
 /**
  * Make a cut job's print file measure the size the job says, just before it
  * leaves for the print shop: by then every replaced file and changed size is
  * in. The old file stays in storage. A sheet is left alone, its file is
- * composed at size, and a vector scales freely and keeps its own format.
+ * composed at size. A vector becomes a PNG too, like a roll's designs and
+ * #1161's logos: its page size means nothing, and in Poland a motif drawn
+ * here cannot lose a font or be scaled by eye.
+ *
+ * Returns what the shop should know when a vector had to stay as it is: such
+ * a file can still be fine in their software, so it does not stop the order.
  */
-export async function setPrintSize(jobId: string): Promise<void> {
+export async function setPrintSize(jobId: string): Promise<string | null> {
   const job = await prisma.gangSheet.findUniqueOrThrow({
     where: { id: jobId },
     include: {
@@ -162,11 +192,29 @@ export async function setPrintSize(jobId: string): Promise<void> {
     },
   });
   const file = job.exports[0];
-  if (job.kind !== "cut" || !job.widthMm || !job.heightMm || !file) return;
-  if (!RASTER.has(file.format.toLowerCase())) return;
+  if (job.kind !== "cut" || !job.widthMm || !job.heightMm || !file) return null;
+  const format = file.format.toLowerCase();
+  const vector = isVectorFormat(format);
+  if (!vector && !RASTER.has(format)) return null;
 
-  const fitted = await fitToPrintSize(await downloadFile(file.url), job);
-  if (!fitted) return;
+  const ordered = `${job.widthMm / 10} × ${job.heightMm / 10} cm`;
+  let picture = await downloadFile(file.url);
+  if (vector) {
+    // The server has none of the customer's fonts (#1154 printed symbols).
+    if (format === "svg" && svgTextFonts(picture)) {
+      return `The ${ordered} SVG has text that is not outlined, so it went as it is, with the size in the email.`;
+    }
+    try {
+      picture = await drawForPrint(picture, format, job);
+      if (await isBlank(picture)) throw new Error("it drew nothing");
+    } catch (error) {
+      console.warn(`[job-file] Could not draw ${file.url}:`, (error as Error).message);
+      return `The ${ordered} ${format.toUpperCase()} could not be drawn here, so it went as it is, with the size in the email.`;
+    }
+  }
+
+  const fitted = await fitToPrintSize(picture, job);
+  if (!vector && !fitted.changed) return null;
 
   // A motif of another shape than the box: the job says what really prints,
   // so the email and the file name agree with the file.
@@ -182,10 +230,11 @@ export async function setPrintSize(jobId: string): Promise<void> {
       gangSheetId: jobId,
       author: job.shopDomain,
       body: `Print size set in the file: ${widthMm / 10} × ${heightMm / 10} cm at ${Math.round(fitted.dpi)} DPI${
-        reshaped ? ` (box ordered: ${job.widthMm / 10} × ${job.heightMm / 10} cm)` : ""
-      }`,
+        reshaped ? ` (box ordered: ${ordered})` : ""
+      } · was ${file.url}`,
     },
   });
+  return null;
 }
 
 /**

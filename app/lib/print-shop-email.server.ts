@@ -149,6 +149,13 @@ function atPrintSize(sheet: Sheet): boolean {
   return sheet.kind === "cut" && Boolean(sheet.exports[0]) && !isVectorFormat(sheet.exports[0].format);
 }
 
+/** A vector that had to stay as it is: its own size means nothing. */
+function sizeToSet(sheet: Sheet): { pl: string; en: string } | null {
+  if (sheet.kind !== "cut" || !sheet.exports[0] || !isVectorFormat(sheet.exports[0].format)) return null;
+  const size = `${cm(sheet.widthMm)} × ${cm(sheet.heightMm)} cm`;
+  return { pl: `Proszę ustawić rozmiar druku: ${size}`, en: `Set the print size to ${size}` };
+}
+
 interface PrintShopMailInput {
   sheets: Sheet[];
   files: JobFile[];
@@ -187,6 +194,7 @@ function printShopHtml({ sheets, files, attachFiles, hasLabel, message }: PrintS
       const dpi = sheet.kind === "cut" ? sheet.images[0]?.dpiX : null;
       const notes = customerNotes(sheet);
       const atSize = atPrintSize(sheet);
+      const setSize = sizeToSet(sheet);
       // More than one is red, so it stands out from the usual single copy.
       const badge = q.qty > 1 ? RED : "#111111";
       return `
@@ -207,6 +215,8 @@ function printShopHtml({ sheets, files, attachFiles, hasLabel, message }: PrintS
             link
               ? `<div style="padding-top:10px;"><a href="${esc(link)}" style="color:${RED};font-weight:700;">Pobierz plik / Download file</a> <span style="color:#8a8a8a;">${esc(filename)}${dpi ? ` · ${dpi} DPI` : ""}${attachFiles ? " · w załączniku / attached" : ""}</span></div>${
                   atSize ? `<div style="padding-top:4px;font-weight:700;">${AT_SIZE_PL}</div><div style="color:#666;">${AT_SIZE_EN}</div>` : ""
+                }${
+                  setSize ? `<div style="padding-top:4px;font-weight:700;color:${RED};">${esc(setSize.pl)}</div><div style="color:#666;">${esc(setSize.en)}</div>` : ""
                 }`
               : `<div style="padding-top:10px;color:${RED};font-weight:700;">Brak pliku, skontaktujemy się. / No file, we will follow up.</div>`
           }
@@ -260,6 +270,7 @@ function printShopText({ sheets, files, hasLabel, message }: PrintShopMailInput)
         ...customerNotes(sheet).map((n) => `   Uwagi / Note (${n.name}): ${n.value}`),
         link ? `   ${filename}: ${link}` : "   Brak pliku / No file",
         ...(link && atPrintSize(sheet) ? [`   ${AT_SIZE_PL} / ${AT_SIZE_EN}`] : []),
+        ...(link && sizeToSet(sheet) ? [`   ${sizeToSet(sheet)!.pl} / ${sizeToSet(sheet)!.en}`] : []),
       ];
     }),
   ];
@@ -284,9 +295,11 @@ export async function sendOrderToPrintShop(options: {
   if (jobs.length === 0) return { ok: false, errors: ["No print jobs on this order."] };
 
   // They print the size the file says, so no file leaves without the right one.
+  const warnings: string[] = [];
   for (const job of jobs) {
     try {
-      await setPrintSize(job.id);
+      const warning = await setPrintSize(job.id);
+      if (warning) warnings.push(warning);
     } catch (error) {
       return {
         ok: false,
@@ -344,10 +357,10 @@ export async function sendOrderToPrintShop(options: {
   let customerNotified = false;
   if (options.notifyCustomer && !first.productionMailSentAt) {
     const result = await sendProductionMail(sheets);
-    if (!result.ok) return { ok: true, attachedFiles: attachFiles, errors: [result.error!] };
+    if (!result.ok) return { ok: true, attachedFiles: attachFiles, errors: [...warnings, result.error!] };
     customerNotified = true;
   }
-  return { ok: true, attachedFiles: attachFiles, customerNotified };
+  return { ok: true, attachedFiles: attachFiles, customerNotified, errors: warnings.length ? warnings : undefined };
 }
 
 /* ── Customer email (Swedish) ─────────────────────────────────────────── */

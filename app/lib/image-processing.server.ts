@@ -242,6 +242,10 @@ export async function generateThumbnail(
     .toBuffer();
 }
 
+const PRINT_DPI = 600;
+/** Past this a picture only costs storage and time: it is brought down to PRINT_DPI. */
+const MAX_PRINT_DPI = 1200;
+
 /**
  * A cut job's picture as the print file: a PNG that measures what was ordered.
  *
@@ -253,39 +257,55 @@ export async function generateThumbnail(
  *
  * The motif fits inside the ordered box, as in applyFix: a wide logo in a
  * 10 × 10 cm box prints 10 cm wide and only as high as its shape.
- * Null when the file already says this.
+ * `changed` is false when the file already says this.
  */
 export async function fitToPrintSize(
   buffer: Buffer,
   box: { widthMm: number; heightMm: number },
-): Promise<{ png: Buffer; dpi: number; widthMm: number; heightMm: number } | null> {
+): Promise<{ png: Buffer; changed: boolean; dpi: number; widthMm: number; heightMm: number }> {
   const open = (input: Buffer) => sharp(input, { limitInputPixels: false });
   const original = await open(buffer).metadata();
   const upright = await open(buffer).rotate().png().toBuffer();
-  const { width, height, hasAlpha } = await open(upright).metadata();
-
-  let art = { left: 0, top: 0, width, height };
-  if (hasAlpha) {
-    // Two steps: in one pipeline sharp trims before it picks the channel, so
-    // a motif on a white, opaque background would lose its white margin.
-    const alpha = await open(upright).extractChannel("alpha").png().toBuffer();
-    const { info } = await open(alpha)
-      .trim({ background: "#000000", threshold: 10 })
-      .toBuffer({ resolveWithObject: true });
-    art = {
-      left: -(info.trimOffsetLeft ?? 0),
-      top: -(info.trimOffsetTop ?? 0),
-      width: info.width,
-      height: info.height,
-    };
-  }
+  const { width, height } = await open(upright).metadata();
+  const art = await artworkBox(upright);
 
   const dpi = Math.max(art.width / (box.widthMm / 25.4), art.height / (box.heightMm / 25.4));
-  const fitted = { dpi, widthMm: (art.width / dpi) * 25.4, heightMm: (art.height / dpi) * 25.4 };
-  const uncut = art.width === width && art.height === height;
-  if (original.format === "png" && uncut && Math.abs((original.density ?? 0) / dpi - 1) < 0.01) return null;
+  const size = { widthMm: (art.width / dpi) * 25.4, heightMm: (art.height / dpi) * 25.4 };
+  // A sliver is not worth another file: drawn smaller, edges soften by a pixel.
+  const uncut = art.width >= width - 2 && art.height >= height - 2;
+  if (original.format === "png" && uncut && dpi <= MAX_PRINT_DPI && Math.abs((original.density ?? 0) / dpi - 1) < 0.01) {
+    return { ...size, dpi, png: buffer, changed: false };
+  }
 
-  return { ...fitted, png: await open(upright).extract(art).withMetadata({ density: dpi }).png().toBuffer() };
+  // #1148: a 22 016 px JPEG for an 8 cm logo is 7000 DPI and a 91 MB PNG.
+  const outDpi = dpi > MAX_PRINT_DPI ? PRINT_DPI : dpi;
+  const png = await open(upright)
+    .extract(art)
+    .resize({ width: Math.round((art.width * outDpi) / dpi), height: Math.round((art.height * outDpi) / dpi), fit: "fill" })
+    .withMetadata({ density: outDpi })
+    .png()
+    .toBuffer();
+  return { ...size, dpi: outDpi, png, changed: true };
+}
+
+/** Where a PNG's motif sits: all of it, less any transparent margin. */
+export async function artworkBox(png: Buffer): Promise<{ left: number; top: number; width: number; height: number }> {
+  const open = (input: Buffer) => sharp(input, { limitInputPixels: false });
+  const { width, height, hasAlpha } = await open(png).metadata();
+  if (!hasAlpha) return { left: 0, top: 0, width, height };
+
+  // Two steps: in one pipeline sharp trims before it picks the channel, so
+  // a motif on a white, opaque background would lose its white margin.
+  const alpha = await open(png).extractChannel("alpha").png().toBuffer();
+  const { info } = await open(alpha)
+    .trim({ background: "#000000", threshold: 10 })
+    .toBuffer({ resolveWithObject: true });
+  return {
+    left: -(info.trimOffsetLeft ?? 0),
+    top: -(info.trimOffsetTop ?? 0),
+    width: info.width,
+    height: info.height,
+  };
 }
 
 /**
