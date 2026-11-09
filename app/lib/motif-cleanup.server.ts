@@ -47,6 +47,15 @@ const MAX_RIM = 32;
 const MAX_BAND = 16;
 /** At most this many colours; a logo with more is not flat. */
 const MAX_COLORS = 8;
+/**
+ * How far from its own colour one colour's pixels may lie on average. The
+ * mean over the whole motif hides shading: #1189's embossed emblem is mostly
+ * pale background, came in at an error of 9.47 and had its letters flattened.
+ * One of its five colours spread 35. In the files of November's orders, flat
+ * logos stayed under 13.4; above 14 sat shading, gradients and colours that
+ * got merged into another (a yellow nose gone in the red and white).
+ */
+const MAX_SPREAD = 14;
 
 /**
  * The motif as a PNG to work on: PDF, EPS and AI through Ghostscript, SVG
@@ -340,6 +349,8 @@ export interface SharpenStats {
   matched: number;
   /** Mean distance of the flat areas to their colour. */
   error: number;
+  /** The same for the one colour that fits worst: see MAX_SPREAD. */
+  spread: number;
 }
 
 export type SharpenResult =
@@ -629,13 +640,24 @@ async function judge(png: Buffer, longSide: number): Promise<Judgement> {
   const nearest = nearestColor(data, fit.centres);
   let matched = 0;
   for (let p = 0; p < N; p++) if (inMotif(p) && nearest(p)[1] <= 28 * 28) matched++;
-  const stats: SharpenStats = { flat: interior.length / solid, matched: matched / solid, error: fit.error };
+  const stats: SharpenStats = {
+    flat: interior.length / solid,
+    matched: matched / solid,
+    error: fit.error,
+    spread: widestColor(samples, fit.centres),
+  };
   // Calibrated on 45 uploads from October 2026 and #1151/#1153: logos
   // traced cleanly up to an error of 9, while a photo, glitter, a painting
   // or a shaded illustration (posterised by tracing) came out above 9.5,
   // or with little flat area for its error, or with much of it far from
-  // every colour.
-  if (!fit.flat || stats.error > 9.5 || (stats.flat < 0.7 && stats.error > 5) || stats.matched < 0.85) {
+  // every colour. MAX_SPREAD catches what is shaded in only part of the motif.
+  if (
+    !fit.flat ||
+    stats.error > 9.5 ||
+    (stats.flat < 0.7 && stats.error > 5) ||
+    stats.matched < 0.85 ||
+    stats.spread > MAX_SPREAD
+  ) {
     return { ok: false, reason: "photo", stats };
   }
 
@@ -663,6 +685,33 @@ async function judge(png: Buffer, longSide: number): Promise<Judgement> {
 
 function toHex(c: Rgb): string {
   return "#" + c.map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The largest mean distance of samples to the colour they are closest to,
+ * over the colours that cover at least 3 % of them (see MAX_SPREAD).
+ */
+function widestColor(samples: Rgb[], centres: Rgb[]): number {
+  const sum = new Float64Array(centres.length);
+  const count = new Float64Array(centres.length);
+  for (const s of samples) {
+    let best = 0;
+    let bestD = Infinity;
+    for (let c = 0; c < centres.length; c++) {
+      const d = Math.hypot(s[0]! - centres[c]![0]!, s[1]! - centres[c]![1]!, s[2]! - centres[c]![2]!);
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
+    }
+    sum[best]! += bestD;
+    count[best]!++;
+  }
+  let widest = 0;
+  for (let c = 0; c < centres.length; c++) {
+    if (count[c]! >= samples.length * 0.03) widest = Math.max(widest, sum[c]! / count[c]!);
+  }
+  return widest;
 }
 
 /**
