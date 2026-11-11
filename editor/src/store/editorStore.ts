@@ -53,6 +53,11 @@ export interface EditorImage {
   /** A solid background left on (#rrggbb): it prints as a box around the design. */
   backgroundColor?: string;
   /**
+   * The customer chose to print the background, e.g. a white box behind
+   * black text on a dark shirt: no "take it off" nagging for this design.
+   */
+  keepBackground?: boolean;
+  /**
    * Shapes only (an SVG, PDF, EPS or AI without pictures in it): the print
    * file draws it again at the size it prints, so it has no DPI to warn
    * about. Unset on designs from before the upload said; see isVectorDesign.

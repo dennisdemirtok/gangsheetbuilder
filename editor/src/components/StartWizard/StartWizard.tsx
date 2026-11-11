@@ -423,6 +423,8 @@ export function StartWizard({ onClose }: { onClose: () => void }) {
           bgRemovedUrl: bgOff ? d.bgRemovedUrl : undefined,
           hasWhiteBackground: Boolean(u.hasWhiteBackground) && !bgOff,
           backgroundColor: bgOff ? undefined : d.bgColor,
+          // Shown both versions and picked the one with the background.
+          keepBackground: !bgOff && Boolean(d.bgRemovedUrl),
           vector: d.vector,
           placed: true,
         };
@@ -887,31 +889,48 @@ function DraftRow({
               </div>
             )}
             {draft.bgBusy && <p style={S.note}>Tar bort bakgrunden…</p>}
+            {/* White goes by itself, but sometimes it is the design: a white
+                box behind black text, printed on a dark shirt. A link at the
+                end of a sentence was missed, so both choices are buttons. */}
             {draft.bgRemovedUrl && !draft.bgBusy && (
-              <p style={S.note}>
-                {!draft.useBgRemoved
-                  ? `Den ${bg.the} bakgrunden behålls och trycks som en ${bg.color} ruta.`
-                  : draft.bgMode === "all"
-                    ? `${bg.All} borttaget, även inuti motivet.`
-                    : `${bg.Color} bakgrund borttagen, annars trycks den som en ${bg.color} ruta. ${bg.Inside} inuti motivet trycks som det är.`}{" "}
-                <button
-                  onClick={() => onChange({ useBgRemoved: !draft.useBgRemoved })}
-                  style={S.inlineLink}
-                >
-                  {draft.useBgRemoved ? "Behåll bakgrunden" : "Ta bort den"}
-                </button>
-                {draft.useBgRemoved && (
-                  <>
-                    {" · "}
-                    <button
-                      onClick={() => onBgMode(draft.bgMode === "all" ? "background" : "all")}
-                      style={S.inlineLink}
-                    >
-                      {draft.bgMode === "all" ? "Bara bakgrunden" : `Ta bort även ${bg.inside} inuti`}
-                    </button>
-                  </>
-                )}
-              </p>
+              <div style={S.bgChoice}>
+                <span style={S.bgChoiceTitle}>
+                  {/* "Färgad" says no colour; a white or black square looked like a checkbox. */}
+                  {!bg.frame && <span style={{ ...S.bgSwatch, background: draft.bgColor }} />}
+                  Bilden har {bg.a} {bg.color} bakgrund. Ska den tryckas?
+                </span>
+                <div style={S.bgOptions} role="radiogroup" aria-label="Bakgrund">
+                  <BgOption
+                    active={draft.useBgRemoved}
+                    onClick={() => onChange({ useBgRemoved: true })}
+                    title={`Utan ${bg.word}`}
+                    sub={draft.bgMode === "all" ? `${bg.All} borttaget` : "Bara motivet trycks"}
+                  />
+                  <BgOption
+                    active={!draft.useBgRemoved}
+                    onClick={() => onChange({ useBgRemoved: false })}
+                    title={`Med ${bg.word}`}
+                    sub={`Trycks som ${bg.a} ${bg.color} ruta`}
+                  />
+                </div>
+                <p style={S.note}>
+                  {!draft.useBgRemoved ? (
+                    `Den ${bg.the} rutan trycks runt motivet${bg.frame ? `, t.ex. som en ram på en ${bg.frame} tröja` : ""}.`
+                  ) : (
+                    <>
+                      {draft.bgMode === "all"
+                        ? `${bg.All} borttaget, även inuti motivet.`
+                        : `${bg.Inside} inuti motivet trycks som det är.`}{" "}
+                      <button
+                        onClick={() => onBgMode(draft.bgMode === "all" ? "background" : "all")}
+                        style={S.inlineLink}
+                      >
+                        {draft.bgMode === "all" ? "Bara bakgrunden" : `Ta bort även ${bg.inside} inuti`}
+                      </button>
+                    </>
+                  )}
+                </p>
+              </div>
             )}
           </>
         )}
@@ -925,10 +944,10 @@ function backgroundWords(hex: string | undefined) {
   const n = hex && /^#[0-9a-f]{6}$/i.test(hex) ? parseInt(hex.slice(1), 16) : 0xffffff;
   const lum = (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
   if (lum > 0.85) {
-    return { a: "en", color: "vit", Color: "Vit", the: "vita", inside: "vitt", Inside: "Vitt", All: "Allt vitt" };
+    return { a: "en", color: "vit", Color: "Vit", the: "vita", inside: "vitt", Inside: "Vitt", All: "Allt vitt", word: "vitt", frame: "mörk" };
   }
   if (lum < 0.2) {
-    return { a: "en", color: "svart", Color: "Svart", the: "svarta", inside: "svart", Inside: "Svart", All: "Allt svart" };
+    return { a: "en", color: "svart", Color: "Svart", the: "svarta", inside: "svart", Inside: "Svart", All: "Allt svart", word: "svart", frame: "ljus" };
   }
   return {
     a: "en",
@@ -938,7 +957,32 @@ function backgroundWords(hex: string | undefined) {
     inside: "den färgen",
     Inside: "Samma färg",
     All: "All bakgrundsfärg",
+    word: "bakgrunden",
+    frame: "",
   };
+}
+
+/** One of the two background choices: a title and what it means. */
+function BgOption({ active, onClick, title, sub }: { active: boolean; onClick: () => void; title: string; sub: string }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={active}
+      onClick={onClick}
+      style={{
+        ...S.bgOption,
+        borderColor: active ? theme.accent : theme.border,
+        background: active ? theme.accentBg : theme.bgCard,
+      }}
+    >
+      <span style={{ ...S.bgOptionTitle, color: active ? theme.accent : theme.text }}>
+        {active ? "● " : "○ "}
+        {title}
+      </span>
+      <span style={S.bgOptionSub}>{sub}</span>
+    </button>
+  );
 }
 
 function Spinner() {
@@ -1181,6 +1225,31 @@ const S: Record<string, React.CSSProperties> = {
     color: theme.text,
     fontSize: theme.fontSize.labelMd,
   },
+  bgChoice: {
+    marginTop: 8,
+    padding: "8px 10px",
+    borderRadius: theme.radiusSm,
+    background: "rgba(0, 0, 0, 0.03)",
+    fontSize: theme.fontSize.labelMd,
+    color: theme.text,
+  },
+  bgChoiceTitle: { display: "flex", alignItems: "center", gap: 8, fontWeight: theme.fontWeight.semibold },
+  bgOptions: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 6 },
+  bgOption: {
+    flex: "1 1 140px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "flex-start",
+    gap: 2,
+    padding: "7px 10px",
+    border: "1px solid",
+    borderRadius: theme.radiusSm,
+    fontFamily: theme.fontFamily,
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  bgOptionTitle: { fontSize: theme.fontSize.bodySm, fontWeight: theme.fontWeight.semibold },
+  bgOptionSub: { fontSize: theme.fontSize.labelMd, color: theme.textMuted },
   bgSwatch: {
     width: 14,
     height: 14,

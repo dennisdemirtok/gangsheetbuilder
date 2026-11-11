@@ -17,7 +17,15 @@ import { freeCapacityFor, imageBbox } from "../../utils/layout";
 import { useSheetStats } from "../../utils/sheetStats";
 import { showToast } from "../../utils/toast";
 import { theme } from "../../styles/theme";
-import { WhiteBackgroundBar, cropGroup, removeGroupBackground, sharpenGroup, placeSharpened, SharpenCompare } from "./ImageList";
+import {
+  WhiteBackgroundBar,
+  cropGroup,
+  removeGroupBackground,
+  restoreGroupBackground,
+  sharpenGroup,
+  placeSharpened,
+  SharpenCompare,
+} from "./ImageList";
 import type { SharpenedDesign } from "../../services/api";
 
 /**
@@ -212,6 +220,16 @@ function MoreActions({ group }: { group: ImageGroup }) {
       {!image.bgRemovedUrl && !image.text && (
         <button type="button" onClick={() => void run("bg")} disabled={busy !== null} style={R.chipButton}>
           {busy === "bg" ? "Tar bort…" : "Ta bort bakgrund"}
+        </button>
+      )}
+      {image.bgRemovedUrl && !image.text && (
+        <button
+          type="button"
+          onClick={() => restoreGroupBackground(group, updateGroup)}
+          disabled={busy !== null}
+          style={R.chipButton}
+        >
+          Återställ bakgrund
         </button>
       )}
       {!image.text && (

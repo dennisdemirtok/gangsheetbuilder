@@ -68,8 +68,12 @@ export function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
   // bgRemoved is also set for files that came in transparent — an EPS
   // with a white box inside a transparent margin is one — so check for an
   // actual background-free version instead.
+  // A background the customer chose to print is not one to nag about.
   const white = groups.filter(
-    (g) => (g.master.hasWhiteBackground || g.master.backgroundColor) && !g.master.bgRemovedUrl,
+    (g) =>
+      (g.master.hasWhiteBackground || g.master.backgroundColor) &&
+      !g.master.bgRemovedUrl &&
+      !g.master.keepBackground,
   );
   if (white.length === 0) return null;
 
@@ -84,7 +88,13 @@ export function WhiteBackgroundBar({ groups }: { groups: ImageGroup[] }) {
         try {
           const result = await removeBg(group.master.dbId || group.master.id);
           const url = result.bgRemovedUrl.startsWith("/") ? base + result.bgRemovedUrl : result.bgRemovedUrl;
-          updateGroup(group.groupId, { bgRemoved: true, bgRemovedUrl: url, hasWhiteBackground: false, backgroundColor: undefined });
+          updateGroup(group.groupId, {
+            bgRemoved: true,
+            bgRemovedUrl: url,
+            hasWhiteBackground: false,
+            backgroundColor: undefined,
+            keepBackground: false,
+          });
         } catch {
           failed++;
         }
@@ -143,7 +153,28 @@ export async function removeGroupBackground(
   const result = await removeBg(image.dbId || image.id);
   const base = getAppProxyUrl();
   const bgUrl = result.bgRemovedUrl.startsWith("/") ? base + result.bgRemovedUrl : result.bgRemovedUrl;
-  updateGroup(group.groupId, { bgRemoved: true, bgRemovedUrl: bgUrl, hasWhiteBackground: false, backgroundColor: undefined });
+  updateGroup(group.groupId, {
+    bgRemoved: true,
+    bgRemovedUrl: bgUrl,
+    hasWhiteBackground: false,
+    backgroundColor: undefined,
+    keepBackground: false,
+  });
+}
+
+/**
+ * Print the background after all, on every copy: the file as uploaded.
+ * The guide took a white background off by itself, and once the design was
+ * on the sheet there was no way back (a white box behind black text, meant
+ * for a dark shirt, could only be uploaded again). Nothing to ask the server:
+ * the sheet saves useBgRemoved from bgRemovedUrl, and the print file follows.
+ */
+export function restoreGroupBackground(
+  group: ImageGroup,
+  updateGroup: (groupId: string, updates: Partial<EditorImage>) => void,
+) {
+  updateGroup(group.groupId, { bgRemovedUrl: undefined, keepBackground: true });
+  showToast("Bakgrunden är tillbaka och trycks som en ruta runt motivet.", "success");
 }
 
 /**
@@ -545,11 +576,18 @@ function GroupItem({
                 })
               }
             />
-            <ActionButton
-              label={isRemovingBg ? "Tar bort…" : "Ta bort BG"}
-              onClick={handleRemoveBg}
-              disabled={isRemovingBg || Boolean(image.bgRemovedUrl)}
-            />
+            {image.bgRemovedUrl ? (
+              <ActionButton
+                label="Återställ BG"
+                onClick={() => restoreGroupBackground(group, updateGroup)}
+              />
+            ) : (
+              <ActionButton
+                label={isRemovingBg ? "Tar bort…" : "Ta bort BG"}
+                onClick={handleRemoveBg}
+                disabled={isRemovingBg}
+              />
+            )}
             {!vector && !image.text && (
               <ActionButton
                 label={sharpening ? "Gör skarp…" : "Gör loggan skarp"}
@@ -569,7 +607,12 @@ function GroupItem({
             />
           </div>
 
-          {image.hasWhiteBackground && !image.bgRemovedUrl && !sharpened && (
+          {image.keepBackground && !image.bgRemovedUrl && (
+            <div style={{ fontSize: 11, color: theme.textMuted }}>
+              Bakgrunden trycks som en ruta runt motivet.
+            </div>
+          )}
+          {image.hasWhiteBackground && !image.bgRemovedUrl && !image.keepBackground && !sharpened && (
             <div
               style={{
                 padding: "5px 8px",
