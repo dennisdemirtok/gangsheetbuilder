@@ -424,6 +424,12 @@ const TIGHT = 15;
 const LOOSE = 35;
 /** Alpha below this is not part of the picture. */
 const VISIBLE = 16;
+/**
+ * More see-through than this inside what is visible, and a file has no
+ * background left to take off. A box the design sits on fills its own
+ * outline: a rounded card loses a few per cent at its corners.
+ */
+const SEE_THROUGH_MAX = 0.12;
 
 function distanceAt(data: Buffer, i: number, c: Rgb): number {
   return Math.max(Math.abs(data[i]! - c[0]), Math.abs(data[i + 1]! - c[1]), Math.abs(data[i + 2]! - c[2]));
@@ -465,6 +471,21 @@ function frameColor(
     }
   }
   if (maxX < 0) return null;
+
+  // Already on transparency: then what runs along the edge of the visible
+  // part is the design, not a box around it. #1190's wash-care labels for
+  // dark shirts, white lines and text on transparency with the outer lines
+  // on that edge, were "freed" of their white background on upload and
+  // printed without a line; #1066's name "ELVEDIN", black and cut tight to
+  // its letters, was cleared whole as a black background. A real box
+  // fills the visible part: an EPS's white page inside its transparent
+  // margin, a logo on a black square, a JPG.
+  let seeThrough = 0;
+  for (let y = minY; y <= maxY; y++) {
+    const row = y * w;
+    for (let x = minX; x <= maxX; x++) if (alpha(row + x) < VISIBLE) seeThrough++;
+  }
+  if (seeThrough > (maxX - minX + 1) * (maxY - minY + 1) * SEE_THROUGH_MAX) return null;
 
   const edge: number[] = [];
   for (let x = minX; x <= maxX; x++) edge.push(minY * w + x, maxY * w + x);
