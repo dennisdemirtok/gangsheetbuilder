@@ -17,6 +17,7 @@ import {
   ensureGangSheet,
   buildPlacementsPayload,
   uploadSheetThumbnail,
+  isSheetOrdered,
 } from "../../services/api";
 import {
   cartHasSheets,
@@ -197,19 +198,41 @@ export function AddToCartButton() {
 
       for (const job of jobs) {
         try {
-          const gsId = await ensureGangSheet(
-            useEditorStore.getState().sessionId,
-            job.size.widthMm,
-            job.size.heightMm,
-            job.filmType,
-            asNew ? null : job.gangSheetId,
-          );
-          if (gsId !== job.gangSheetId) useEditorStore.getState().setSheetGangSheetId(job.index, gsId);
-          await saveGangSheet(gsId, buildPlacementsPayload(job.sheetImages, job.size, job.filmType));
-          done++;
-          report(1);
+          const sheetFor = async (current: string | null) => {
+            const id = await ensureGangSheet(
+              useEditorStore.getState().sessionId,
+              job.size.widthMm,
+              job.size.heightMm,
+              job.filmType,
+              current,
+            );
+            if (id !== job.gangSheetId) useEditorStore.getState().setSheetGangSheetId(job.index, id);
+            return id;
+          };
+          const payload = buildPlacementsPayload(job.sheetImages, job.size, job.filmType);
+          const saveAndPrepare = async (id: string) => {
+            await saveGangSheet(id, payload);
+            done++;
+            report(1);
+            return prepareForCart(id, getSheetPrice(job.size.key));
+          };
 
-          const cartData = await prepareForCart(gsId, getSheetPrice(job.size.key));
+          let gsId = await sheetFor(asNew ? null : job.gangSheetId);
+          let cartData: any;
+          const before = done;
+          try {
+            cartData = await saveAndPrepare(gsId);
+          } catch (err) {
+            // The server keeps an ordered sheet as it was paid for, also when
+            // the check above could not tell (a cart that could not be read,
+            // an order placed in another tab). This goes in as a new sheet.
+            if (!isSheetOrdered(err)) throw err;
+            console.warn(`[cart] ${job.name}: sheet ${gsId} is already ordered, adding a new sheet`);
+            done = before;
+            gsId = await sheetFor(null);
+            cartData = await saveAndPrepare(gsId);
+          }
+
           const thumbUrl = await sheetThumbnail(gsId, job);
           done++;
           report(jobs.indexOf(job) === jobs.length - 1 ? 2 : 1);

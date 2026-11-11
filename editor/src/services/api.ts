@@ -18,6 +18,27 @@ function getBaseUrl(): string {
   return getAppProxyUrl();
 }
 
+/** A refused API call: the server's message, its HTTP status and, when it sends one, a code. */
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/**
+ * The server refused to change a sheet that already belongs to an order
+ * (app/lib/ordered-sheet.server.ts). What the customer has on screen then
+ * goes in the cart as a new sheet.
+ */
+export function isSheetOrdered(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 409 && error.code === "sheet_ordered";
+}
+
 async function fetchApi(path: string, options: RequestInit = {}): Promise<any> {
   const base = getBaseUrl();
   const response = await fetch(`${base}${path}`, {
@@ -30,7 +51,11 @@ async function fetchApi(path: string, options: RequestInit = {}): Promise<any> {
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(error.error || `API error: ${response.status}`);
+    throw new ApiError(
+      error.error || `API error: ${response.status}`,
+      response.status,
+      typeof error.code === "string" ? error.code : undefined,
+    );
   }
 
   return response.json();

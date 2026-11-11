@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { resolveVariantId, calculatePrice } from "../lib/pricing.server";
+import { isOrderedSheet, orderedSheetRefusal } from "../lib/ordered-sheet.server";
 
 /**
  * Prepare gang sheet data for adding to Shopify cart.
@@ -26,6 +27,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (!gangSheet || gangSheet.shopDomain !== session.shop) {
       return json({ error: "Not found" }, { status: 404 });
+    }
+
+    // Below, the sheet goes back to "pending" with a new quote: on an ordered
+    // sheet that would undo its place in the print queue. A second cart line
+    // pointing at it would also make one order's job part of another.
+    if (isOrderedSheet(gangSheet)) {
+      return orderedSheetRefusal(gangSheetId, "cart");
     }
 
     if (gangSheet.images.length === 0) {

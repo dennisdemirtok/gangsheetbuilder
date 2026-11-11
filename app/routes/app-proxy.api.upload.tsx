@@ -18,7 +18,22 @@ import {
 } from "../lib/image-processing.server";
 import { pxToMm } from "../lib/constants";
 import prisma from "../db.server";
+import { isOrderedSheet } from "../lib/ordered-sheet.server";
 import { v4 as uuidv4 } from "uuid";
+
+/** The sheet a new upload is linked to: the one named, unless it is already ordered. */
+async function linkableSheetId(gangSheetId: string | null): Promise<string | null> {
+  if (!gangSheetId) return null;
+  const sheet = await prisma.gangSheet.findUnique({
+    where: { id: gangSheetId },
+    select: { shopifyOrderId: true, status: true },
+  });
+  if (sheet && isOrderedSheet(sheet)) {
+    console.warn(`[upload] gang sheet ${gangSheetId} already belongs to an order; design left unlinked`);
+    return null;
+  }
+  return gangSheetId;
+}
 
 /**
  * Handle image upload via multipart/form-data.
@@ -149,11 +164,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const thumbnailBase64 = `data:image/webp;base64,${thumbnail.toString("base64")}`;
     const originalUrlFull = `/api/image/${renderableKey}`;
 
-    // Save to database
+    // Save to database. Not onto an ordered sheet: a builder opened from
+    // "Redigera arket" after checkout still names it. Unlinked, the design
+    // goes to whichever sheet saves it next, here the new one put in the cart.
     const image = await prisma.gangSheetImage.create({
       data: {
-        gangSheetId:
-          gangSheetId && gangSheetId.length > 0 ? gangSheetId : null,
+        gangSheetId: await linkableSheetId(gangSheetId),
         originalUrl: renderableKey,
         thumbnailUrl: thumbnailKey,
         originalFilename: filename,

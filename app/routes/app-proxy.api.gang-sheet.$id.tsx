@@ -5,6 +5,7 @@ import { Prisma } from "@prisma/client";
 import prisma from "../db.server";
 import { designFile } from "../lib/design-row.server";
 import { getPresignedDownloadUrl } from "../lib/r2.server";
+import { isOrderedSheet, orderedSheetRefusal } from "../lib/ordered-sheet.server";
 
 /**
  * Get, update or save a specific gang sheet.
@@ -58,6 +59,12 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
     if (request.method !== "PUT" && request.method !== "PATCH") {
       return json({ error: "Method not allowed" }, { status: 405 });
+    }
+
+    // Paid for: nothing on it changes, not its size, its designs or which
+    // rows it prints from. The builder puts a new sheet in the cart instead.
+    if (isOrderedSheet(gangSheet)) {
+      return orderedSheetRefusal(gangSheetId, "gang-sheet");
     }
 
     const body = await request.json();
