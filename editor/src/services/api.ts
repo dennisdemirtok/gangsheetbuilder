@@ -245,6 +245,20 @@ export async function saveGangSheet(
   });
 }
 
+/**
+ * A database row of its own for a design already on the sheet, so it can
+ * be there at another size too: the save keeps one size per row. Same file,
+ * nothing uploaded. Returns the new row's id.
+ */
+export async function copyDesign(imageId: string): Promise<string> {
+  const { id } = await fetchApi("/api/copy-design", {
+    method: "POST",
+    body: JSON.stringify({ imageId }),
+  });
+  if (typeof id !== "string" || !id) throw new Error("Servern svarade inte som väntat");
+  return id;
+}
+
 // Run auto-build
 export async function autoBuild(data: {
   gangSheetId: string;

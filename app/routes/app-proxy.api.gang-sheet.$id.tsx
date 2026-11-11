@@ -1,8 +1,9 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { Prisma, type GangSheetImage } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import prisma from "../db.server";
+import { designFile } from "../lib/design-row.server";
 import { getPresignedDownloadUrl } from "../lib/r2.server";
 
 /**
@@ -190,23 +191,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   }
 };
 
-
-/** What a copy of a design row shares with it: the file, not its place. */
-function designFile(row: GangSheetImage) {
-  return {
-    originalUrl: row.originalUrl,
-    thumbnailUrl: row.thumbnailUrl,
-    originalFilename: row.originalFilename,
-    mimeType: row.mimeType,
-    fileSizeBytes: row.fileSizeBytes,
-    widthPx: row.widthPx,
-    heightPx: row.heightPx,
-    dpiX: row.dpiX,
-    dpiY: row.dpiY,
-    bgRemoved: row.bgRemoved,
-    bgRemovedUrl: row.bgRemovedUrl,
-  };
-}
 
 /** Hard cap so a malformed client can't write an unbounded blob. */
 const MAX_PLACEMENTS = 2000;

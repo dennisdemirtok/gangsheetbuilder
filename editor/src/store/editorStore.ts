@@ -156,6 +156,17 @@ export interface EditorState {
     options: { floor: SheetSize; keepExisting: boolean },
   ) => { overflow: number; turned: number; size: SheetSize };
   duplicateImage: (id: string) => void;
+  /**
+   * The design of `groupId` once more at another width, as a design of its
+   * own on database row `dbId` (see copyDesign): a chest print and a back
+   * print of one logo without uploading the file twice. Same proportions,
+   * nested around what is on the sheet; the sheet grows when it must.
+   * Null when the group is gone.
+   */
+  addGroupAtSize: (
+    groupId: string,
+    options: { dbId: string; widthMm: number; count: number },
+  ) => { added: number; overflow: number; turned: number; grewTo: SheetSize | null } | null;
   resizeImage: (id: string, widthMm: number, heightMm: number, keepRatio: boolean) => void;
   /**
    * Move a design to a free spot when it now sits on another design or off
@@ -219,8 +230,8 @@ function generateImageId(): string {
  * one group. The save route writes one row per dbId, so two groups on the
  * same row would collapse at export — every copy printed at whichever
  * size happened to be serialized first, at spacing meant for the other.
- * Uploading the same file twice yields two rows, which is how a customer
- * gets one artwork in two sizes.
+ * One artwork in two sizes is two rows: "Lägg till i en annan storlek"
+ * (addGroupAtSize) asks the server for a second row of the same file.
  */
 export function groupKey(img: EditorImage): string {
   return img.dbId ?? img.groupId ?? img.id;
@@ -775,6 +786,40 @@ export const useEditorStore = create<EditorState>()(
         const key = groupKey(img);
         const group = groupImages(state.images).find((g) => g.groupId === key);
         get().setGroupCount(key, (group?.count ?? 1) + 1);
+      },
+
+      addGroupAtSize: (groupId, { dbId, widthMm, count }) => {
+        const state = get();
+        const source = groupImages(state.images).find((g) => g.groupId === groupId)?.master;
+        if (!source) return null;
+        // In proportion to the design as it is on the sheet: its height
+        // follows from the width asked for.
+        const ratio = source.displayHeight / Math.max(0.01, source.displayWidth);
+        const image: EditorImage = {
+          ...source,
+          id: generateImageId(),
+          dbId,
+          groupId: "grp_" + Math.random().toString(36).slice(2, 10),
+          displayWidth: widthMm,
+          displayHeight: widthMm * ratio,
+          positionX: EDGE_MARGIN_MM,
+          positionY: EDGE_MARGIN_MM,
+        };
+        const wanted = Math.max(1, Math.floor(count));
+        const { overflow, turned, size } = get().addDesigns([{ image, count: wanted }], {
+          floor: state.sheetSize,
+          keepExisting: true,
+        });
+        // Picked on the sheet and open in the list, where its size and
+        // count can be changed like any design's.
+        const first = get().images.find((img) => img.dbId === dbId);
+        if (first) set({ selectedImageId: first.id });
+        return {
+          added: wanted - overflow,
+          overflow,
+          turned,
+          grewTo: size.heightMm > state.sheetSize.heightMm ? size : null,
+        };
       },
 
       /**

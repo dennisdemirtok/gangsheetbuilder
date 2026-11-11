@@ -83,7 +83,18 @@
         });
       }
 
+      // "Lägg till i en annan storlek": a new row id for the same file.
+      if (url.includes("/api/copy-design")) {
+        const { imageId } = JSON.parse((init && init.body) || "{}");
+        const id = "dbcopy_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+        if (uploadedReal[imageId]) uploadedReal[id] = uploadedReal[imageId];
+        if (blackBoxRemoved[imageId]) blackBoxRemoved[id] = blackBoxRemoved[imageId];
+        return new Promise((r) => setTimeout(r, 300)).then(() => json({ id }));
+      }
+
       if (url.includes("/api/gang-sheet")) {
+        // The last save, kept on window.__lastSave to look at.
+        if (init && init.method === "PUT") window.__lastSave = JSON.parse(init.body || "{}");
         return json({ gangSheet: { id: "gs_dev_1" }, ok: true });
       }
 

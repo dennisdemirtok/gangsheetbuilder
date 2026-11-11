@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useEditorStore,
   groupImages,
@@ -19,6 +19,7 @@ import { theme } from "../../styles/theme";
 import { useSheetStats } from "../../utils/sheetStats";
 import { showToast } from "../../utils/toast";
 import { NumberInput } from "../Fields/NumberInput";
+import { AddSizeForm, ADD_SIZE_LABEL } from "./AddSize";
 
 export function ImageList() {
   const { images, selectedImageId } = useEditorStore();
@@ -267,6 +268,11 @@ function GroupItem({
   const [sharpening, setSharpening] = useState(false);
   const [sharpened, setSharpened] = useState<SharpenedDesign | null>(null);
   const [aspectLocked, setAspectLocked] = useState(true);
+  const [addingSize, setAddingSize] = useState(false);
+  // A half-filled "another size" closes with the row, not reopens with it.
+  useEffect(() => {
+    if (!isSelected) setAddingSize(false);
+  }, [isSelected]);
 
   // A vector is drawn again at its print size: no DPI to show or warn about.
   const vector = isVectorDesign(image);
@@ -523,6 +529,16 @@ function GroupItem({
               </svg>
             </button>
           </div>
+
+          {/* The same design at another size, as a design of its own:
+              the fields above change every copy of this one. */}
+          {addingSize ? (
+            <AddSizeForm group={group} onClose={() => setAddingSize(false)} />
+          ) : (
+            <button onClick={() => setAddingSize(true)} style={S.addSize}>
+              + {ADD_SIZE_LABEL}
+            </button>
+          )}
 
           {/* Count */}
           <div>
@@ -915,6 +931,18 @@ const S: Record<string, React.CSSProperties> = {
     fontSize: 16,
     lineHeight: 1,
     flexShrink: 0,
+  },
+  addSize: {
+    padding: "7px 8px",
+    border: `1px dashed ${theme.borderHover}`,
+    borderRadius: 6,
+    background: "transparent",
+    color: theme.text,
+    fontSize: 11.5,
+    fontWeight: 600,
+    fontFamily: theme.fontFamily,
+    cursor: "pointer",
+    textAlign: "left",
   },
   roomHint: {
     margin: "4px 0 0",

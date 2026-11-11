@@ -27,6 +27,7 @@ import {
   SharpenCompare,
 } from "./ImageList";
 import type { SharpenedDesign } from "../../services/api";
+import { AddSizeForm, ADD_SIZE_LABEL } from "./AddSize";
 
 /**
  * The phone's list of designs: one card per design with how many, how big
@@ -170,6 +171,7 @@ function MoreActions({ group }: { group: ImageGroup }) {
   const autoFillGroup = useEditorStore((s) => s.autoFillGroup);
   const [busy, setBusy] = useState<"bg" | "crop" | "sharpen" | null>(null);
   const [sharpened, setSharpened] = useState<SharpenedDesign | null>(null);
+  const [addingSize, setAddingSize] = useState(false);
   const image = group.master;
 
   // How many more copies fit in the space left on the sheet.
@@ -203,8 +205,17 @@ function MoreActions({ group }: { group: ImageGroup }) {
     }
   };
 
+  // Changing the size above changes every copy; this adds the design once
+  // more at another size, as a design of its own.
+  if (addingSize) {
+    return <AddSizeForm group={group} onClose={() => setAddingSize(false)} touch />;
+  }
+
   return (
     <>
+      <button type="button" onClick={() => setAddingSize(true)} style={R.chipButton}>
+        + {ADD_SIZE_LABEL}
+      </button>
       <button
         type="button"
         onClick={() => updateGroup(group.groupId, { rotation: (image.rotation + 90) % 360 })}
