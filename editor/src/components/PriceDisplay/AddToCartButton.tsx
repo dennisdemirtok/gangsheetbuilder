@@ -3,10 +3,12 @@ import {
   useEditorStore,
   getSheetsTotalPrice,
   groupImages,
+  handOffToCart,
   type EditorImage,
   type SheetEntry,
   type SheetSize,
 } from "../../store/editorStore";
+import { editingCartLines } from "../../store/persistence";
 import { computeSheetStats, type SheetIssue } from "../../utils/sheetStats";
 import { getSheetCartLine, getSheetPrice } from "../../services/storefrontPrices";
 import {
@@ -17,6 +19,7 @@ import {
   uploadSheetThumbnail,
 } from "../../services/api";
 import {
+  cartHasSheets,
   clearEditTarget,
   getEditTargets,
   removeCartLinesForSheets,
@@ -186,6 +189,12 @@ export function AddToCartButton() {
       const items: Array<{ id: string; quantity: number; properties: Record<string, string> }> = [];
       const confirmedAt = new Date().toISOString();
 
+      // Opened from "Redigera arket", but that line has left the cart: it
+      // was ordered, or removed. Then these are new sheets; saving over the
+      // old ones could change a sheet that is already paid for.
+      const editing = editingCartLines();
+      const asNew = editing.length > 0 && !(await cartHasSheets(editing));
+
       for (const job of jobs) {
         try {
           const gsId = await ensureGangSheet(
@@ -193,7 +202,7 @@ export function AddToCartButton() {
             job.size.widthMm,
             job.size.heightMm,
             job.filmType,
-            job.gangSheetId,
+            asNew ? null : job.gangSheetId,
           );
           if (gsId !== job.gangSheetId) useEditorStore.getState().setSheetGangSheetId(job.index, gsId);
           await saveGangSheet(gsId, buildPlacementsPayload(job.sheetImages, job.size, job.filmType));
@@ -250,6 +259,13 @@ export function AddToCartButton() {
       });
       if (!response.ok) throw new Error("Varukorgen svarade inte. Försök igen om en stund.");
 
+      // The sheets are the cart's now. A later visit starts clean instead of
+      // offering them again, where a second "Lägg i varukorg" would save
+      // over or replace the line; "Redigera arket" opens the copy kept here.
+      handOffToCart(
+        items.map((item) => item.properties?._gang_sheet_id).filter(Boolean),
+        replacedIds,
+      );
       clearEditTarget();
       setPhase({ kind: "added", jobs, name });
       window.setTimeout(() => {

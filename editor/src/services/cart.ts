@@ -35,6 +35,24 @@ export function clearEditTarget() {
 }
 
 /**
+ * True when the cart has a line of one of these sheets. A cart that cannot
+ * be read counts as yes: that keeps the edit replacing its line, as before.
+ */
+export async function cartHasSheets(sheetIds: string[]): Promise<boolean> {
+  const wanted = new Set(sheetIds.filter(Boolean));
+  if (wanted.size === 0) return false;
+  try {
+    const cart = await fetch(`${root()}cart.js`).then((response) => response.json());
+    return (cart.items || []).some((item: any) => {
+      const props = item.properties || {};
+      return wanted.has(props._gang_sheet_id) || wanted.has(props._sheet_id);
+    });
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Remove every cart line that belongs to one of these sheets.
  * Runs before the new line is added, so the customer never sees both.
  */

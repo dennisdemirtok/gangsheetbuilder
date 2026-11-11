@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
+import { persist } from "zustand/middleware";
+import { STATE_VERSION, editorStorage, followOtherTabs, moveToCart, persistedPart } from "./persistence";
 import {
   DEFAULT_GAP_MM,
   EDGE_MARGIN_MM,
@@ -1148,8 +1149,33 @@ export const useEditorStore = create<EditorState>()(
         }),
     }),
     {
+      // Kept between visits; see persistence.ts for where and for how long.
       name: "gangsheet-editor-state",
-      storage: createJSONStorage(() => sessionStorage),
+      version: STATE_VERSION,
+      storage: editorStorage,
+      partialize: persistedPart,
     },
   ),
 );
+
+/**
+ * The sheets on screen just went in the cart as the lines of `lineIds`
+ * (gang sheet ids), replacing those of `replacedIds`. A copy stays for
+ * "Redigera arket"; the builder starts clean, or goes back to the draft
+ * that was waiting while a cart line was edited.
+ */
+export function handOffToCart(lineIds: string[], replacedIds: string[]) {
+  const draft = moveToCart(persistedPart(useEditorStore.getState()), lineIds, replacedIds);
+  if (draft) useEditorStore.setState({ ...draft, selectedImageId: null, lastArrange: null, lastFillShortfall: null });
+  else useEditorStore.getState().reset();
+}
+
+followOtherTabs((saved) => {
+  if (!saved) {
+    useEditorStore.getState().reset();
+    return;
+  }
+  const { selectedImageId } = useEditorStore.getState();
+  const stillThere = saved.images.some((img) => img.id === selectedImageId);
+  useEditorStore.setState({ ...saved, selectedImageId: stillThere ? selectedImageId : null, lastArrange: null });
+});
