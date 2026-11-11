@@ -180,8 +180,12 @@ async function drawForPrint(
  * #1161's logos: its page size means nothing, and in Poland a motif drawn
  * here cannot lose a font or be scaled by eye.
  *
- * Returns what the shop should know when a vector had to stay as it is: such
- * a file can still be fine in their software, so it does not stop the order.
+ * The file always measures the size ordered, and the job's size stays as the
+ * customer ordered it (see fitToPrintSize).
+ *
+ * Returns what we should know: a vector that had to stay as it is (such a
+ * file can still be fine in their software, so it does not stop the order),
+ * or a picture of another shape than the box, which fills only part of it.
  */
 export async function setPrintSize(jobId: string): Promise<string | null> {
   const job = await prisma.gangSheet.findUniqueOrThrow({
@@ -213,15 +217,15 @@ export async function setPrintSize(jobId: string): Promise<string | null> {
     }
   }
 
-  const fitted = await fitToPrintSize(picture, job);
+  // The file always measures the size ordered; the job's size is never
+  // changed here. #1204's A5 sheets became 14.4 × 21 cm when it was.
+  const fitted = await fitToPrintSize(picture, job, { trimMargin: vector });
   if (!vector && !fitted.changed) return null;
 
-  // A motif of another shape than the box: the job says what really prints,
-  // so the email and the file name agree with the file.
-  const reshaped = fitted.widthMm < job.widthMm * 0.98 || fitted.heightMm < job.heightMm * 0.98;
-  const widthMm = reshaped ? Math.round(fitted.widthMm) : job.widthMm;
-  const heightMm = reshaped ? Math.round(fitted.heightMm) : job.heightMm;
-  if (reshaped) await prisma.gangSheet.update({ where: { id: jobId }, data: { widthMm, heightMm } });
+  // A picture of another shape than the box prints as large as fits, the rest
+  // of the box transparent. Worth a look before the print shop gets it.
+  const motif = `${(fitted.motifWidthMm / 10).toFixed(1)} × ${(fitted.motifHeightMm / 10).toFixed(1)} cm`;
+  const otherShape = fitted.motifWidthMm < job.widthMm * 0.98 || fitted.motifHeightMm < job.heightMm * 0.98;
 
   const name = (job.images[0]?.originalFilename || "motif").replace(/\.[^.]+$/, "");
   await storeJobFile({ jobId, buffer: fitted.png, filename: `${name}.png`, contentType: "image/png" });
@@ -229,12 +233,14 @@ export async function setPrintSize(jobId: string): Promise<string | null> {
     data: {
       gangSheetId: jobId,
       author: job.shopDomain,
-      body: `Print size set in the file: ${widthMm / 10} × ${heightMm / 10} cm at ${Math.round(fitted.dpi)} DPI${
-        reshaped ? ` (box ordered: ${ordered})` : ""
+      body: `Print size set in the file: ${ordered} at ${Math.round(fitted.dpi)} DPI${
+        otherShape ? ` (the picture is ${motif} of it, the rest transparent)` : ""
       } · was ${file.url}`,
     },
   });
-  return null;
+  return otherShape
+    ? `The ${ordered} file is the size ordered, but the picture has another shape: it fills ${motif} of it and the rest is transparent.`
+    : null;
 }
 
 /**

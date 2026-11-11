@@ -245,47 +245,101 @@ export async function generateThumbnail(
 const PRINT_DPI = 600;
 /** Past this a picture only costs storage and time: it is brought down to PRINT_DPI. */
 const MAX_PRINT_DPI = 1200;
+/** Just over the cap keeps its own pixels: #1204's A5 sheets were 1200.7 DPI. */
+const KEEP_DPI_UP_TO = MAX_PRINT_DPI * 1.05;
 
 /**
- * A cut job's picture as the print file: a PNG that measures what was ordered.
+ * A cut job's picture as the print file: a PNG that measures exactly the size
+ * the customer ordered, never another.
  *
  * The print shop's software takes the size from the file. #1156 ordered 27 cm
  * and got 37 cm: 1041 px at the 72 DPI phones and web tools write is 36.7 cm,
  * and the 27 in the email never reached the printer. So the file's own DPI
- * has to say the ordered size. The pixels stay; only the transparent margin
- * goes, since the ordered size is the motif's and not the margin's.
+ * has to say the ordered size.
  *
- * The motif fits inside the ordered box, as in applyFix: a wide logo in a
- * 10 × 10 cm box prints 10 cm wide and only as high as its shape.
- * `changed` is false when the file already says this.
+ * The ordered size is the whole picture's. The By Size page takes the width
+ * and height from the uploaded file, transparent margin and all, and so does
+ * the resolution check the customer sees. #1204's A5 sheets came with a
+ * margin of their own; cutting it off made them 14.4 × 21 cm with every
+ * sticker 2.5 % bigger and touching the cut. So the margin stays. Only a
+ * vector's page is cut away (`trimMargin`): its page size means nothing, and
+ * the customer typed the size of the motif.
+ *
+ * The picture keeps its shape and is as large as fits in the box. When its
+ * shape is not quite the box's (a size rounded to 0.1 cm, or a motif typed
+ * as 10 × 10 cm that is 10 × 4), the rest of the box is transparent, so the
+ * file still measures the box. `motifWidthMm` / `motifHeightMm` say what
+ * part of it is the picture. `changed` is false when the file already says
+ * all this.
  */
 export async function fitToPrintSize(
   buffer: Buffer,
   box: { widthMm: number; heightMm: number },
-): Promise<{ png: Buffer; changed: boolean; dpi: number; widthMm: number; heightMm: number }> {
+  options: { trimMargin?: boolean } = {},
+): Promise<{
+  png: Buffer;
+  changed: boolean;
+  dpi: number;
+  widthMm: number;
+  heightMm: number;
+  motifWidthMm: number;
+  motifHeightMm: number;
+}> {
   const open = (input: Buffer) => sharp(input, { limitInputPixels: false });
   const original = await open(buffer).metadata();
-  const upright = await open(buffer).rotate().png().toBuffer();
+  // The profile goes along: dropped here, a 16-bit PNG's colours were
+  // recomputed wrongly. #1204's orange [254,138,91] became [238,144,101] and
+  // its lilac lost blue in the file sent to Poland.
+  const upright = await open(buffer).rotate().keepIccProfile().png().toBuffer();
   const { width, height } = await open(upright).metadata();
-  const art = await artworkBox(upright);
+  const whole = { left: 0, top: 0, width, height };
+  const art = options.trimMargin ? await artworkBox(upright) : whole;
 
-  const dpi = Math.max(art.width / (box.widthMm / 25.4), art.height / (box.heightMm / 25.4));
-  const size = { widthMm: (art.width / dpi) * 25.4, heightMm: (art.height / dpi) * 25.4 };
-  // A sliver is not worth another file: drawn smaller, edges soften by a pixel.
-  const uncut = art.width >= width - 2 && art.height >= height - 2;
-  if (original.format === "png" && uncut && dpi <= MAX_PRINT_DPI && Math.abs((original.density ?? 0) / dpi - 1) < 0.01) {
-    return { ...size, dpi, png: buffer, changed: false };
+  const boxInches = { width: box.widthMm / 25.4, height: box.heightMm / 25.4 };
+  const dpi = Math.max(art.width / boxInches.width, art.height / boxInches.height);
+  // #1148: a 22 016 px JPEG for an 8 cm logo is 7000 DPI and a 91 MB PNG.
+  const outDpi = dpi > KEEP_DPI_UP_TO ? PRINT_DPI : dpi;
+  const scale = outDpi / dpi;
+  const canvas = {
+    width: Math.max(1, Math.round(boxInches.width * outDpi)),
+    height: Math.max(1, Math.round(boxInches.height * outDpi)),
+  };
+  const picture = {
+    width: Math.min(canvas.width, Math.max(1, Math.round(art.width * scale))),
+    height: Math.min(canvas.height, Math.max(1, Math.round(art.height * scale))),
+  };
+  const sizes = {
+    dpi: outDpi,
+    widthMm: box.widthMm,
+    heightMm: box.heightMm,
+    motifWidthMm: (picture.width / outDpi) * 25.4,
+    motifHeightMm: (picture.height / outDpi) * 25.4,
+  };
+
+  const asIs =
+    art === whole && picture.width === width && picture.height === height && canvas.width === width && canvas.height === height;
+  if (original.format === "png" && asIs && Math.abs((original.density ?? 0) / outDpi - 1) < 0.001) {
+    return { ...sizes, png: buffer, changed: false };
   }
 
-  // #1148: a 22 016 px JPEG for an 8 cm logo is 7000 DPI and a 91 MB PNG.
-  const outDpi = dpi > MAX_PRINT_DPI ? PRINT_DPI : dpi;
-  const png = await open(upright)
-    .extract(art)
-    .resize({ width: Math.round((art.width * outDpi) / dpi), height: Math.round((art.height * outDpi) / dpi), fit: "fill" })
-    .withMetadata({ density: outDpi })
-    .png()
-    .toBuffer();
-  return { ...size, dpi: outDpi, png, changed: true };
+  let pipeline = open(upright);
+  if (art !== whole) pipeline = pipeline.extract(art);
+  if (picture.width !== art.width || picture.height !== art.height) {
+    pipeline = pipeline.resize({ width: picture.width, height: picture.height, fit: "fill" });
+  }
+  const left = Math.floor((canvas.width - picture.width) / 2);
+  const top = Math.floor((canvas.height - picture.height) / 2);
+  if (canvas.width !== picture.width || canvas.height !== picture.height) {
+    pipeline = pipeline.ensureAlpha().extend({
+      left,
+      right: canvas.width - picture.width - left,
+      top,
+      bottom: canvas.height - picture.height - top,
+      background: { r: 0, g: 0, b: 0, alpha: 0 },
+    });
+  }
+  const png = await pipeline.withMetadata({ density: outDpi }).png().toBuffer();
+  return { ...sizes, png, changed: true };
 }
 
 /** Where a PNG's motif sits: all of it, less any transparent margin. */
