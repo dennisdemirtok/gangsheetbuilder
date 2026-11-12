@@ -5,6 +5,7 @@ import { uploadFile, storageKey } from "../lib/r2.server";
 import { validateFile } from "../lib/file-validation.server";
 import {
   extractMetadata,
+  eightBitPicture,
   generateThumbnail,
   convertToRaster,
   needsGhostscript,
@@ -97,6 +98,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
     }
 
+    // A 16-bit picture prints from an 8-bit copy: sharp gets its colours
+    // wrong in every later step otherwise (see eightBitPicture).
+    const eightBit = await eightBitPicture(processBuffer);
+    const madeEightBit = eightBit !== processBuffer;
+    processBuffer = eightBit;
+
     // Cut empty transparent margins: the customer sizes the file, and the
     // margin used to shrink the printed logo and take film.
     let trimmedEdges = false;
@@ -132,8 +139,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const thumbnailKey = storageKey(sessionId, imageId, "thumbnail", "webp");
     // Also store the converted PNG if it was vector
     // The PNG the design prints from, when it is not the upload itself: a
-    // rendered vector, or a file whose empty edges were cut away.
-    const usesConverted = convertedFromVector || trimmedEdges;
+    // rendered vector, a file whose empty edges were cut away, or a 16-bit
+    // picture made 8-bit.
+    const usesConverted = convertedFromVector || trimmedEdges || madeEightBit;
     const convertedKey = usesConverted
       ? storageKey(sessionId, imageId, "converted", "png")
       : null;

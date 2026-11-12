@@ -6,6 +6,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   backgroundColorOf,
+  eightBitPicture,
   embedsPictures,
   needsGhostscript,
   removeAllOfColor,
@@ -70,7 +71,7 @@ export async function motifRaster(buffer: Buffer, filename: string, dpi = 300): 
     const svg = new Resvg(buffer, { dpi, fitTo: { mode: "zoom", value: dpi / 96 }, background: "rgba(0,0,0,0)" });
     return Buffer.from(svg.render().asPng());
   }
-  return sharp(buffer, { limitInputPixels: false, animated: false }).rotate().png().toBuffer();
+  return sharp(await eightBitPicture(buffer), { limitInputPixels: false, animated: false }).rotate().png().toBuffer();
 }
 
 /**
@@ -213,7 +214,10 @@ async function shareOfColor(png: Buffer, color: Rgb3): Promise<number> {
  * as it is, so the builder's "Ta bort BG" uses it as well.
  */
 export async function cleanRim(original: Buffer, cleared: Buffer): Promise<Buffer> {
-  const src = await sharp(original, { limitInputPixels: false }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const src = await sharp(await eightBitPicture(original), { limitInputPixels: false })
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
   const { data: out, info } = await sharp(cleared, { limitInputPixels: false }).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
   const W = info.width;
   const H = info.height;

@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import prisma from "../db.server";
 import { downloadFile, uploadFile } from "./r2.server";
-import { artworkBox, convertToRaster, fitToPrintSize, isBlank, svgTextFonts } from "./image-processing.server";
+import { artworkBox, convertToRaster, eightBitPicture, fitToPrintSize, isBlank, svgTextFonts } from "./image-processing.server";
 import { motifRaster } from "./motif-cleanup.server";
 
 /**
@@ -85,7 +85,8 @@ export async function storeJobFile(options: {
   const preview = await renderPreview(buffer, ext);
   let previewKey: string | null = null;
   if (preview.png) {
-    const webp = await sharp(preview.png, { limitInputPixels: false })
+    // The order page judges the file's colours by this preview.
+    const webp = await sharp(await eightBitPicture(preview.png), { limitInputPixels: false })
       .resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true })
       .webp({ quality: 85 })
       .toBuffer();

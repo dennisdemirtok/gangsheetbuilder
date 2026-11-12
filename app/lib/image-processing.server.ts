@@ -24,6 +24,36 @@ export interface ImageMetadata {
 }
 
 /**
+ * A customer's picture as sharp can work on it without changing its
+ * colours: a 16-bit RGB picture becomes the same picture as an 8-bit PNG,
+ * colour profile, orientation and DPI included; anything else comes back as
+ * it is. Run it on a picture before any sharp step that writes or reads its
+ * pixels.
+ *
+ * sharp 0.34 works on a 16-bit RGB picture with a colour profile in Display
+ * P3 and writes those P3 numbers out as if they were sRGB, unless the same
+ * step keeps the profile. #1204's A5 sheets, 16-bit PNGs in sRGB, had their
+ * orange [254,138,91] turn [238,144,101] (up to 20 levels off) and their
+ * lilac lose 4 levels of blue. The other way round, `withMetadata()` asks
+ * for sRGB, and on a 16-bit picture without a profile sharp takes its sRGB
+ * numbers for P3: up to 33 levels off. An 8-bit picture sharp converts
+ * right, so every later step gets one.
+ */
+export async function eightBitPicture(buffer: Buffer): Promise<Buffer> {
+  const meta = await sharp(buffer, { limitInputPixels: false }).metadata().catch(() => null);
+  if (meta?.space !== "rgb16") return buffer;
+  // Keeping the profile is what makes sharp leave the numbers alone here.
+  // Asking for sRGB instead goes through 8-bit P3 and moves them by 1.
+  const picture = sharp(buffer, { limitInputPixels: false }).keepMetadata();
+  try {
+    return await picture.png().toBuffer();
+  } catch (error) {
+    console.warn("[image] Could not make a 16-bit picture 8-bit:", (error as Error).message);
+    return buffer;
+  }
+}
+
+/**
  * Extract metadata (dimensions, DPI, format, background analysis) from an image buffer.
  */
 export async function extractMetadata(buffer: Buffer): Promise<ImageMetadata> {
@@ -60,7 +90,7 @@ export async function extractMetadata(buffer: Buffer): Promise<ImageMetadata> {
  */
 async function detectBackground(buffer: Buffer): Promise<Rgb | null> {
   try {
-    const { data, info } = await sharp(buffer, { limitInputPixels: false })
+    const { data, info } = await sharp(await eightBitPicture(buffer), { limitInputPixels: false })
       .resize({ width: 600, height: 600, fit: "inside", withoutEnlargement: true })
       .ensureAlpha()
       .raw()
@@ -236,7 +266,7 @@ export async function generateThumbnail(
   buffer: Buffer,
   maxWidth: number = 800,
 ): Promise<Buffer> {
-  return sharp(buffer)
+  return sharp(await eightBitPicture(buffer))
     .resize({ width: maxWidth, withoutEnlargement: true })
     .webp({ quality: 80 })
     .toBuffer();
@@ -381,7 +411,7 @@ export async function convertToPng(buffer: Buffer): Promise<Buffer> {
  * fade out instead of leaving a halo.
  */
 export async function removeBackground(buffer: Buffer): Promise<Buffer> {
-  const img = sharp(buffer, { limitInputPixels: false });
+  const img = sharp(await eightBitPicture(buffer), { limitInputPixels: false });
   const meta = await img.metadata();
   if (!meta.width || !meta.height) return buffer;
 
@@ -418,8 +448,8 @@ export async function trimTransparentEdges(
   if (!meta.hasAlpha || width === 0 || height === 0) return { buffer, trimmed: false, width, height };
 
   // Against full transparency, so a logo touching the top-left corner is
-  // not taken for background.
-  const { data, info } = await sharp(buffer, { limitInputPixels: false })
+  // not taken for background. The cut file is what prints.
+  const { data, info } = await sharp(await eightBitPicture(buffer), { limitInputPixels: false })
     .trim({ background: { r: 0, g: 0, b: 0, alpha: 0 }, threshold: 10 })
     .png()
     .toBuffer({ resolveWithObject: true })
@@ -438,7 +468,7 @@ export async function trimTransparentEdges(
  * design on transparency).
  */
 export async function backgroundColorOf(buffer: Buffer): Promise<Rgb | null> {
-  const { data, info } = await sharp(buffer, { limitInputPixels: false })
+  const { data, info } = await sharp(await eightBitPicture(buffer), { limitInputPixels: false })
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
@@ -453,7 +483,7 @@ export async function backgroundColorOf(buffer: Buffer): Promise<Rgb | null> {
  * `only` when given.
  */
 export async function removeAllOfColor(buffer: Buffer, only?: Rgb): Promise<Buffer> {
-  const { data, info } = await sharp(buffer, { limitInputPixels: false })
+  const { data, info } = await sharp(await eightBitPicture(buffer), { limitInputPixels: false })
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
@@ -681,7 +711,7 @@ export async function renderPlacedImage(img: {
   flipY: boolean;
 }): Promise<Buffer> {
   // Pass 1: resize to the unrotated display size.
-  const resized = await sharp(img.buffer, { limitInputPixels: false })
+  const resized = await sharp(await eightBitPicture(img.buffer), { limitInputPixels: false })
     .resize(img.width, img.height, { fit: "fill" })
     .ensureAlpha()
     .png()

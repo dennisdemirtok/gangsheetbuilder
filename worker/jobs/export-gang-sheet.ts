@@ -13,6 +13,7 @@ import {
 import { storeJobFile } from "../../app/lib/job-file.server";
 import {
   convertToRaster,
+  eightBitPicture,
   removeAllOfColor,
   removeBackground,
   renderSvg,
@@ -190,7 +191,9 @@ export async function exportGangSheetJob(data: ExportJobData): Promise<void> {
     const imageKey = resolveRasterKey(
       image.bgRemoved && image.bgRemovedUrl ? image.bgRemovedUrl : image.originalUrl,
     );
-    let buffer = await downloadFromR2(imageKey);
+    // Once here, not in every render: a 16-bit picture's colours come out
+    // wrong from sharp otherwise (see eightBitPicture).
+    let buffer = await eightBitPicture(await downloadFromR2(imageKey));
 
     const targetWidth = mmToPx(image.displayWidth);
     const targetHeight = mmToPx(image.displayHeight);

@@ -2,7 +2,7 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
 import { downloadFile, uploadFile, storageKey } from "../lib/r2.server";
-import { removeAllOfColor, removeBackground } from "../lib/image-processing.server";
+import { eightBitPicture, removeAllOfColor, removeBackground } from "../lib/image-processing.server";
 import { cleanRim } from "../lib/motif-cleanup.server";
 import { resolveRasterKey } from "../lib/placement";
 import prisma from "../db.server";
@@ -54,8 +54,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
 
     // The raster the design prints from: an EPS/AI original is a vector
-    // sharp cannot read, so use the PNG it was converted to at upload.
-    const originalBuffer = await downloadFile(resolveRasterKey(image.originalUrl));
+    // sharp cannot read, so use the PNG it was converted to at upload. Made
+    // 8-bit once, so each step below keeps a 16-bit picture's colours.
+    const originalBuffer = await eightBitPicture(await downloadFile(resolveRasterKey(image.originalUrl)));
 
     let resultBuffer: Buffer;
 

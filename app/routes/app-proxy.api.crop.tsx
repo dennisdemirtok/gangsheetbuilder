@@ -3,6 +3,7 @@ import { json } from "@remix-run/node";
 import sharp from "sharp";
 import { authenticate } from "../shopify.server";
 import { downloadFile, uploadFile } from "../lib/r2.server";
+import { eightBitPicture } from "../lib/image-processing.server";
 import prisma from "../db.server";
 import { pxToMm } from "../lib/constants";
 
@@ -33,8 +34,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     // Download original
     const buffer = await downloadFile(image.originalUrl);
 
-    // Trim whitespace/transparency
-    const trimmed = await sharp(buffer)
+    // Trim whitespace/transparency. The cropped file is what the builder
+    // places and prints from.
+    const trimmed = await sharp(await eightBitPicture(buffer))
       .trim({ threshold: 10 })
       .png()
       .toBuffer();
