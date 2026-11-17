@@ -157,7 +157,7 @@ const MAX_VECTOR_PIXELS = 60_000_000;
  * page says nothing about that: logo sites hand out 2500 px squares with the
  * logo somewhere inside, so a first look finds the motif and sets the scale.
  */
-async function drawForPrint(
+export async function drawForPrint(
   buffer: Buffer,
   format: string,
   box: { widthMm: number; heightMm: number },

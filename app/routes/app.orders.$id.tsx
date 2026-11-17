@@ -567,7 +567,9 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     const lengths = result.sheets.map((x) => `${x.heightMm / 10} cm`).join(" + ");
     return json({
       success: true,
-      notice: `Combined ${cutJobCount(jobsCombined)} (${pieces} motifs) into ${result.sheets.length > 1 ? `${result.sheets.length} sheets` : "one sheet"}, ${lengths}. The print file is being made.`,
+      notice: `Combined ${cutJobCount(jobsCombined)} (${pieces} motifs) into ${result.sheets.length > 1 ? `${result.sheets.length} sheets` : "one sheet"}, ${lengths}.${
+        result.reshaped.length > 0 ? ` ${result.reshaped.length} kept their own shape inside the size ordered, see the note.` : ""
+      } The print file is being made.`,
       errors: result.skipped.length > 0 ? [`Left as cut jobs: ${result.skipped.join(", ")}`] : undefined,
     });
   }
