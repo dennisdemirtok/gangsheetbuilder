@@ -39,12 +39,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
    */
   const real = { shopDomain, shopifyOrderId: { not: null } };
 
-  const [counts, month, shippedThisMonth, upNext] = await Promise.all([
+  const [counts, month, shippedThisMonth, upNext, builder] = await Promise.all([
     orderStatusCounts(shopDomain),
     // Film is summed per job: a cut job's motifs use area, not height.
     // Cut jobs combined into a sheet use that sheet's film.
     prisma.gangSheet.findMany({
-      where: { ...real, createdAt: { gte: thirtyDaysAgo }, mergedIntoId: null },
+      where: {
+        ...real,
+        mergedIntoId: null,
+        // Ordered in the last 30 days, not started in the builder then.
+        OR: [
+          { orderedAt: { gte: thirtyDaysAgo } },
+          { orderedAt: null, createdAt: { gte: thirtyDaysAgo } },
+        ],
+      },
       select: { shopifyOrderId: true, kind: true, widthMm: true, heightMm: true, lineQuantity: true },
     }),
     prisma.gangSheet.findMany({
@@ -55,6 +63,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     // What to act on, oldest first: ready to print and not on hold. Orders
     // with the print shop used to be listed too, with nothing to do about them.
     listOrders({ shopDomain, status: "exported", pageSize: 6, oldestFirst: true }),
+    builderActivity(shopDomain),
   ]);
   const sales = await salesSince(admin, thirtyDaysAgo);
 
@@ -79,6 +88,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       shipped: shippedThisMonth.length,
       sales,
     },
+    builder,
     upNext: upNext.rows.map((row) => {
       const own = jobs.filter((j) => j.shopifyOrderId === row.orderId);
       return {
@@ -89,11 +99,73 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         size: own.length === 1 ? jobSize(own[0]) : `${own.length} print jobs`,
         filmType: "standard",
         status: row.status,
-        age: timeAgo(row.createdAt, now),
+        age: timeAgo(row.orderedAt, now),
       };
     }),
   });
 };
+
+type Period = "today" | "yesterday" | "week";
+
+/**
+ * Sheets customers started in the gang sheet builder and sheets they
+ * ordered, today, yesterday and the last 7 days (Swedish days), with the
+ * average time from starting a sheet to ordering it. Only the builder's own
+ * sheets ("gs_" sessions): not ready-sheet uploads, Namn och Siffror, cut
+ * jobs, combined sheets or sheets made by hand. A sheet exists from the
+ * customer's first upload or text, not from opening the page.
+ */
+async function builderActivity(shopDomain: string) {
+  const rows = await prisma.$queryRaw<
+    { period: Period; started: number; ordered: number; avg_hours: number | null }[]
+  >`
+    WITH t AS (SELECT date_trunc('day', now() AT TIME ZONE 'Europe/Stockholm') AS today),
+    s AS (
+      SELECT (created_at AT TIME ZONE 'UTC') AT TIME ZONE 'Europe/Stockholm' AS started,
+             (ordered_at AT TIME ZONE 'UTC') AT TIME ZONE 'Europe/Stockholm' AS ordered,
+             greatest(0, extract(epoch FROM ordered_at - created_at) / 3600) AS hours
+      FROM gangsheet_gang_sheet
+      WHERE shop_domain = ${shopDomain}
+        AND kind = 'gang_sheet'
+        AND left(session_id, 3) = 'gs_'
+        AND (created_at >= (now() AT TIME ZONE 'UTC') - interval '9 days'
+             OR ordered_at >= (now() AT TIME ZONE 'UTC') - interval '9 days')
+    ),
+    p(period, since, until) AS (
+      SELECT 'today', today, today + interval '1 day' FROM t
+      UNION ALL SELECT 'yesterday', today - interval '1 day', today FROM t
+      UNION ALL SELECT 'week', today - interval '6 days', today + interval '1 day' FROM t
+    )
+    SELECT p.period,
+           (SELECT count(*) FROM s WHERE started >= p.since AND started < p.until)::int AS started,
+           (SELECT count(*) FROM s WHERE ordered >= p.since AND ordered < p.until)::int AS ordered,
+           (SELECT avg(hours) FROM s WHERE ordered >= p.since AND ordered < p.until)::float AS avg_hours
+    FROM p`;
+  const of = (period: Period) => {
+    const row = rows.find((r) => r.period === period);
+    return {
+      started: row?.started ?? 0,
+      ordered: row?.ordered ?? 0,
+      avgHours: row?.avg_hours ?? null,
+    };
+  };
+  return { today: of("today"), yesterday: of("yesterday"), week: of("week") };
+}
+
+/** "3 h" under a day, else "2.4 days"; "–" when nothing was ordered. */
+function timeToOrder(hours: number | null): string {
+  if (hours === null) return "–";
+  if (hours < 1) return "< 1 h";
+  if (hours < 24) return `${Math.round(hours)} h`;
+  const days = hours / 24;
+  return `${days.toLocaleString("en-GB", { maximumFractionDigits: 1 })} ${days < 1.05 ? "day" : "days"}`;
+}
+
+const PERIODS: { key: Period; title: string }[] = [
+  { key: "today", title: "Today" },
+  { key: "yesterday", title: "Yesterday" },
+  { key: "week", title: "Last 7 days" },
+];
 
 /**
  * Sales of the whole shop (not only print orders) since a date, as Shopify
@@ -158,7 +230,7 @@ const STEPS = [
 ] as const;
 
 export default function Dashboard() {
-  const { queue, month, upNext } = useLoaderData<typeof loader>();
+  const { queue, month, builder, upNext } = useLoaderData<typeof loader>();
   const subtitle = [
     queue.exported === 0 ? "Nothing to print" : `${plural(queue.exported, "order")} ready to print`,
     queue.awaiting > 0 ? `${queue.awaiting} waiting on customer` : null,
@@ -283,6 +355,42 @@ export default function Dashboard() {
             </Card>
           </Layout.Section>
         </Layout>
+
+        <Card padding="0">
+          <Box padding="400">
+            <BlockStack gap="100">
+              <Text as="h2" variant="headingMd">
+                Gang sheet builder
+              </Text>
+              <Text as="p" variant="bodySm" tone="subdued">
+                Sheets customers started (first upload or text) and sheets they ordered, Swedish time.
+              </Text>
+            </BlockStack>
+          </Box>
+          <InlineGrid columns={{ xs: 1, md: 3 }}>
+            {PERIODS.map((period, i) => {
+              const stats = builder[period.key];
+              return (
+                <Box
+                  key={period.key}
+                  padding="400"
+                  borderBlockStartWidth="025"
+                  borderInlineEndWidth={i === PERIODS.length - 1 ? undefined : "025"}
+                  borderColor="border-secondary"
+                >
+                  <BlockStack gap="200">
+                    <Text as="h3" variant="headingSm">
+                      {period.title}
+                    </Text>
+                    <Metric label="Started" value={String(stats.started)} />
+                    <Metric label="Ordered" value={String(stats.ordered)} />
+                    <Metric label="Avg. start to order" value={timeToOrder(stats.avgHours)} />
+                  </BlockStack>
+                </Box>
+              );
+            })}
+          </InlineGrid>
+        </Card>
       </BlockStack>
     </Page>
   );

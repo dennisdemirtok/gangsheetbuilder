@@ -50,6 +50,10 @@ model GangSheet {
   /// Human order number, e.g. "#1002" — the print shop cannot work from a
   /// numeric Shopify id, and the list used to show exactly that.
   orderName         String?  @map("order_name")
+  /// When the customer placed the order (Shopify's processed_at). createdAt
+  /// is when the sheet was started in the builder, often days earlier — the
+  /// order list showed orders placed today as "7 days ago".
+  orderedAt         DateTime? @map("ordered_at")
   /// Recipient details copied from the order, so the sheet can be posted
   /// without leaving the app to look them up.
   customerName      String?  @map("customer_name")

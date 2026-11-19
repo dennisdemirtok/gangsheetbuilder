@@ -54,8 +54,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       pingRedis(),
       prisma.gangSheet.findFirst({
         where: { shopDomain, shopifyOrderId: { not: null } },
-        orderBy: { createdAt: "desc" },
-        select: { orderName: true, shopifyOrderId: true, createdAt: true },
+        orderBy: [{ orderedAt: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }],
+        select: { orderName: true, shopifyOrderId: true, orderedAt: true, createdAt: true },
       }),
       prisma.gangSheetImage.count({ where: { gangSheet: { shopDomain } } }),
       prisma.gangSheetExport.count({ where: { gangSheet: { shopDomain } } }),
@@ -88,7 +88,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       mailFrom: process.env.SMTP_USER || null,
       printShopEmail: process.env.PRINT_SHOP_EMAIL || "biuro@fancywork.pl",
       latestOrder: latestOrder
-        ? `${orderLabel(latestOrder)} · ${timeAgo(latestOrder.createdAt)}`
+        ? `${orderLabel(latestOrder)} · ${timeAgo(latestOrder.orderedAt ?? latestOrder.createdAt)}`
         : null,
     },
     pricing: pricingProduct

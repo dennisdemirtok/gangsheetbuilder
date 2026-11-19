@@ -27,6 +27,7 @@ import { downloadFile, uploadFile } from "./r2.server";
 /** Order-level fields, the same on every job of an order: the sheet gets them too. */
 const ORDER_FIELDS = [
   "orderName",
+  "orderedAt",
   "customerName",
   "shippingStatus",
   "bwsBookingId",

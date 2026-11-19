@@ -155,7 +155,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     gangSheet: { ...gangSheet, status: orderStatus, notes },
     orderStatus,
     awaiting,
-    orderedAt: formatDateTime(gangSheet.createdAt),
+    orderedAt: formatDateTime(gangSheet.orderedAt ?? gangSheet.createdAt),
     hasLabel: Boolean(gangSheet.shippingLabelKey),
     shipping,
     // What the customer paid, to pick the service and the order of bookings.

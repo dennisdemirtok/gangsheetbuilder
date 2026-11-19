@@ -33,7 +33,8 @@ function ordersCte(shopDomain: string) {
   return Prisma.sql`
     WITH o AS (
       SELECT shopify_order_id AS order_id,
-             min(created_at) AS created_at,
+             -- When the order was placed; before ordered_at existed, the oldest job.
+             coalesce(min(ordered_at), min(created_at)) AS ordered_at,
              max(order_name) AS order_name,
              max(customer_name) AS customer_name,
              (count(*) FILTER (WHERE merged_into_id IS NULL))::int AS jobs,
@@ -49,7 +50,7 @@ function ordersCte(shopDomain: string) {
 export interface OrderRow {
   orderId: string;
   firstId: string;
-  createdAt: Date;
+  orderedAt: Date;
   orderName: string | null;
   customerName: string | null;
   jobs: number;
@@ -91,10 +92,10 @@ export async function listOrders(options: {
 
   const [rows, total] = await Promise.all([
     prisma.$queryRaw<
-      { order_id: string; first_id: string; created_at: Date; order_name: string | null; customer_name: string | null; jobs: number; rank: number; awaiting: boolean }[]
+      { order_id: string; first_id: string; ordered_at: Date; order_name: string | null; customer_name: string | null; jobs: number; rank: number; awaiting: boolean }[]
     >`${ordersCte(shopDomain)}
       SELECT * FROM o ${where}
-      ORDER BY created_at ${order}
+      ORDER BY ordered_at ${order}, order_id ${order}
       LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
     prisma.$queryRaw<{ n: number }[]>`${ordersCte(shopDomain)}
       SELECT count(*)::int AS n FROM o ${where}`,
@@ -104,7 +105,7 @@ export async function listOrders(options: {
     rows: rows.map((r) => ({
       orderId: r.order_id,
       firstId: r.first_id,
-      createdAt: r.created_at,
+      orderedAt: r.ordered_at,
       orderName: r.order_name,
       customerName: r.customer_name,
       jobs: r.jobs,

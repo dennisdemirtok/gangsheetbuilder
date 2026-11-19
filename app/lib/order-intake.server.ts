@@ -54,6 +54,8 @@ interface WebhookLineItem {
 export interface WebhookOrder {
   id: number;
   name?: string;
+  created_at?: string | null;
+  processed_at?: string | null;
   email?: string | null;
   phone?: string | null;
   financial_status?: string | null;
@@ -146,9 +148,13 @@ export async function intakeOrder(
     if (to) teamAddress = { ...to, email: to.email ?? null, teamOrder: true };
   }
 
+  // The order's own date: a builder sheet keeps the createdAt of the day the
+  // customer started it, which can be a week before they paid.
+  const placed = new Date(order.processed_at || order.created_at || "");
   const orderDetails = {
     shopifyOrderId: String(order.id),
     orderName: order.name ? String(order.name) : null,
+    ...(Number.isNaN(placed.getTime()) ? {} : { orderedAt: placed }),
     otherLineItems: otherLineItems.length > 0 ? otherLineItems : Prisma.DbNull,
     customerName:
       ship?.name ||
