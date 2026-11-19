@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { minOrderKr } from "./shopSettings";
 import { getSheetPrice } from "./storefrontPrices";
 import { MAX_SHEET_MM, SHEET_STEP_MM, sheetForHeight } from "../config/sheets";
+import { useEditorStore } from "../store/editorStore";
+import { editingCartLines } from "../store/persistence";
+import { getEditTargets } from "./cart";
 
 /**
  * The cart's minimum order, told in the builder.
@@ -20,12 +23,22 @@ export function isBusinessCustomer(): boolean {
   return root()?.dataset.b2b === "true";
 }
 
+// One read serves every part of the builder that asks at the same moment.
+let recent: { key: string; at: number; result: Promise<number | null> } | null = null;
+
 /**
  * Kronor already in the cart, leaving out the lines of these sheets (the
  * builder replaces them when they are added again). Null when the cart
  * cannot be read.
  */
-async function cartTotalExcept(sheetIds: string[]): Promise<number | null> {
+function cartTotalExcept(sheetIds: string[]): Promise<number | null> {
+  const key = sheetIds.filter(Boolean).sort().join(",");
+  if (recent && recent.key === key && Date.now() - recent.at < 2000) return recent.result;
+  recent = { key, at: Date.now(), result: readCartTotalExcept(sheetIds) };
+  return recent.result;
+}
+
+async function readCartTotalExcept(sheetIds: string[]): Promise<number | null> {
   const ours = new Set(sheetIds.filter(Boolean));
   try {
     const shopRoot = (window as any).Shopify?.routes?.root || "/";
@@ -43,8 +56,10 @@ async function cartTotalExcept(sheetIds: string[]): Promise<number | null> {
 }
 
 /**
- * What else is in the cart, read when the builder opens and again when the
- * customer comes back to the tab (they may have shopped in another one).
+ * What else is in the cart, read when the builder opens, when the customer
+ * comes back to the tab (they may have shopped in another one) and when the
+ * browser restores the page on Back from the cart, where they may have
+ * removed something.
  */
 export function useCartTotalExcept(sheetIds: string[]): number {
   const key = sheetIds.filter(Boolean).sort().join(",");
@@ -59,13 +74,32 @@ export function useCartTotalExcept(sheetIds: string[]): number {
     const onVisible = () => {
       if (document.visibilityState === "visible") read();
     };
+    const onShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        recent = null;
+        read();
+      }
+    };
     document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onShow);
     return () => {
       alive = false;
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onShow);
     };
   }, [key]);
   return total;
+}
+
+/** The rest of the cart, leaving out the lines this builder's sheets will replace. */
+export function useBuilderCartTotal(): number {
+  const { gangSheetId, sheets } = useEditorStore();
+  return useCartTotalExcept([
+    gangSheetId ?? "",
+    ...sheets.map((s) => s.gangSheetId ?? ""),
+    ...getEditTargets(),
+    ...editingCartLines(),
+  ]);
 }
 
 export interface Shortfall {

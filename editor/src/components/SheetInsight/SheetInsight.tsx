@@ -1,10 +1,11 @@
 import { useMemo } from "react";
-import { useEditorStore, groupImages } from "../../store/editorStore";
+import { useEditorStore, groupImages, getSheetsTotalPrice } from "../../store/editorStore";
 import { useSheetStats } from "../../utils/sheetStats";
 import { freeCapacityFor, imageBbox } from "../../utils/layout";
 import { neededHeightMm } from "../../utils/packing";
-import { smallestSheetFor } from "../../config/sheets";
+import { SHEET_STEP_MM, sheetForHeight, smallestSheetFor } from "../../config/sheets";
 import { getSheetPrice } from "../../services/storefrontPrices";
+import { shortfallFor, useBuilderCartTotal } from "../../services/minOrder";
 import { theme } from "../../styles/theme";
 
 /**
@@ -23,8 +24,13 @@ export function SheetInsight() {
     lastFillShortfall,
     clearFillShortfall,
     setSheetSize,
+    sheets,
+    prices,
+    filmType,
+    activeSheetIndex,
   } = useEditorStore();
   const stats = useSheetStats();
+  const inCart = useBuilderCartTotal();
 
   // Which design would we offer to multiply? The selected one, else the
   // first — and only when copies actually fit in what's left.
@@ -59,8 +65,25 @@ export function SheetInsight() {
     if (fits.heightMm >= sheetSize.heightMm) return null;
     const now = getSheetPrice(sheetSize.key);
     const then = getSheetPrice(fits.key);
-    return { size: fits, saves: now !== null && then !== null ? now - then : null };
-  }, [images, sheetSize, gapMm]);
+    if (now === null || then === null) return { size: fits, saves: null };
+
+    /*
+     * Never offer a sheet that takes the order below the minimum: after
+     * "Gör arket 1,5 m" this tip offered 1 m again, and the customer went
+     * round in circles. Offer the shortest length that still reaches it,
+     * or nothing when no shorter one does.
+     */
+    const total = getSheetsTotalPrice(sheets, prices, sheetSize, filmType, activeSheetIndex, images.length);
+    const copies = Math.max(1, sheets[activeSheetIndex]?.quantity || 1);
+    for (let h = fits.heightMm; h < sheetSize.heightMm; h += SHEET_STEP_MM) {
+      const size = sheetForHeight(h);
+      const price = getSheetPrice(size.key);
+      if (price === null) return null;
+      const after = total === null ? null : total - copies * (now - price);
+      if (!shortfallFor(after, inCart)) return { size, saves: now - price };
+    }
+    return null;
+  }, [images, sheetSize, gapMm, sheets, prices, filmType, activeSheetIndex, inCart]);
 
   if (images.length === 0) return null;
 

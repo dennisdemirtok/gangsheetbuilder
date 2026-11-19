@@ -30,7 +30,7 @@ import { SheetPreview, type PreviewPiece } from "../StartWizard/SheetPreview";
 import { renderSheetThumbnail } from "../../utils/sheetDrawing";
 import { theme } from "../../styles/theme";
 import { showToast } from "../../utils/toast";
-import { lengthThatReaches, shortfallFor, useCartTotalExcept, type Shortfall } from "../../services/minOrder";
+import { lengthThatReaches, shortfallFor, useBuilderCartTotal, type Shortfall } from "../../services/minOrder";
 import { sheetForHeight } from "../../config/sheets";
 import { MinOrderNote } from "./MinOrderNote";
 
@@ -149,15 +149,9 @@ function jobPrice(job: SheetJob): number | null {
 
 export function AddToCartButton() {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-  const { sheetSize, filmType, images, sheets, activeSheetIndex, prices, gangSheetId, setSheetSize } = useEditorStore();
-  // The rest of the cart counts toward the minimum; this builder's own lines
-  // are left out, since adding the sheets again replaces them.
-  const inCart = useCartTotalExcept([
-    gangSheetId ?? "",
-    ...sheets.map((s) => s.gangSheetId ?? ""),
-    ...getEditTargets(),
-    ...editingCartLines(),
-  ]);
+  const { sheetSize, filmType, images, sheets, activeSheetIndex, prices, setSheetSize } = useEditorStore();
+  // The rest of the cart counts toward the minimum.
+  const inCart = useBuilderCartTotal();
 
   const start = () => {
     const checks = checkAllSheets();
