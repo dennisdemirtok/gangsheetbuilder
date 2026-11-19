@@ -722,7 +722,7 @@ const mob: Record<string, React.CSSProperties> = {
     whiteSpace: "nowrap",
   },
   actionPrimary: { background: theme.secondary, borderColor: theme.secondary, color: "#fff" },
-  cta: { flexShrink: 0, padding: "10px 12px 12px" },
+  cta: { flexShrink: 0, padding: "10px 12px 12px", display: "flex", flexDirection: "column", gap: 8 },
   sectionHead: {
     fontSize: theme.fontSize.labelMd,
     fontWeight: theme.fontWeight.semibold,

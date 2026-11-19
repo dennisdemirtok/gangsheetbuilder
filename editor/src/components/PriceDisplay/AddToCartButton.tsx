@@ -30,6 +30,9 @@ import { SheetPreview, type PreviewPiece } from "../StartWizard/SheetPreview";
 import { renderSheetThumbnail } from "../../utils/sheetDrawing";
 import { theme } from "../../styles/theme";
 import { showToast } from "../../utils/toast";
+import { lengthThatReaches, shortfallFor, useCartTotalExcept, type Shortfall } from "../../services/minOrder";
+import { sheetForHeight } from "../../config/sheets";
+import { MinOrderNote } from "./MinOrderNote";
 
 /**
  * From "Lägg i varukorg" to the cart, in steps the customer can follow:
@@ -118,7 +121,7 @@ type Phase =
   | { kind: "issues"; checks: SheetCheck[]; fixing: boolean; fixFailed: boolean }
   | { kind: "confirm"; jobs: SheetJob[] }
   | { kind: "adding"; jobs: SheetJob[]; name: string; done: number; total: number; step: number; error?: string }
-  | { kind: "added"; jobs: SheetJob[]; name: string };
+  | { kind: "added"; jobs: SheetJob[]; name: string; shortfall: Shortfall | null };
 
 function piecesOf(jobs: SheetJob[]): number {
   return jobs.reduce((n, j) => n + j.sheetImages.length, 0);
@@ -146,7 +149,15 @@ function jobPrice(job: SheetJob): number | null {
 
 export function AddToCartButton() {
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
-  const { sheetSize, filmType, images, sheets, activeSheetIndex, prices } = useEditorStore();
+  const { sheetSize, filmType, images, sheets, activeSheetIndex, prices, gangSheetId, setSheetSize } = useEditorStore();
+  // The rest of the cart counts toward the minimum; this builder's own lines
+  // are left out, since adding the sheets again replaces them.
+  const inCart = useCartTotalExcept([
+    gangSheetId ?? "",
+    ...sheets.map((s) => s.gangSheetId ?? ""),
+    ...getEditTargets(),
+    ...editingCartLines(),
+  ]);
 
   const start = () => {
     const checks = checkAllSheets();
@@ -290,10 +301,14 @@ export function AddToCartButton() {
         replacedIds,
       );
       clearEditTarget();
-      setPhase({ kind: "added", jobs, name });
+      const prices = jobs.map(jobPrice);
+      const sheetsTotal = prices.every((p) => p !== null) ? prices.reduce<number>((a, b) => a + (b ?? 0), 0) : null;
+      const short = shortfallFor(sheetsTotal, inCart);
+      setPhase({ kind: "added", jobs, name, shortfall: short });
+      // A little longer to read about the minimum before the cart opens.
       window.setTimeout(() => {
         window.location.href = `${shopifyRoot}cart`;
-      }, 1400);
+      }, short ? 4000 : 1400);
     } catch (err) {
       console.error("Add to cart failed:", err);
       setPhase({ kind: "adding", jobs, name, done, total, step: -1, error: (err as Error).message });
@@ -306,6 +321,13 @@ export function AddToCartButton() {
   const busy = phase.kind === "adding" || phase.kind === "added";
   const disabled = busy || !hasAnyImages;
   const totalPrice = getSheetsTotalPrice(sheets, prices, sheetSize, filmType, activeSheetIndex, images.length);
+  const shortfall = hasAnyImages ? shortfallFor(totalPrice, inCart) : null;
+  // One sheet, one copy, on screen: offer the length that reaches the minimum.
+  const singleSheet =
+    images.length > 0 &&
+    Math.max(1, sheets[activeSheetIndex]?.quantity || 1) === 1 &&
+    sheets.every((s, i) => i === activeSheetIndex || (s.savedImages?.length || 0) === 0);
+  const longer = shortfall && singleSheet ? lengthThatReaches(sheetSize.heightMm, inCart) : null;
 
   return (
     <>
@@ -322,6 +344,7 @@ export function AddToCartButton() {
       {phase.kind === "confirm" && (
         <ConfirmDialog
           jobs={phase.jobs}
+          inCart={inCart}
           onCancel={() => setPhase({ kind: "idle" })}
           onConfirm={(name) => void addToCart(phase.jobs, name)}
         />
@@ -333,7 +356,15 @@ export function AddToCartButton() {
           onClose={() => setPhase({ kind: "idle" })}
         />
       )}
-      {phase.kind === "added" && <AddedDialog jobs={phase.jobs} name={phase.name} />}
+      {phase.kind === "added" && <AddedDialog jobs={phase.jobs} name={phase.name} shortfall={phase.shortfall} />}
+
+      {shortfall && !busy && (
+        <MinOrderNote
+          shortfall={shortfall}
+          longer={longer}
+          onLengthen={longer ? () => setSheetSize(sheetForHeight(longer.heightMm)) : undefined}
+        />
+      )}
 
       <button
         onClick={start}
@@ -537,10 +568,12 @@ function previewPieces(images: EditorImage[]): PreviewPiece[] {
 
 function ConfirmDialog({
   jobs,
+  inCart,
   onCancel,
   onConfirm,
 }: {
   jobs: SheetJob[];
+  inCart: number;
   onCancel: () => void;
   onConfirm: (name: string) => void;
 }) {
@@ -550,6 +583,7 @@ function ConfirmDialog({
   const prices = jobs.map(jobPrice);
   const total = prices.every((p) => p !== null) ? prices.reduce<number>((a, b) => a + (b ?? 0), 0) : null;
   const several = jobs.length > 1;
+  const shortfall = shortfallFor(total, inCart);
 
   return (
     <Modal
@@ -583,6 +617,12 @@ function ConfirmDialog({
             Totalt ({jobs.length} ark, {pieces} motiv)
           </span>
           <strong>{total !== null ? `${total} kr` : "Pris saknas"}</strong>
+        </div>
+      )}
+
+      {shortfall && (
+        <div style={{ marginTop: 14 }}>
+          <MinOrderNote shortfall={shortfall} />
         </div>
       )}
 
@@ -726,18 +766,26 @@ function ProgressDialog({
   );
 }
 
-function AddedDialog({ jobs, name }: { jobs: SheetJob[]; name: string }) {
+function AddedDialog({ jobs, name, shortfall }: { jobs: SheetJob[]; name: string; shortfall: Shortfall | null }) {
   const several = jobs.length > 1;
+  // Below the minimum the cart's checkout button is off: never call it ready.
+  const where = shortfall ? "ligger i varukorgen" : "är redo för kassan";
   return (
     <Modal title="Tillagt i varukorgen" icon={CHECK_ICON} tone="success" width={420}>
       <div style={D.added}>
         <div style={{ fontSize: 30, lineHeight: 1, color: theme.success }}>✓</div>
         <div style={{ fontWeight: theme.fontWeight.semibold, color: theme.text }}>
-          {name ? `${name} är redo för kassan` : several ? "Dina ark är redo för kassan" : "Ditt ark är redo för kassan"}
+          {name ? `${name} ${where}` : several ? `Dina ark ${where}` : `Ditt ark ${where}`}
         </div>
         <div style={{ color: theme.textMuted, fontSize: theme.fontSize.bodySm }}>
           {jobs.length} ark · {piecesOf(jobs)} motiv
         </div>
+        {shortfall && (
+          <div style={{ color: theme.text, fontSize: theme.fontSize.bodySm, marginTop: 6 }}>
+            Minsta order är {shortfall.min} kr. Det fattas {shortfall.missing} kr innan du kan gå till kassan: lägg till
+            fler produkter eller gör arket längre.
+          </div>
+        )}
       </div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 14, color: theme.textMuted, fontSize: theme.fontSize.bodySm }}>
         <span style={D.spinner} /> Går till varukorgen…

@@ -110,6 +110,7 @@
     data-app-proxy-url="/apps/gangsheet"
     data-currency="{{ shop.currency }}"
     data-min-order="{{ block.settings.min_order | default: 300 }}"
+    data-b2b="{% if customer.b2b? %}true{% else %}false{% endif %}"
     style="width: 100vw; height: 100vh; overflow: hidden;"
   >
     <div id="gangsheet-loading" style="display: flex; align-items: center; justify-content: center; height: 100vh; background: #f7f9fb;">
@@ -269,7 +270,7 @@
       "type": "number",
       "id": "min_order",
       "label": "Minsta ordervärde (kr)",
-      "info": "Visas i texten för färdiga ark. Samma belopp som temats spärr i varukorgen (Temainställningar, Minsta ordervärde).",
+      "info": "Visas i buildern vid Lägg i varukorg och i texten för färdiga ark. Samma belopp som temats spärr i varukorgen (Temainställningar, Minsta ordervärde). Företagskunder ser den inte.",
       "default": 300
     }
   ]
