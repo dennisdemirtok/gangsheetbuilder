@@ -13,6 +13,8 @@ WORKDIR /app
 
 # Install ALL deps (including devDependencies for build step)
 COPY package.json package-lock.json* ./
+# Workspace packages in the lockfile must exist for npm ci
+COPY extensions/mina-tryck/package.json extensions/mina-tryck/
 RUN npm ci && npm cache clean --force
 
 COPY . .

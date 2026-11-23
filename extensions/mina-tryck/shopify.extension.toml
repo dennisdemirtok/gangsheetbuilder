@@ -1,0 +1,12 @@
+api_version = "2026-10"
+
+[[extensions]]
+name = "Mina tryck"
+handle = "mina-tryck"
+type = "ui_extension"
+uid = "9af2668a-fdcd-42b2-862a-e79784494512"
+
+# Static target: shows by itself under the order's items, no editor placement needed.
+[[extensions.targeting]]
+module = "./src/OrderPrints.tsx"
+target = "customer-account.order-status.cart-line-list.render-after"
