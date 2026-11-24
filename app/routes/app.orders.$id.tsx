@@ -606,6 +606,18 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       data: { gangSheetId: gangSheet.id, author: session.shop, body: `Waiting on customer${note ? `: ${note}` : ""}` },
     });
     return json({ success: true, notice: "Marked as waiting on customer" });
+  } else if (action === "shipment_checked") {
+    // The parcel had no carrier scan and was looked into: stop the daily reminder.
+    await prisma.gangSheet.updateMany({ where: wholeOrder, data: { shipmentCheckedAt: new Date() } });
+    const note = String(formData.get("note") || "").trim().slice(0, 500);
+    await prisma.gangSheetNote.create({
+      data: {
+        gangSheetId: gangSheet.id,
+        author: session.shop,
+        body: `Parcel without carrier scan checked${note ? `: ${note}` : ""}`,
+      },
+    });
+    return json({ success: true, notice: "Removed from the daily parcel reminder" });
   } else if (action === "clear_awaiting") {
     await resume();
     await prisma.gangSheetNote.create({

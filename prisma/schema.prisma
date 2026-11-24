@@ -92,6 +92,9 @@ model GangSheet {
   deliveredAt       DateTime? @map("delivered_at")
   /// When the customer was emailed after a failed delivery attempt — sent once.
   missedDeliveryMailSentAt DateTime? @map("missed_delivery_mail_sent_at")
+  /// When someone looked into a parcel the carrier never scanned; keeps it off
+  /// the daily "Paket utan skanning" email. Same on every job of the order.
+  shipmentCheckedAt DateTime? @map("shipment_checked_at")
   /// Shopify fulfillment carrying the tracking to the customer, or why it failed.
   shopifyFulfillmentId String? @map("shopify_fulfillment_id")
   fulfillmentError  String?  @map("fulfillment_error")

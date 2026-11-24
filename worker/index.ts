@@ -6,6 +6,7 @@ import { cleanupExpiredJob } from "./jobs/cleanup-expired";
 import { fulfillDuePickups } from "../app/lib/order-shipment.server";
 import { fulfillDueGarmentPickups } from "../app/lib/garment-shipment.server";
 import { sweepMissedDeliveries } from "../app/lib/missed-delivery.server";
+import { sendStuckShipmentDigest, stockholmClock, DIGEST_HOUR } from "../app/lib/stuck-shipments.server";
 
 const redisUrl = process.env.REDIS_URL;
 if (!redisUrl) {
@@ -130,6 +131,44 @@ async function sweepDeliveries() {
 const deliveryTimer = setInterval(sweepDeliveries, DELIVERY_SWEEP_MS);
 setTimeout(sweepDeliveries, 90_000);
 
+/*
+ * Parcels without a carrier scan: on weekdays from 08:00 (Stockholm), once a
+ * day, email the shop the orders booked 2+ days ago that FedEx never scanned
+ * (see stuck-shipments.server.ts). A Redis key per day keeps restarts and a
+ * second worker from sending it twice.
+ */
+const STUCK_CHECK_MS = 15 * 60 * 1000;
+let checkingStuck = false;
+async function stuckShipmentDigest() {
+  if (checkingStuck) return;
+  const clock = stockholmClock(new Date());
+  if (!clock.weekday || clock.hour < DIGEST_HOUR) return;
+  checkingStuck = true;
+  const key = `stuck-shipment-digest:${clock.day}`;
+  try {
+    const claimed = await connection.set(key, new Date().toISOString(), "EX", 3 * 24 * 60 * 60, "NX");
+    if (claimed !== "OK") return;
+    try {
+      const { check, sent } = await sendStuckShipmentDigest();
+      console.log(
+        `[stuck] ${check.checked} checked, ${check.stuck.length} without scan` +
+          `${check.stuck.length ? ` (${check.stuck.map((s) => s.order).join(", ")})` : ""}` +
+          `${check.errors.length ? `, ${check.errors.length} error(s)` : ""}${sent ? ", emailed" : ""}`,
+      );
+    } catch (err) {
+      // Not sent: free the day so the next check tries again.
+      await connection.del(key);
+      throw err;
+    }
+  } catch (err) {
+    console.error("[stuck] Digest failed:", err);
+  } finally {
+    checkingStuck = false;
+  }
+}
+const stuckTimer = setInterval(stuckShipmentDigest, STUCK_CHECK_MS);
+setTimeout(stuckShipmentDigest, 120_000);
+
 console.log("Workers started successfully.");
 
 // Graceful shutdown
@@ -137,6 +176,7 @@ process.on("SIGTERM", async () => {
   console.log("Shutting down workers...");
   clearInterval(trackingTimer);
   clearInterval(deliveryTimer);
+  clearInterval(stuckTimer);
   await Promise.all([
     exportWorker.close(),
     bgRemovalWorker.close(),

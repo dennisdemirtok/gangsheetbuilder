@@ -69,6 +69,8 @@ interface SheetShippingFields {
   productionMailSentAt: string | null;
   deliveredAt: string | null;
   missedDeliveryMailSentAt: string | null;
+  shipmentCheckedAt?: string | null;
+  shippedAt?: string | null;
 }
 
 type ActionData = { success?: boolean; errors?: string[]; notice?: string };
@@ -214,6 +216,28 @@ export function BwsShippingCard({
               <Text as="p" variant="bodySm" tone="caution">
                 Delivery attempt failed · customer emailed to rebook {formatDateTime(sheet.missedDeliveryMailSentAt)}
               </Text>
+            )}
+            {sheet.shipmentCheckedAt ? (
+              <Text as="p" variant="bodySm" tone="subdued">
+                Parcel checked {formatDateTime(sheet.shipmentCheckedAt)} · not in the daily reminder
+              </Text>
+            ) : (
+              !sheet.deliveredAt &&
+              sheet.shippedAt &&
+              Date.now() - new Date(sheet.shippedAt).getTime() > 2 * 24 * 60 * 60 * 1000 && (
+                <InlineStack gap="200" blockAlign="center">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Not delivered yet. If FedEx has no scan, it is in the morning "Paket utan skanning" email.
+                  </Text>
+                  <Button
+                    size="slim"
+                    loading={fetcher.state !== "idle" && fetcher.formData?.get("action") === "shipment_checked"}
+                    onClick={() => fetcher.submit({ action: "shipment_checked" }, { method: "post" })}
+                  >
+                    Checked – stop reminding
+                  </Button>
+                </InlineStack>
+              )
             )}
             <InlineStack gap="200">
               {hasLabel && (
