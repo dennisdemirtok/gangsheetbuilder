@@ -227,7 +227,7 @@ export function BwsShippingCard({
               Date.now() - new Date(sheet.shippedAt).getTime() > 2 * 24 * 60 * 60 * 1000 && (
                 <InlineStack gap="200" blockAlign="center">
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Not delivered yet. If FedEx has no scan, it is in the morning "Paket utan skanning" email.
+                    Not delivered yet. With no FedEx scan, or none for 5 days, it is in the morning "Paket att kolla" email.
                   </Text>
                   <Button
                     size="slim"

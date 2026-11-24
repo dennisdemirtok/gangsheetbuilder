@@ -6,7 +6,8 @@ import { orderLabel } from "./order-status";
 import { SIMULATED_PREFIX } from "./bws-shipping.server";
 
 /**
- * Stuck shipments: parcels booked with BWS that the carrier never scanned.
+ * Stuck shipments: parcels booked with BWS that the carrier never scanned,
+ * or that it scanned but then went quiet before delivery.
  *
  * #1176 was booked on 2026-11-06 and FedEx never picked it up. Shopify kept
  * showing "Shipment information sent to FedEx" and nobody noticed until the
@@ -14,12 +15,21 @@ import { SIMULATED_PREFIX } from "./bws-shipping.server";
  * email listing the orders shipped two days ago or more whose tracking still
  * has no scan by the carrier. An order stays on the list each day until a
  * scan comes in or someone marks it as checked on the order page.
+ *
+ * #1070 and #1150 showed the second case: FedEx scanned them on the way, then
+ * nothing for weeks ("Package Delayed" in Helsingborg, "In transit" at Paris
+ * CDG). Shopify kept showing them as on their way. So an order is also listed
+ * when the newest carrier event is STALLED_AFTER_DAYS old and it is not
+ * delivered; that includes a FAILURE nobody followed up (#1031 said FAILURE
+ * for a parcel FedEx had delivered as "Damaged").
  */
 
 const TIMEZONE = "Europe/Stockholm";
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** A parcel booked this long ago should have a carrier scan. */
 const STUCK_AFTER_DAYS = 2;
+/** A scanned parcel with no new carrier event for this long has stalled. */
+const STALLED_AFTER_DAYS = 5;
 /** Older bookings are no longer followed. */
 const FOLLOW_DAYS = 45;
 /** The digest goes out at this hour (Stockholm), Monday to Friday. */
@@ -42,7 +52,7 @@ const ORDER_QUERY = `#graphql
         displayStatus
         trackingInfo(first: 5) { number url }
         events(first: 20, sortKey: HAPPENED_AT, reverse: true) {
-          nodes { status happenedAt }
+          nodes { status happenedAt message }
         }
       }
     }
@@ -53,8 +63,10 @@ interface Fulfillment {
   id: string;
   displayStatus: string | null;
   trackingInfo: { number: string | null; url: string | null }[];
-  events: { nodes: { status: string; happenedAt: string }[] };
+  events: { nodes: { status: string; happenedAt: string; message?: string | null }[] };
 }
+
+type FulfillmentEvent = Fulfillment["events"]["nodes"][number];
 
 const cleanNumber = (n: string | null | undefined) => (n || "").replace(/\s+/g, "");
 
@@ -63,15 +75,25 @@ const cleanNumber = (n: string | null | undefined) => (n || "").replace(/\s+/g, 
  * Fulfillments the app did not ship (presses, blanks) are ignored; with none
  * of ours found the order is not flagged, as there is nothing to judge.
  */
+function ourFulfillments(
+  fulfillments: Fulfillment[],
+  ours: { fulfillmentIds: string[]; trackingNumbers: string[] },
+): Fulfillment[] {
+  const ids = new Set(ours.fulfillmentIds);
+  const numbers = new Set(ours.trackingNumbers.map(cleanNumber).filter(Boolean));
+  return fulfillments.filter(
+    (f) => ids.has(f.id) || f.trackingInfo.some((t) => numbers.has(cleanNumber(t.number))),
+  );
+}
+
+const newestEvent = (f: Fulfillment): FulfillmentEvent | undefined =>
+  [...f.events.nodes].sort((a, b) => b.happenedAt.localeCompare(a.happenedAt))[0];
+
 export function hasNoCarrierScan(
   fulfillments: Fulfillment[],
   ours: { fulfillmentIds: string[]; trackingNumbers: string[] },
 ): boolean {
-  const ids = new Set(ours.fulfillmentIds);
-  const numbers = new Set(ours.trackingNumbers.map(cleanNumber).filter(Boolean));
-  const relevant = fulfillments.filter(
-    (f) => ids.has(f.id) || f.trackingInfo.some((t) => numbers.has(cleanNumber(t.number))),
-  );
+  const relevant = ourFulfillments(fulfillments, ours);
   if (relevant.length === 0) return false;
   return relevant.every(
     (f) =>
@@ -80,7 +102,29 @@ export function hasNoCarrierScan(
   );
 }
 
+/**
+ * The newest event of a parcel the carrier has scanned but not delivered,
+ * when that event is STALLED_AFTER_DAYS old or more; otherwise null. With
+ * several of our fulfillments, the one silent the longest is returned.
+ */
+export function stalledEvent(
+  fulfillments: Fulfillment[],
+  ours: { fulfillmentIds: string[]; trackingNumbers: string[] },
+  now: Date,
+): FulfillmentEvent | null {
+  const limit = now.getTime() - STALLED_AFTER_DAYS * DAY_MS;
+  const stalled = ourFulfillments(fulfillments, ours)
+    .filter((f) => f.displayStatus !== "DELIVERED")
+    .filter((f) => f.events.nodes.some((e) => !NO_SCAN_STATUSES.has(e.status)))
+    .map(newestEvent)
+    .filter((e): e is FulfillmentEvent => !!e && e.status !== "DELIVERED" && Date.parse(e.happenedAt) <= limit)
+    .sort((a, b) => a.happenedAt.localeCompare(b.happenedAt));
+  return stalled[0] || null;
+}
+
 export interface StuckShipment {
+  /** no_scan: FedEx never scanned it. stalled: scanned, then silent for days. */
+  kind: "no_scan" | "stalled";
   order: string;
   shopDomain: string;
   shopifyOrderId: string;
@@ -92,6 +136,9 @@ export interface StuckShipment {
   trackingUrl: string | null;
   /** The newest thing Shopify heard, e.g. "CONFIRMED", or null for no events at all. */
   lastStatus: string | null;
+  /** When the newest event happened, and FedEx's text for it. */
+  lastEventAt: Date | null;
+  lastMessage: string | null;
 }
 
 export interface StuckCheck {
@@ -100,7 +147,10 @@ export interface StuckCheck {
   checked: number;
 }
 
-/** Every booked order, shipped 2–45 days ago, not delivered or checked, without a carrier scan. */
+/**
+ * Every booked order, shipped 2–45 days ago, not delivered or checked, that
+ * has no carrier scan or whose carrier events stopped 5+ days ago.
+ */
 export async function findStuckShipments(options: { now?: Date } = {}): Promise<StuckCheck> {
   const now = options.now || new Date();
   const sheets = await prisma.gangSheet.findMany({
@@ -144,13 +194,22 @@ export async function findStuckShipments(options: { now?: Date } = {}): Promise<
         fulfillmentIds: (sheet.shopifyFulfillmentId || "").split(",").filter(Boolean),
         trackingNumbers: (sheet.trackingNumber || "").split(","),
       };
-      if (!hasNoCarrierScan(fulfillments, ours)) continue;
-
-      const lastEvent = fulfillments
-        .flatMap((f) => f.events.nodes)
-        .sort((a, b) => b.happenedAt.localeCompare(a.happenedAt))[0];
+      let kind: StuckShipment["kind"];
+      let lastEvent: FulfillmentEvent | undefined;
+      if (hasNoCarrierScan(fulfillments, ours)) {
+        kind = "no_scan";
+        lastEvent = ourFulfillments(fulfillments, ours)
+          .flatMap((f) => f.events.nodes)
+          .sort((a, b) => b.happenedAt.localeCompare(a.happenedAt))[0];
+      } else {
+        const stalled = stalledEvent(fulfillments, ours, now);
+        if (!stalled) continue;
+        kind = "stalled";
+        lastEvent = stalled;
+      }
       const address = (sheet.shippingAddress as Record<string, string | null> | null) || {};
       result.stuck.push({
+        kind,
         order,
         shopDomain: sheet.shopDomain,
         shopifyOrderId: sheet.shopifyOrderId!,
@@ -161,6 +220,8 @@ export async function findStuckShipments(options: { now?: Date } = {}): Promise<
         trackingNumber: cleanNumber(sheet.trackingNumber?.split(",")[0]) || null,
         trackingUrl: sheet.trackingUrl,
         lastStatus: lastEvent?.status || null,
+        lastEventAt: lastEvent ? new Date(lastEvent.happenedAt) : null,
+        lastMessage: lastEvent?.message?.trim() || null,
       });
     } catch (error) {
       const detail =
@@ -203,51 +264,111 @@ function printShopMailto(s: StuckShipment): string | null {
   return `mailto:${to.split(",")[0].trim()}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
+/** BWS courier support, who chase FedEx for us (override with BWS_SUPPORT_EMAIL). */
+const bwsSupportEmail = () => process.env.BWS_SUPPORT_EMAIL || "couriersweden@bws.dk";
+
+/** A ready email to BWS asking what happened to a parcel that went quiet. */
+function bwsMailto(s: StuckShipment): string {
+  const subject = `Order ${s.order}${s.trackingNumber ? ` – ${s.trackingNumber}` : ""} – no FedEx update`;
+  const body =
+    `Hi,\n\nThe parcel for order ${s.order}` +
+    (s.trackingNumber ? ` (tracking ${s.trackingNumber})` : "") +
+    (s.city ? ` to ${s.city}` : "") +
+    ` has had no new FedEx scan since ${s.lastEventAt ? day(s.lastEventAt) : "a long time"}` +
+    (s.lastMessage ? ` ("${s.lastMessage}")` : "") +
+    `. Could you check with FedEx where it is and whether we need to do anything?\n\nThank you!`;
+  return `mailto:${bwsSupportEmail()}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function digestRow(s: StuckShipment, now: Date) {
+  const days = Math.floor((now.getTime() - s.shippedAt.getTime()) / DAY_MS);
+  const silentDays = s.lastEventAt ? Math.floor((now.getTime() - s.lastEventAt.getTime()) / DAY_MS) : null;
+  const ask = s.kind === "stalled" ? bwsMailto(s) : printShopMailto(s);
+  const links = [
+    `<a href="${esc(adminOrderUrl(s))}">Ordern</a>`,
+    s.trackingUrl ? `<a href="${esc(s.trackingUrl)}">Spårning</a>` : null,
+    ask ? `<a href="${esc(ask)}">${s.kind === "stalled" ? "Fråga BWS" : "Fråga tryckeriet"}</a>` : null,
+  ].filter(Boolean);
+  const when =
+    s.kind === "stalled" && s.lastEventAt
+      ? `senast ${esc(day(s.lastEventAt))} · <b>${silentDays} dagar tyst</b>`
+      : `bokad ${esc(day(s.shippedAt))} · <b>${days} dagar</b>`;
+  const lastText =
+    s.kind === "stalled"
+      ? `<div style="color:#555;font-size:13px;">${esc(s.lastStatus || "")}${s.lastMessage ? `: ${esc(s.lastMessage)}` : ""}</div>`
+      : "";
+  return {
+    html:
+      `<tr>` +
+      `<td style="padding:8px 12px 8px 0;font-weight:700;white-space:nowrap;vertical-align:top;">${esc(s.order)}</td>` +
+      `<td style="padding:8px 12px 8px 0;vertical-align:top;">${esc(s.customerName || "")}${s.city ? `, ${esc(s.city)}` : ""}${lastText}</td>` +
+      `<td style="padding:8px 12px 8px 0;white-space:nowrap;vertical-align:top;">${when}</td>` +
+      `<td style="padding:8px 12px 8px 0;white-space:nowrap;vertical-align:top;">${esc(s.trackingNumber || "–")}</td>` +
+      `<td style="padding:8px 0;white-space:nowrap;vertical-align:top;">${links.join(" · ")}</td>` +
+      `</tr>`,
+    text:
+      `${s.order} – ${s.customerName || ""}${s.city ? `, ${s.city}` : ""} – ` +
+      (s.kind === "stalled" && s.lastEventAt
+        ? `senaste händelse ${day(s.lastEventAt)} (${silentDays} dagar tyst): ${s.lastStatus || ""}${s.lastMessage ? ` – ${s.lastMessage}` : ""}`
+        : `bokad ${day(s.shippedAt)} (${days} dagar) – senaste status: ${s.lastStatus || "inga händelser"}`) +
+      ` – ${s.trackingNumber || "ingen spårning"}\n` +
+      `  Order: ${adminOrderUrl(s)}${s.trackingUrl ? `\n  Spårning: ${s.trackingUrl}` : ""}`,
+  };
+}
+
 export function stuckShipmentsMail(check: StuckCheck, now: Date) {
   const n = check.stuck.length;
-  const subject = `Paket utan skanning: ${n} ${n === 1 ? "order" : "ordrar"} (${check.stuck.map((s) => s.order).join(", ")})`;
+  const subject = `Paket att kolla: ${n} ${n === 1 ? "order" : "ordrar"} (${check.stuck.map((s) => s.order).join(", ")})`;
 
-  const rows = check.stuck.map((s) => {
-    const days = Math.floor((now.getTime() - s.shippedAt.getTime()) / DAY_MS);
-    const mailto = printShopMailto(s);
-    const links = [
-      `<a href="${esc(adminOrderUrl(s))}">Ordern</a>`,
-      s.trackingUrl ? `<a href="${esc(s.trackingUrl)}">Spårning</a>` : null,
-      mailto ? `<a href="${esc(mailto)}">Fråga tryckeriet</a>` : null,
-    ].filter(Boolean);
-    return {
-      html:
-        `<tr>` +
-        `<td style="padding:8px 12px 8px 0;font-weight:700;white-space:nowrap;">${esc(s.order)}</td>` +
-        `<td style="padding:8px 12px 8px 0;">${esc(s.customerName || "")}${s.city ? `, ${esc(s.city)}` : ""}</td>` +
-        `<td style="padding:8px 12px 8px 0;white-space:nowrap;">bokad ${esc(day(s.shippedAt))} · <b>${days} dagar</b></td>` +
-        `<td style="padding:8px 12px 8px 0;white-space:nowrap;">${esc(s.trackingNumber || "–")}</td>` +
-        `<td style="padding:8px 0;white-space:nowrap;">${links.join(" · ")}</td>` +
-        `</tr>`,
-      text:
-        `${s.order} – ${s.customerName || ""}${s.city ? `, ${s.city}` : ""} – bokad ${day(s.shippedAt)} (${days} dagar) – ` +
-        `${s.trackingNumber || "ingen spårning"} – senaste status: ${s.lastStatus || "inga händelser"}\n` +
-        `  Order: ${adminOrderUrl(s)}${s.trackingUrl ? `\n  Spårning: ${s.trackingUrl}` : ""}`,
-    };
-  });
+  const sections = [
+    {
+      items: check.stuck.filter((s) => s.kind === "no_scan"),
+      heading: "Ingen skanning från FedEx",
+      intro:
+        `Bokades för minst ${STUCK_AFTER_DAYS} dagar sedan men har bara "Shipment information sent to FedEx". ` +
+        `De kan ligga kvar hos tryckeriet eller ha missats vid upphämtningen.`,
+    },
+    {
+      items: check.stuck.filter((s) => s.kind === "stalled"),
+      heading: "Står still hos FedEx",
+      intro:
+        `FedEx har skannat paketet men inget nytt har hänt på minst ${STALLED_AFTER_DAYS} dagar, och det är inte levererat. ` +
+        `Fråga BWS vad som hänt, och kolla med kunden om paketet kommit fram.`,
+    },
+  ].filter((sec) => sec.items.length);
 
   const errorNote = check.errors.length
     ? `Kunde inte kolla: ${check.errors.map((e) => `${e.order} (${e.detail})`).join("; ")}`
     : "";
-  const intro =
-    `De här paketen bokades för minst ${STUCK_AFTER_DAYS} dagar sedan men har ingen skanning från transportören ännu – ` +
-    `bara "Shipment information sent to FedEx". De kan ligga kvar hos tryckeriet eller ha missats vid upphämtningen.`;
   const outro =
-    `Kolla med tryckeriet eller BWS. När en order är utredd: tryck "Checked – stop reminding" på orderns fraktkort ` +
-    `i appen, annars kommer den med i det här mejlet varje vardagsmorgon tills FedEx skannar paketet.`;
+    `När en order är utredd: tryck "Checked – stop reminding" på orderns fraktkort i appen, ` +
+    `annars kommer den med i det här mejlet varje vardagsmorgon.`;
 
   const html = `<!doctype html><html lang="sv"><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;font-size:14px;color:#111;">
-<p>${esc(intro)}</p>
-<table style="border-collapse:collapse;font-size:14px;">${rows.map((r) => r.html).join("")}</table>
-<p style="color:#555;">${esc(outro)}</p>
+${sections
+  .map(
+    (sec) =>
+      `<h3 style="margin:18px 0 4px;font-size:15px;">${esc(sec.heading)} (${sec.items.length})</h3>
+<p style="margin:0 0 6px;color:#333;">${esc(sec.intro)}</p>
+<table style="border-collapse:collapse;font-size:14px;">${sec.items.map((s) => digestRow(s, now).html).join("")}</table>`,
+  )
+  .join("\n")}
+<p style="color:#555;margin-top:18px;">${esc(outro)}</p>
 ${errorNote ? `<p style="color:#b00;">${esc(errorNote)}</p>` : ""}
 </body></html>`;
-  const text = [intro, "", ...rows.map((r) => r.text), "", outro, errorNote].join("\n").trim();
+  const text = [
+    ...sections.flatMap((sec) => [
+      `${sec.heading.toUpperCase()} (${sec.items.length})`,
+      sec.intro,
+      "",
+      ...sec.items.map((s) => digestRow(s, now).text),
+      "",
+    ]),
+    outro,
+    errorNote,
+  ]
+    .join("\n")
+    .trim();
   return { subject, html, text };
 }
 

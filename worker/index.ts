@@ -151,7 +151,7 @@ async function stuckShipmentDigest() {
     try {
       const { check, sent } = await sendStuckShipmentDigest();
       console.log(
-        `[stuck] ${check.checked} checked, ${check.stuck.length} without scan` +
+        `[stuck] ${check.checked} checked, ${check.stuck.length} to check` +
           `${check.stuck.length ? ` (${check.stuck.map((s) => s.order).join(", ")})` : ""}` +
           `${check.errors.length ? `, ${check.errors.length} error(s)` : ""}${sent ? ", emailed" : ""}`,
       );
